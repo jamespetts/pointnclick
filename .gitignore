@@ -1,0 +1,14 @@
+
+# OS/editor clutter
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs/temp
+*.log
+*.tmp
+*.bak
+
+# Generated patch/archive files
+*.zip

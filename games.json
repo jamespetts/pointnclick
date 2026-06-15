@@ -1,0 +1,12 @@
+{
+    "comment": "This manifest is required for reliable static web hosting. The browser cannot generally enumerate files. Each game should normally live in its own <id>/ folder. The script should normally be <id>/<id>.js, and assetPath should normally be <id>/. All paths are relative to index.html.",
+    "games": [
+        {
+            "id": "testgame",
+            "title": "Test Game: The Locked Door",
+            "script": "testgame/testgame.js",
+            "assetPath": "testgame/",
+            "engineApi": 1
+        }
+    ]
+}
