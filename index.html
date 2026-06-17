@@ -561,6 +561,116 @@
             Engine.Debug.Warn('Unknown scoped variable comparison operator "'+operator+'".'); return false;
         }
     };
+
+    Engine.Validator = {
+        Warn: function (message) { Engine.Debug.Warn('Game validation: '+message); },
+        AddId: function (seen, kind, id, where) {
+            if (!id) { this.Warn(kind+' in '+where+' is missing an id.'); return; }
+            if (seen[id]) { this.Warn('Duplicate '+kind+' id "'+id+'" in '+where+'.'); return; }
+            seen[id]=true;
+        },
+        ValidateScriptName: function (game, scriptName, where) {
+            if (!scriptName) { return; }
+            if (typeof scriptName !== 'string') { this.Warn(where+' references a non-string script name.'); return; }
+            if (!game.scripts || !game.scripts[scriptName]) { this.Warn(where+' references missing script "'+scriptName+'".'); }
+        },
+        ValidatePointInArea: function (point, area, where) {
+            if (!point) { return; }
+            if (typeof point.x !== 'number' || typeof point.y !== 'number') { this.Warn(where+' has a walk point without numeric x/y.'); return; }
+            if (area && !PointInRect(point.x,point.y,area)) { this.Warn(where+' walk point '+point.x+','+point.y+' is outside the room walkableArea.'); }
+        },
+        ValidateInteractions: function (game, interactions, where) {
+            var self=this;
+            Object.keys(interactions||{}).forEach(function (key) { self.ValidateScriptName(game,interactions[key],where+'.interactions.'+key); });
+        },
+        ValidateDialogueAction: function (game, action, where) {
+            if (!action) { return; }
+            if (Array.isArray(action)) { for (var i=0;i<action.length;i++) { this.ValidateDialogueAction(game,action[i],where+'['+i+']'); } return; }
+            if (action.script) { this.ValidateScriptName(game,action.script,where+'.script'); }
+            if (action.addItem && (!game.items || !game.items[action.addItem])) { this.Warn(where+' adds missing item "'+action.addItem+'".'); }
+            if (action.removeItem && (!game.items || !game.items[action.removeItem])) { this.Warn(where+' removes missing item "'+action.removeItem+'".'); }
+        },
+        ValidateDialogueCondition: function (game, condition, where) {
+            if (!condition) { return; }
+            if (Array.isArray(condition)) { for (var i=0;i<condition.length;i++) { this.ValidateDialogueCondition(game,condition[i],where+'['+i+']'); } return; }
+            if (condition.script) { this.ValidateScriptName(game,condition.script,where+'.script'); }
+            if (condition.hasItem && (!game.items || !game.items[condition.hasItem])) { this.Warn(where+' checks missing item "'+condition.hasItem+'".'); }
+            if (condition.missingItem && (!game.items || !game.items[condition.missingItem])) { this.Warn(where+' checks missing item "'+condition.missingItem+'".'); }
+        },
+        ValidateDialogueTrees: function (game) {
+            var self=this;
+            Object.keys(game.dialogueTrees||{}).forEach(function (treeId) {
+                var tree=game.dialogueTrees[treeId];
+                if (!tree.nodes) { self.Warn('dialogueTrees.'+treeId+' has no nodes.'); return; }
+                var start=tree.start||'start';
+                if (!tree.nodes[start]) { self.Warn('dialogueTrees.'+treeId+' start node "'+start+'" is missing.'); }
+                Object.keys(tree.nodes).forEach(function (nodeId) {
+                    var node=tree.nodes[nodeId];
+                    (node.choices||[]).forEach(function (choice, index) {
+                        var where='dialogueTrees.'+treeId+'.nodes.'+nodeId+'.choices['+index+']';
+                        if (choice.next && !tree.nodes[choice.next]) { self.Warn(where+' references missing next node "'+choice.next+'".'); }
+                        self.ValidateScriptName(game,choice.script,where+'.script');
+                        self.ValidateDialogueCondition(game,choice.conditions||choice.condition||choice.showIf,where+'.conditions');
+                        self.ValidateDialogueAction(game,choice.preActions||choice.preAction,where+'.preActions');
+                        self.ValidateDialogueAction(game,choice.actions||choice.action,where+'.actions');
+                        self.ValidateDialogueAction(game,choice.postResponseActions||choice.postResponseAction,where+'.postResponseActions');
+                    });
+                });
+            });
+        },
+        ValidateGame: function (game) {
+            if (!game) { this.Warn('No game definition was supplied.'); return false; }
+            if (!game.id) { this.Warn('Game is missing id.'); }
+            if (game.engineApi !== ENGINE_API_VERSION) { this.Warn('Game "'+(game.id||'unknown')+'" declares engineApi '+game.engineApi+', expected '+ENGINE_API_VERSION+'.'); }
+            if (!game.rooms || !Object.keys(game.rooms).length) { this.Warn('Game "'+(game.id||'unknown')+'" has no rooms.'); return false; }
+            if (!game.startRoomId || !game.rooms[game.startRoomId]) { this.Warn('Game startRoomId "'+game.startRoomId+'" is missing.'); }
+            if (game.player && game.player.spriteId && game.sprites && !game.sprites[game.player.spriteId]) { this.Warn('Player references missing sprite "'+game.player.spriteId+'".'); }
+            var self=this;
+            Object.keys(game.items||{}).forEach(function (itemId) {
+                var item=game.items[itemId];
+                if (item.id && item.id !== itemId) { self.Warn('Item key "'+itemId+'" has mismatched id "'+item.id+'".'); }
+                self.ValidateInteractions(game,item.interactions,'items.'+itemId);
+            });
+            Object.keys(game.rooms||{}).forEach(function (roomId) {
+                var room=game.rooms[roomId];
+                var where='rooms.'+roomId;
+                if (room.id && room.id !== roomId) { self.Warn(where+' has mismatched id "'+room.id+'".'); }
+                if (!room.background) { self.Warn(where+' has no background.'); }
+                var seenTargets={};
+                (room.hotspots||[]).forEach(function (h,index) {
+                    var hwhere=where+'.hotspots['+index+']';
+                    self.AddId(seenTargets,'target',h.id,hwhere);
+                    if (h.itemId && (!game.items || !game.items[h.itemId])) { self.Warn(hwhere+' links to missing item "'+h.itemId+'".'); }
+                    self.ValidatePointInArea(h.walkTo,room.walkableArea,hwhere+'.walkTo');
+                    self.ValidateInteractions(game,h.interactions,hwhere);
+                    if (h.animationCompleteScripts) { Object.keys(h.animationCompleteScripts).forEach(function (name) { self.ValidateScriptName(game,h.animationCompleteScripts[name],hwhere+'.animationCompleteScripts.'+name); }); }
+                });
+                (room.characters||[]).forEach(function (c,index) {
+                    var cwhere=where+'.characters['+index+']';
+                    self.AddId(seenTargets,'target',c.id,cwhere);
+                    if (c.spriteId && game.sprites && !game.sprites[c.spriteId]) { self.Warn(cwhere+' references missing sprite "'+c.spriteId+'".'); }
+                    self.ValidatePointInArea(c.walkTo,room.walkableArea,cwhere+'.walkTo');
+                    self.ValidateInteractions(game,c.interactions,cwhere);
+                });
+                (room.transitionZones||[]).forEach(function (z,index) {
+                    var zwhere=where+'.transitionZones['+index+']';
+                    if (!z.script && (!z.targetRoomId || !game.rooms[z.targetRoomId])) { self.Warn(zwhere+' has no script and references missing targetRoomId "'+z.targetRoomId+'".'); }
+                    self.ValidateScriptName(game,z.script,zwhere+'.script');
+                    self.ValidateScriptName(game,z.beforeTransition,zwhere+'.beforeTransition');
+                    self.ValidateScriptName(game,z.onBeforeTransition,zwhere+'.onBeforeTransition');
+                    self.ValidateScriptName(game,z.afterTransition,zwhere+'.afterTransition');
+                    self.ValidateScriptName(game,z.onAfterTransition,zwhere+'.onAfterTransition');
+                });
+                var graph=room.walkGraph||{};
+                var nodeIds={};
+                (graph.nodes||[]).forEach(function (n,index) { self.AddId(nodeIds,'walkGraph node',n.id,where+'.walkGraph.nodes['+index+']'); self.ValidatePointInArea(n,room.walkableArea,where+'.walkGraph.nodes['+index+']'); });
+                (graph.edges||[]).forEach(function (e,index) { var a=Array.isArray(e)?e[0]:e.from; var b=Array.isArray(e)?e[1]:e.to; if (!nodeIds[a] || !nodeIds[b]) { self.Warn(where+'.walkGraph.edges['+index+'] references missing node(s).'); } });
+            });
+            this.ValidateDialogueTrees(game);
+            return true;
+        }
+    };
+
     Engine.RegisterGame = function (gameDefinition) {
         if (!gameDefinition || !gameDefinition.id) { throw new Error('Game registration failed: missing id.'); }
         Engine.Games[gameDefinition.id] = gameDefinition;
@@ -597,7 +707,7 @@
         return Engine.Private.LoadScript(entry.script).then(function () {
             var game = Engine.Games[entry.id];
             if (!game) { throw new Error(entry.script + ' did not register game ' + entry.id + '.'); }
-            game.assetPath = entry.assetPath; Engine.Private.StartGame(game);
+            game.assetPath = entry.assetPath; Engine.Validator.ValidateGame(game); Engine.Private.StartGame(game);
         }).catch(function (err) { Engine.Private.ShowBootError(err.message); });
     };
     Engine.Private.StartGame = function (game) {
@@ -787,7 +897,8 @@
         RegisterDefaultHandlers: function () { ['walkTo','lookAt','take','give','talkTo','open','close','use'].forEach(function (id) { Engine.Verbs.handlers[id] = function (command) { Engine.Interactions.Resolve(command); }; }); },
         GetByPoint: function (x, y) { for (var i=0;i<this.list.length;i++) { if (PointInRect(x,y,this.list[i].rect)) { return this.list[i]; } } return null; },
         GetLabel: function (id) { for (var i=0;i<this.list.length;i++) { if (this.list[i].id === id) { return this.list[i].label; } } return id; },
-        Execute: function (command) { var context={ command:command }; if (Engine.Hooks.RunGameHook('beforeCommand',context) === false) { return; } var handler = this.handlers[command.verbId]; if (!handler) { Engine.Dialogue.ShowLine(null,'That verb is not implemented.',{}); return; } handler(command); Engine.Hooks.RunGameHook('afterCommand',context); }
+        FinishCommand: function (command) { if (!command || command._afterCommandFired) { return; } command._afterCommandFired=true; Engine.Hooks.RunGameHook('afterCommand',command._hookContext||{ command:command }); },
+        Execute: function (command) { var context={ command:command }; if (Engine.Hooks.RunGameHook('beforeCommand',context) === false) { return; } command._hookContext=context; command._afterCommandFired=false; var handler = this.handlers[command.verbId]; if (!handler) { Engine.Dialogue.ShowLine(null,'That verb is not implemented.',{}); this.FinishCommand(command); return; } handler(command); }
     };
     Engine.Verbs.RegisterDefaultHandlers();
 
@@ -948,8 +1059,8 @@
         BuildCommand: function (verbId, targetId, x, y) { return { verbId: verbId, targetId: targetId, inventoryItemId: Engine.State.selectedInventoryItemId, roomId: Engine.State.currentRoomId, x: x, y: y }; },
         Resolve: function (command) {
             var target=this.GetTarget(command.targetId);
-            if (command.verbId === 'walkTo' && !target) { Engine.Movement.RequestWalk(command.x, command.y, null); return; }
-            if (!target) { Engine.Dialogue.ShowLine(null,'There is nothing useful there.',{}); return; }
+            if (command.verbId === 'walkTo' && !target) { Engine.Movement.RequestWalk(command.x, command.y, function () { Engine.Verbs.FinishCommand(command); }); return; }
+            if (!target) { Engine.Dialogue.ShowLine(null,'There is nothing useful there.',{}); Engine.Verbs.FinishCommand(command); return; }
             var run=function () { Engine.Interactions.RunTargetInteraction(command,target); };
             if (command.verbId === 'walkTo' && target.walkThrough) { var through=target.walkThroughTo || target.walkThroughPoint || {x:command.x,y:command.y}; Engine.Movement.RequestWalk(through.x,through.y,run); return; }
             if (target.walkTo) { Engine.Movement.RequestWalk(target.walkTo.x,target.walkTo.y,run); } else { run(); }
@@ -968,10 +1079,10 @@
         RunTargetInteraction: function (command, target) {
             var interactions=target.interactions||{}; var linked=this.GetLinkedInventoryTarget(target); var linkedInteractions=linked ? (linked.interactions||{}) : {}; var key=command.verbId; if (command.inventoryItemId) { key=command.verbId+':'+command.inventoryItemId; }
             var scriptName=interactions[key] || interactions[command.verbId] || linkedInteractions[key] || linkedInteractions[command.verbId];
-            if (scriptName && Engine.CurrentGame.scripts[scriptName]) { Engine.CurrentGame.scripts[scriptName](Engine.API, command, target); return; }
-            if (target.isInventoryItem && command.verbId === 'take') { Engine.Dialogue.ShowLine(null, 'You already have the '+(target.name || target.id || 'item')+'.', {}); return; }
-            if (command.verbId === 'lookAt' && (target.defaultText || (linked && linked.defaultText))) { Engine.Dialogue.ShowLine(null, target.defaultText || linked.defaultText, {}); return; }
-            Engine.Dialogue.ShowLine(null, this.GetRefusalText(command, target, key), {});
+            if (scriptName && Engine.CurrentGame.scripts[scriptName]) { Engine.CurrentGame.scripts[scriptName](Engine.API, command, target); Engine.Verbs.FinishCommand(command); return; }
+            if (target.isInventoryItem && command.verbId === 'take') { Engine.Dialogue.ShowLine(null, 'You already have the '+(target.name || target.id || 'item')+'.', {}); Engine.Verbs.FinishCommand(command); return; }
+            if (command.verbId === 'lookAt' && (target.defaultText || (linked && linked.defaultText))) { Engine.Dialogue.ShowLine(null, target.defaultText || linked.defaultText, {}); Engine.Verbs.FinishCommand(command); return; }
+            Engine.Dialogue.ShowLine(null, this.GetRefusalText(command, target, key), {}); Engine.Verbs.FinishCommand(command);
         },
         GetRefusalText: function (command, target, key) {
             var objectRefusals=target.refusals||{}; var linked=this.GetLinkedInventoryTarget(target); var linkedRefusals=linked ? (linked.refusals||{}) : {};
@@ -1171,13 +1282,13 @@
         SelectChoice: function (treeId, tree, node, choice, context) {
             context=Object.assign({},context||{},{ treeId:treeId, node:node, choice:choice });
             if (choice.id) { this.MarkUsed(treeId,choice.id); }
-            this.ApplyActions(choice.actions||choice.action,context);
-            if (choice.script && Engine.CurrentGame.scripts && Engine.CurrentGame.scripts[choice.script]) { Engine.CurrentGame.scripts[choice.script](Engine.API,context); }
+            this.ApplyActions(choice.preActions||choice.preAction,context);
             var self=this;
-            var after=function () { if (choice.end) { return; } if (choice.next) { self.ShowNode(treeId,choice.next,context); } else { self.ShowNode(treeId,node.id||tree.start||'start',context); } };
+            var continueTree=function () { if (choice.end) { return; } if (choice.next) { self.ShowNode(treeId,choice.next,context); } else { self.ShowNode(treeId,node.id||tree.start||'start',context); } };
+            var applyPostResponse=function () { self.ApplyActions(choice.actions||choice.action,context); if (choice.script && Engine.CurrentGame.scripts && Engine.CurrentGame.scripts[choice.script]) { Engine.CurrentGame.scripts[choice.script](Engine.API,context); } self.ApplyActions(choice.postResponseActions||choice.postResponseAction,context); continueTree(); };
             var speakerId=choice.speakerId || node.speakerId || tree.speakerId || context.speakerId || null;
             var response=Engine.Text.Format(choice.response||'',context);
-            if (response) { Engine.Dialogue.ShowLine(speakerId,response,{ onComplete:after }); } else { after(); }
+            if (response) { Engine.Dialogue.ShowLine(speakerId,response,{ onComplete:applyPostResponse }); } else { applyPostResponse(); }
         },
         ApplyActions: function (actions, context) {
             if (!actions) { return; }

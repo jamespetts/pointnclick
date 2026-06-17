@@ -142,8 +142,9 @@ PointClickEngine.RegisterGame({
         openDoor: function (api) { if (api.GetFlag('doorOpen')) { api.Narrate('The door is already open. The corridor is available for walking through.'); } else if (api.GetFlag('doorOpening')) { api.Narrate('The door is already opening. No need to supervise it.'); } else if (api.GetFlag('doorUnlocked')) { api.SetFlag('doorOpening', true); api.SetObjectAnimation('door', 'open', { holdFinal: true }); api.Narrate('The door creaks open.'); } else { api.Narrate('It will not open. The lock is making a persuasive argument.'); } },
         closeDoor: function (api) { if (api.GetFlag('doorOpening')) { api.Narrate('The door is in the middle of opening. Interrupting it now would only confuse the hinges.'); } else if (api.GetFlag('doorOpen')) { api.SetFlag('doorOpen', false); api.SetObjectAnimation('door', 'closed'); api.Narrate('The door closes with a modest wooden thunk.'); } else { api.Narrate('The door is already closed.'); } },
         doorOpenAnimationComplete: function (api) { api.SetFlag('doorOpening', false); api.SetFlag('doorOpen', true); api.SetObjectState('door', { hitDisabled: false }); },
-        endThroughDoor: function (api) { api.EndGame('Test Complete', 'You have completed the test game, negotiated its tiny economy, opened the locked door, and walked through it. Somewhere, a test harness nods approvingly.'); },
-        walkThroughDoor: function (api) { if (api.GetFlag('doorOpen')) { api.EndGame('Test Complete', 'You have completed the test game, negotiated its tiny economy, opened the locked door, and walked through it. Somewhere, a test harness nods approvingly.'); } else { api.Narrate('The door is closed. Walking through it would be poor form, and probably sore.'); } },
+        completeTestGame: function (api) { api.EndGame('Test Complete', 'You have completed the test game, negotiated its tiny economy, opened the locked door, and walked through it. Somewhere, a test harness nods approvingly.'); },
+        endThroughDoor: function (api) { api.RunHook('completeTestGame'); },
+        walkThroughDoor: function (api) { if (api.GetFlag('doorOpen')) { api.RunHook('completeTestGame'); } else { api.Narrate('The door is closed. Walking through it would be poor form, and probably sore.'); } },
         unlockDoor: function (api) { if (api.GetFlag('doorUnlocked')) { api.Narrate('The door is already unlocked. The key declines to repeat itself.'); } else if (api.HasItem('key')) { api.SetFlag('doorUnlocked', true); api.Narrate('The key turns with a satisfying click. The door is now unlocked.'); } else { api.Narrate('You do not have the right key.'); } },
         lookTable: function (api) { if (api.GetFlag('coinTaken')) { api.Narrate('A plain wooden table. The suspiciously convenient coin has gone, leaving only table and regret.'); } else { api.Narrate('A plain wooden table. Somewhere on it, allegedly, is a coin. This is what historians call interface design.'); } },
         lookCaretaker: function (api) { api.Narrate('The caretaker looks like the sort of person who exchanges coins for keys.'); },
@@ -153,9 +154,6 @@ PointClickEngine.RegisterGame({
         closeKey: function (api) { api.Narrate('The key has no moving parts to close.'); },
         useCoinWithKey: function (api) { api.Narrate('The coin and the key decline to become a more complicated currency system.'); },
         talkCaretaker: function (api) { api.StartDialogue('caretakerTalk'); },
-        askWho: function (api) { api.Say('caretaker', 'I am here to test dialogue choices, speech placement, and timed text.'); },
-        askKey: function (api) { if (api.HasItem('key')) { api.Say('caretaker', 'I already gave you the key. Try it on the door.'); } else { api.Say('caretaker', 'I might trade it for a coin.'); } },
-        endTalk: function (api) { api.Say('caretaker', 'Very well.'); },
         caretakerLeavesAfterTrade: function (api) { api.MoveCharacter('caretaker', 332, 116, { speed: 42, hideOnComplete: true }); },
         giveCoinToCaretaker: function (api) { if (api.HasItem('coin')) { api.RemoveItem('coin'); api.AddItem('key'); api.Say('caretaker', 'A fair trade. Here is the key.', { onComplete: function () { api.MoveCharacter('caretaker', 332, 116, { speed: 42, hideOnComplete: true }); } }); } else { api.Say('caretaker', 'You appear to be short of coin.'); } }
     }
