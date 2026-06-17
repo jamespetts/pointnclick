@@ -369,7 +369,14 @@
         if (game.ui && game.ui.verbInventoryBackground) { images.push(game.ui.verbInventoryBackground); }
         if (game.titleBackground) { images.push(game.titleBackground); }
         if (game.endBackground) { images.push(game.endBackground); }
-        Promise.all(images.map(function (p) { return Engine.Assets.LoadImage(p); })).then(function () {
+        var uniqueImages = [];
+        var seenImages = {};
+        images.forEach(function (p) {
+            if (!p || seenImages[p]) { return; }
+            seenImages[p] = true;
+            uniqueImages.push(p);
+        });
+        Promise.all(uniqueImages.map(function (p) { return Engine.Assets.LoadImage(p); })).then(function () {
             document.title = game.title || game.id || 'Point And Click Adventure';
             Engine.State.gameId = game.id;
             Engine.State.currentRoomId = null;
