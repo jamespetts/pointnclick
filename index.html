@@ -107,7 +107,10 @@
           or scroll inventory themselves. Inventory icons are scaled down by the
           renderer to fit the visible inventory slot. Inventory item names are
           shown by the central renderer as hover tooltip text; game scripts must
-          not implement a second inventory tooltip or icon rendering path.
+          not implement a second inventory tooltip or icon rendering path. Taking
+          an item from the inventory uses the central already-have message; game
+          scripts should not add duplicate take refusals merely to say that the
+          item is already carried.
         - The lower command interface can be styled through game.ui. A game may set
           verbInventoryBackground, verbColor, verbSelectedColor, textColor and
           per-character dialogueColor values. The themed
@@ -948,6 +951,7 @@
             var interactions=target.interactions||{}; var linked=this.GetLinkedInventoryTarget(target); var linkedInteractions=linked ? (linked.interactions||{}) : {}; var key=command.verbId; if (command.inventoryItemId) { key=command.verbId+':'+command.inventoryItemId; }
             var scriptName=interactions[key] || interactions[command.verbId] || linkedInteractions[key] || linkedInteractions[command.verbId];
             if (scriptName && Engine.CurrentGame.scripts[scriptName]) { Engine.CurrentGame.scripts[scriptName](Engine.API, command, target); return; }
+            if (target.isInventoryItem && command.verbId === 'take') { Engine.Dialogue.ShowLine(null, 'You already have the '+(target.name || target.id || 'item')+'.', {}); return; }
             if (command.verbId === 'lookAt' && (target.defaultText || (linked && linked.defaultText))) { Engine.Dialogue.ShowLine(null, target.defaultText || linked.defaultText, {}); return; }
             Engine.Dialogue.ShowLine(null, this.GetRefusalText(command, target, key), {});
         },
