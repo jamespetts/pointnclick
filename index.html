@@ -263,7 +263,7 @@
         previousMode: null,
         saveLoadList: [], saveLoadMessage: '', playerTrail: [],
         audio: { musicVolume: 0.25, sfxVolume: 0.75, musicMuted: false, sfxMuted: false },
-        dialogue: { active: false, speakerId: null, speakerName: '', text: '', timer: 0, duration: 0, options: [], onComplete: null, voiceAudio: null, color: null },
+        dialogue: { active: false, speakerId: null, speakerName: '', text: '', displayText: '', timer: 0, duration: 0, explicitDuration: null, options: [], onComplete: null, voiceAudio: null, color: null, textBlocks: [], textBlockIndex: 0 },
         player: { id: 'player', roomId: null, x: 80, y: 112, facing: 'down', animation: 'idleDown', visible: true, controllable: true, speed: 48, walkTarget: null, walkPath: [], walkCallback: null, spriteId: null, scale: 1 },
         debug: false
     };
@@ -427,7 +427,7 @@
         Engine.State.playerTrail = [];
         if (Engine.State.dialogue.voiceAudio) { Engine.State.dialogue.voiceAudio.pause(); }
         Engine.Animations.ClearDialogueAnimation();
-        Engine.State.dialogue = { active:false, speakerId:null, speakerName:'', text:'', timer:0, duration:0, options:[], onComplete:null, voiceAudio:null, color:null };
+        Engine.State.dialogue = { active:false, speakerId:null, speakerName:'', text:'', displayText:'', timer:0, duration:0, explicitDuration:null, options:[], onComplete:null, voiceAudio:null, color:null, textBlocks:[], textBlockIndex:0 };
         Engine.State.player = DeepClone(game.player);
         Engine.State.player.roomId = game.startRoomId;
         Engine.State.player.walkTarget = null;
@@ -453,7 +453,8 @@
 
     Engine.Private.ResumeGame = function () {
         if (!Engine.State.gameStarted) { return; }
-        Engine.State.mode = 'play';
+        Engine.State.mode = Engine.State.activeCutscene ? 'cutscene' : 'play';
+        Engine.State.previousMode = null;
         var room=Engine.Rooms.GetCurrentRoom();
         Engine.Assets.PlayMusic(room.music || []);
     };
@@ -464,9 +465,13 @@
         AddItem: function (itemId) { Engine.Inventory.AddItem(itemId); }, RemoveItem: function (itemId) { Engine.Inventory.RemoveItem(itemId); }, HasItem: function (itemId) { return Engine.Inventory.HasItem(itemId); },
         SetFlag: function (name, value) { Engine.State.flags[name] = !!value; }, GetFlag: function (name) { return !!Engine.State.flags[name]; },
         SetVariable: function (name, value) { Engine.State.variables[name] = value; }, GetVariable: function (name) { return Engine.State.variables[name]; },
+        SetRoomState: function (roomId, values) { if (!roomId) { return; } if (!Engine.State.roomStates[roomId]) { Engine.State.roomStates[roomId] = {}; } Object.keys(values || {}).forEach(function (key) { Engine.State.roomStates[roomId][key] = values[key]; }); },
+        GetRoomState: function (roomId) { if (!roomId) { return {}; } if (!Engine.State.roomStates[roomId]) { Engine.State.roomStates[roomId] = {}; } return Engine.State.roomStates[roomId]; },
+        SetCharacterState: function (characterId, values) { if (!characterId) { return; } if (!Engine.State.characterStates[characterId]) { Engine.State.characterStates[characterId] = {}; } Object.keys(values || {}).forEach(function (key) { Engine.State.characterStates[characterId][key] = values[key]; }); },
+        GetCharacterState: function (characterId) { if (!characterId) { return {}; } if (!Engine.State.characterStates[characterId]) { Engine.State.characterStates[characterId] = {}; } return Engine.State.characterStates[characterId]; },
         ChangeRoom: function (roomId, x, y, facing) { Engine.Rooms.EnterRoom(roomId, x, y, facing); }, MoveCharacter: function (characterId, x, y, options) { Engine.Rooms.MoveCharacter(characterId, x, y, options || {}); }, SetAnimation: function (actorId, animationName, options) { Engine.Animations.SetAnimation(actorId, animationName, options || {}); }, ClearAnimation: function (actorId) { Engine.Animations.ClearAnimation(actorId); }, SetObjectAnimation: function (objectId, animationName, options) { Engine.RoomObjects.SetAnimation(objectId, animationName, options || {}); }, ClearObjectAnimation: function (objectId) { Engine.RoomObjects.ClearAnimation(objectId); }, SetObjectState: function (objectId, values) { Engine.RoomObjects.SetState(objectId, values || {}); }, GetObjectState: function (objectId) { return Engine.RoomObjects.GetState(objectId); }, PlaySound: function (sources) { Engine.Assets.PlaySound(sources); },
         StartCutscene: function (steps) { Engine.Cutscenes.Start(steps); }, EndGame: function (title, text) { Engine.EndGame.Show(title, text); },
-        Save: function (slot) { Engine.SaveLoad.Save(slot || 'slot1'); }, Load: function (slot) { Engine.SaveLoad.Load(slot || 'slot1'); }
+        Save: function (slot) { Engine.SaveLoad.Save(slot || '1'); }, Load: function (slot) { Engine.SaveLoad.Load(slot || '1'); }
     };
 
     Engine.Verbs = {
@@ -525,12 +530,13 @@
     };
     Engine.Rooms = {
         GetCurrentRoom: function () { return Engine.CurrentGame.rooms[Engine.State.currentRoomId]; },
-        EnterRoom: function (roomId, x, y, facing) {
+        EnterRoom: function (roomId, x, y, facing, options) {
+            options = options || {};
             var room = Engine.CurrentGame.rooms[roomId]; if (!room) { Engine.Dialogue.ShowLine(null,'Missing room: '+roomId,{}); return; }
             Engine.State.currentRoomId = roomId; Engine.State.player.roomId = roomId;
             if (typeof x === 'number') { Engine.State.player.x = x; } if (typeof y === 'number') { Engine.State.player.y = y; } if (facing) { Engine.State.player.facing = facing; }
             Engine.State.player.walkTarget = null; Engine.State.player.walkPath = []; Engine.State.player.walkCallback = null; this.ResetPlayerTrail(); this.PlaceFollowers(); this.ApplyActorAvoidance(); Engine.Assets.PlayMusic(room.music || []);
-            if (room.onEnter && Engine.CurrentGame.scripts[room.onEnter]) { Engine.CurrentGame.scripts[room.onEnter](Engine.API); }
+            if (!options.skipOnEnter && room.onEnter && Engine.CurrentGame.scripts[room.onEnter]) { Engine.CurrentGame.scripts[room.onEnter](Engine.API); }
         },
         GetCharacter: function (characterId) { var room=this.GetCurrentRoom(); var chars=room.characters||[]; for (var i=0;i<chars.length;i++) { if (chars[i].id===characterId) { return chars[i]; } } return null; },
         UpdateCharacterRect: function (c) { var hitW=c.hitW||c.rectW||16; var hitH=c.hitH||c.rectH||16; c.rect={x:Math.round(c.x-hitW/2),y:Math.round(c.y-hitH),w:hitW,h:hitH}; },
@@ -664,15 +670,63 @@
 
     Engine.Dialogue = {
         ShowLine: function (speakerId, text, options) {
-            options=options||{}; Engine.Animations.ClearDialogueAnimation(); var speakerName=''; if (speakerId && Engine.CurrentGame.characters && Engine.CurrentGame.characters[speakerId]) { speakerName=Engine.CurrentGame.characters[speakerId].name; }
-            Engine.State.dialogue.active=true; Engine.State.dialogue.speakerId=speakerId; Engine.State.dialogue.speakerName=speakerName; Engine.State.dialogue.text=text; Engine.State.dialogue.timer=0; Engine.State.dialogue.duration=options.duration || Math.max(2.0, Math.min(8.0, text.length/12)); Engine.State.dialogue.options=options.choices||[]; Engine.State.dialogue.onComplete=options.onComplete||null; Engine.State.dialogue.color=options.color||null; Engine.Animations.BeginDialogueAnimation(speakerId, options);
+            options=options||{};
+            Engine.Animations.ClearDialogueAnimation();
+            var lineText=String(text||'');
+            var speakerName='';
+            if (speakerId && Engine.CurrentGame.characters && Engine.CurrentGame.characters[speakerId]) { speakerName=Engine.CurrentGame.characters[speakerId].name; }
+            var choices=options.choices||[];
+            var displayText=speakerName ? speakerName+': '+lineText : lineText;
+            var textBlocks=[];
+            if (speakerId && !choices.length && Engine.Renderer) {
+                var lines=Engine.Renderer.BuildWrappedLines(displayText,168);
+                for (var i=0;i<lines.length;i+=2) { textBlocks.push(lines.slice(i,i+2)); }
+            }
+            Engine.State.dialogue.active=true;
+            Engine.State.dialogue.speakerId=speakerId;
+            Engine.State.dialogue.speakerName=speakerName;
+            Engine.State.dialogue.text=lineText;
+            Engine.State.dialogue.displayText=displayText;
+            Engine.State.dialogue.timer=0;
+            Engine.State.dialogue.explicitDuration=options.duration||null;
+            Engine.State.dialogue.options=choices;
+            Engine.State.dialogue.onComplete=options.onComplete||null;
+            Engine.State.dialogue.color=options.color||null;
+            Engine.State.dialogue.textBlocks=textBlocks;
+            Engine.State.dialogue.textBlockIndex=0;
+            Engine.Dialogue.SetCurrentBlockDuration();
+            Engine.Animations.BeginDialogueAnimation(speakerId, options);
             if (Engine.State.dialogue.voiceAudio) { Engine.State.dialogue.voiceAudio.pause(); Engine.State.dialogue.voiceAudio=null; }
             if (options.voice) { var voice=new Audio(Engine.Assets.Resolve(options.voice)); voice.preload='auto'; Engine.State.dialogue.voiceAudio=voice; var pp=voice.play(); if (pp && pp.catch) { pp.catch(function () {}); } }
         },
-        Advance: function () { var d=Engine.State.dialogue; if (!d.active) { return; } if (d.options && d.options.length) { return; } this.Clear(); },
+        SetCurrentBlockDuration: function () {
+            var d=Engine.State.dialogue;
+            if (d.explicitDuration) {
+                if (d.textBlocks && d.textBlocks.length > 1) { d.duration=Math.max(0.8,d.explicitDuration/d.textBlocks.length); }
+                else { d.duration=d.explicitDuration; }
+                return;
+            }
+            if (d.textBlocks && d.textBlocks.length) {
+                var block=d.textBlocks[d.textBlockIndex]||[];
+                d.duration=Math.max(1.4,Math.min(4.5,block.join(' ').length/12));
+                return;
+            }
+            d.duration=Math.max(2.0,Math.min(8.0,String(d.text||'').length/12));
+        },
+        AdvanceBlockOrClear: function () {
+            var d=Engine.State.dialogue;
+            if (d.textBlocks && d.textBlocks.length && d.textBlockIndex < d.textBlocks.length-1) {
+                d.textBlockIndex++;
+                d.timer=0;
+                this.SetCurrentBlockDuration();
+                return;
+            }
+            this.Clear();
+        },
+        Advance: function () { var d=Engine.State.dialogue; if (!d.active) { return; } if (d.options && d.options.length) { return; } this.AdvanceBlockOrClear(); },
         Choose: function (index) { var d=Engine.State.dialogue; if (!d.active || !d.options || !d.options[index]) { return; } var choice=d.options[index]; var run=function () { if (choice.script && Engine.CurrentGame.scripts[choice.script]) { Engine.CurrentGame.scripts[choice.script](Engine.API); } }; this.Clear(); var playerLine=(typeof choice.playerText === 'string') ? choice.playerText : choice.text; if (choice.skipPlayerLine || !playerLine) { run(); } else { Engine.Dialogue.ShowLine('player', playerLine, { onComplete: run }); } },
-        Clear: function () { var cb=Engine.State.dialogue.onComplete; if (Engine.State.dialogue.voiceAudio) { Engine.State.dialogue.voiceAudio.pause(); } Engine.Animations.ClearDialogueAnimation(); Engine.State.dialogue.active=false; Engine.State.dialogue.text=''; Engine.State.dialogue.options=[]; Engine.State.dialogue.voiceAudio=null; Engine.State.dialogue.onComplete=null; Engine.State.dialogue.color=null; if (cb) { cb(); } },
-        Update: function (dt) { var d=Engine.State.dialogue; if (!d.active || (d.options && d.options.length)) { return; } d.timer += dt; if (d.timer >= d.duration) { this.Clear(); } }
+        Clear: function () { var cb=Engine.State.dialogue.onComplete; if (Engine.State.dialogue.voiceAudio) { Engine.State.dialogue.voiceAudio.pause(); } Engine.Animations.ClearDialogueAnimation(); Engine.State.dialogue.active=false; Engine.State.dialogue.speakerId=null; Engine.State.dialogue.speakerName=''; Engine.State.dialogue.text=''; Engine.State.dialogue.displayText=''; Engine.State.dialogue.timer=0; Engine.State.dialogue.duration=0; Engine.State.dialogue.explicitDuration=null; Engine.State.dialogue.options=[]; Engine.State.dialogue.voiceAudio=null; Engine.State.dialogue.onComplete=null; Engine.State.dialogue.color=null; Engine.State.dialogue.textBlocks=[]; Engine.State.dialogue.textBlockIndex=0; if (cb) { cb(); } },
+        Update: function (dt) { var d=Engine.State.dialogue; if (!d.active || (d.options && d.options.length)) { return; } d.timer += dt; if (d.timer >= d.duration) { this.AdvanceBlockOrClear(); } }
     };
 
     Engine.Cutscenes = {
@@ -683,7 +737,10 @@
     Engine.EndGame = {
         Show: function (title, text) {
             Engine.State.endGame.title = title || 'The End'; Engine.State.endGame.text = text || 'The adventure is complete.';
-            Engine.State.player.walkTarget = null; Engine.State.player.walkCallback = null; Engine.State.dialogue.active = false;
+            Engine.State.player.walkTarget = null; Engine.State.player.walkCallback = null;
+            if (Engine.State.dialogue.voiceAudio) { Engine.State.dialogue.voiceAudio.pause(); }
+            Engine.Animations.ClearDialogueAnimation();
+            Engine.State.dialogue = { active:false, speakerId:null, speakerName:'', text:'', displayText:'', timer:0, duration:0, explicitDuration:null, options:[], onComplete:null, voiceAudio:null, color:null, textBlocks:[], textBlockIndex:0 };
             Engine.Assets.PlayMusic((Engine.CurrentGame && Engine.CurrentGame.endMusic) ? Engine.CurrentGame.endMusic : []);
             Engine.State.mode = 'ended';
         }
@@ -715,11 +772,11 @@
             if (version<2) { data.playerTrail=data.playerTrail||((data.player&&typeof data.player.x==='number')?[{x:data.player.x,y:data.player.y,facing:data.player.facing||'down'}]:[]); data.saveDataVersion=2; version=2; }
             return data;
         },
-        CaptureRoomCharacters: function () { var result={}; var rooms=Engine.CurrentGame.rooms||{}; Object.keys(rooms).forEach(function (roomId) { result[roomId]=(rooms[roomId].characters||[]).map(function (c) { return { id:c.id, x:c.x, y:c.y, facing:c.facing, animation:c.animation, hidden:!!c.hidden, customAnimation:c.customAnimation||null, dialogueAnimation:c.dialogueAnimation||null, moveTarget:c.moveTarget||null, followTarget:c.followTarget||null, lastMoveX:c.lastMoveX||0, lastMoveY:c.lastMoveY||0, speed:c.speed, rect:c.rect ? DeepClone(c.rect) : null }; }); }); return result; },
+        CaptureRoomCharacters: function () { var result={}; var rooms=Engine.CurrentGame.rooms||{}; Object.keys(rooms).forEach(function (roomId) { result[roomId]=(rooms[roomId].characters||[]).map(function (c) { return { id:c.id, x:c.x, y:c.y, facing:c.facing, animation:c.animation, hidden:!!c.hidden, customAnimation:c.customAnimation||null, dialogueAnimation:c.dialogueAnimation||null, moveTarget:null, followTarget:c.followTarget||null, lastMoveX:c.lastMoveX||0, lastMoveY:c.lastMoveY||0, speed:c.speed, rect:c.rect ? DeepClone(c.rect) : null }; }); }); return result; },
         // Load restores room definitions from the immutable initial snapshot first,
         // then overlays saved mutable character state. Do not replace this with
         // ResetGameData(), which would also clear global save data being restored.
-        RestoreRoomCharacters: function (saved) { if (Engine.CurrentGame.initialRooms) { Engine.CurrentGame.rooms=DeepClone(Engine.CurrentGame.initialRooms); } if (!saved) { return; } Object.keys(saved).forEach(function (roomId) { var room=Engine.CurrentGame.rooms[roomId]; if (!room) { return; } var byId={}; (room.characters||[]).forEach(function (c) { byId[c.id]=c; }); (saved[roomId]||[]).forEach(function (s) { var c=byId[s.id]; if (!c) { return; } Object.keys(s).forEach(function (k) { if (k !== 'id') { c[k]=s[k]; } }); if (!c.rect) { Engine.Rooms.UpdateCharacterRect(c); } }); }); },
+        RestoreRoomCharacters: function (saved) { if (Engine.CurrentGame.initialRooms) { Engine.CurrentGame.rooms=DeepClone(Engine.CurrentGame.initialRooms); } if (!saved) { return; } Object.keys(saved).forEach(function (roomId) { var room=Engine.CurrentGame.rooms[roomId]; if (!room) { return; } var byId={}; (room.characters||[]).forEach(function (c) { byId[c.id]=c; }); (saved[roomId]||[]).forEach(function (s) { var c=byId[s.id]; if (!c) { return; } Object.keys(s).forEach(function (k) { if (k !== 'id' && k !== 'moveTarget') { c[k]=s[k]; } }); c.moveTarget=null; if (!c.rect) { Engine.Rooms.UpdateCharacterRect(c); } }); }); },
         // SAVE-STATE WARNING FOR FUTURE AIS AND MAINTAINERS:
         // If any new mutable gameplay state is added to Engine.State, room data,
         // character data, object data, inventory behaviour, audio behaviour,
@@ -744,7 +801,7 @@
         // SAVE-STATE WARNING: Load() must be kept in lockstep with BuildData().
         // Whenever a field is added to the saved data above, restore it here and
         // perform any normalisation needed before gameplay resumes.
-        Load: function (slot) { var data=this.ReadSlot(slot||'1'); if (!data) { Engine.State.saveLoadMessage='No saved game was found in that slot.'; return; } data=this.MigrateSaveData(data); if (!this.IsCompatibleSave(data)) { Engine.State.saveLoadMessage='This saved game is not compatible.'; return; } Engine.State.currentRoomId=data.currentRoomId; Engine.State.selectedVerbId=data.selectedVerbId||'walkTo'; Engine.State.selectedInventoryItemId=data.selectedInventoryItemId||null; Engine.State.player=data.player; Engine.State.inventory=data.inventory||[]; Engine.State.inventoryScroll=data.inventoryScroll||0; Engine.State.flags=data.flags||{}; Engine.State.variables=data.variables||{}; Engine.State.roomStates=data.roomStates||{}; Engine.State.objectStates=data.objectStates||{}; Engine.State.characterStates=data.characterStates||{}; Engine.State.endGame=data.endGame||{ title:'', text:'' }; Engine.State.audio=data.audio||Engine.State.audio; Engine.State.dialogue.active=false; Engine.State.dialogue.text=''; Engine.State.dialogue.options=[]; Engine.State.dialogue.onComplete=null; Engine.State.activeCutscene=null; Engine.State.gameStarted=true; this.RestoreRoomCharacters(data.runtimeCharacters); Engine.Inventory.NormalizeScroll(); Engine.Rooms.EnterRoom(data.currentRoomId,data.player.x,data.player.y,data.player.facing); Engine.State.player=Object.assign(Engine.State.player,data.player); Engine.State.player.walkTarget=null; Engine.State.player.walkPath=[]; Engine.State.player.walkCallback=null; Engine.State.playerTrail=data.playerTrail&&data.playerTrail.length?data.playerTrail:[{x:Engine.State.player.x,y:Engine.State.player.y,facing:Engine.State.player.facing||'down'}]; Engine.State.mode='play'; Engine.Dialogue.ShowLine(null,'Game loaded.',{}); }
+        Load: function (slot) { var data=this.ReadSlot(slot||'1'); if (!data) { Engine.State.saveLoadMessage='No saved game was found in that slot.'; return; } data=this.MigrateSaveData(data); if (!this.IsCompatibleSave(data)) { Engine.State.saveLoadMessage='This saved game is not compatible.'; return; } Engine.State.currentRoomId=data.currentRoomId; Engine.State.selectedVerbId=data.selectedVerbId||'walkTo'; Engine.State.selectedInventoryItemId=data.selectedInventoryItemId||null; Engine.State.player=data.player; Engine.State.inventory=data.inventory||[]; Engine.State.inventoryScroll=data.inventoryScroll||0; Engine.State.flags=data.flags||{}; Engine.State.variables=data.variables||{}; Engine.State.roomStates=data.roomStates||{}; Engine.State.objectStates=data.objectStates||{}; Engine.State.characterStates=data.characterStates||{}; Engine.State.endGame=data.endGame||{ title:'', text:'' }; Engine.State.audio=data.audio||Engine.State.audio; Engine.State.dialogue.active=false; Engine.State.dialogue.speakerId=null; Engine.State.dialogue.speakerName=''; Engine.State.dialogue.text=''; Engine.State.dialogue.displayText=''; Engine.State.dialogue.timer=0; Engine.State.dialogue.duration=0; Engine.State.dialogue.explicitDuration=null; Engine.State.dialogue.options=[]; Engine.State.dialogue.onComplete=null; Engine.State.dialogue.voiceAudio=null; Engine.State.dialogue.color=null; Engine.State.dialogue.textBlocks=[]; Engine.State.dialogue.textBlockIndex=0; Engine.State.activeCutscene=null; Engine.State.gameStarted=true; this.RestoreRoomCharacters(data.runtimeCharacters); Engine.Inventory.NormalizeScroll(); Engine.Rooms.EnterRoom(data.currentRoomId,data.player.x,data.player.y,data.player.facing,{ skipOnEnter:true }); Engine.State.player=Object.assign(Engine.State.player,data.player); Engine.State.player.walkTarget=null; Engine.State.player.walkPath=[]; Engine.State.player.walkCallback=null; Engine.State.playerTrail=data.playerTrail&&data.playerTrail.length?data.playerTrail:[{x:Engine.State.player.x,y:Engine.State.player.y,facing:Engine.State.player.facing||'down'}]; Engine.State.mode='play'; Engine.Dialogue.ShowLine(null,'Game loaded.',{}); }
     };
 
     Engine.Input = {
@@ -761,7 +818,7 @@
             if (Engine.State.mode !== 'play') { if (Engine.State.mode==='cutscene' && Engine.State.dialogue.active) { Engine.Dialogue.Advance(); } return; }
             if (Engine.State.dialogue.active) { if (Engine.State.dialogue.options && Engine.State.dialogue.options.length) { var opt=Math.floor((p.y-142)/12); Engine.Dialogue.Choose(opt); } else { Engine.Dialogue.Advance(); } return; }
             if (p.y >= UI_TOP) { var arrow=Engine.Inventory.GetScrollArrowAtPoint(p.x,p.y); if (arrow === 'up' && Engine.Inventory.CanScrollUp()) { Engine.Inventory.ScrollByRows(-1); return; } if (arrow === 'down' && Engine.Inventory.CanScrollDown()) { Engine.Inventory.ScrollByRows(1); return; } var verb=Engine.Verbs.GetByPoint(p.x,p.y); if (verb) { Engine.State.selectedVerbId=verb.id; Engine.State.selectedInventoryItemId=null; return; } var itemId=Engine.Inventory.GetItemAtPoint(p.x,p.y); if (itemId) { if (Engine.State.selectedVerbId === 'use' || Engine.State.selectedVerbId === 'give') { if (Engine.State.selectedInventoryItemId) { Engine.Interactions.ResolveInventoryCommand(Engine.State.selectedVerbId,itemId,Engine.State.selectedInventoryItemId); Engine.State.selectedInventoryItemId=null; } else { Engine.State.selectedInventoryItemId=itemId; } } else { Engine.Interactions.ResolveInventoryCommand(Engine.State.selectedVerbId,itemId,null); } return; } return; }
-            var targetId=Engine.Interactions.HitTest(p.x,p.y); var verbId=(event.button === 2 || event.altKey) ? 'walkTo' : Engine.State.selectedVerbId; var command=Engine.Interactions.BuildCommand(verbId,targetId,p.x,p.y); Engine.Verbs.Execute(command);
+            var targetId=Engine.Interactions.HitTest(p.x,p.y); var verbId=(event.button === 2 || event.altKey) ? 'walkTo' : Engine.State.selectedVerbId; var command=Engine.Interactions.BuildCommand(verbId,targetId,p.x,p.y); Engine.Verbs.Execute(command); if (command.inventoryItemId && (verbId === 'use' || verbId === 'give')) { Engine.State.selectedInventoryItemId=null; }
         },
         HandleMenuClick: function (x,y) {
             if (y>=66 && y<78 && Engine.State.gameStarted) { Engine.Private.ResumeGame(); return; }
@@ -862,7 +919,7 @@
             if (d.speakerId==='player') { var ps=Engine.CurrentGame.sprites[Engine.State.player.spriteId]; speakerX=Engine.State.player.x; speakerTop=Engine.State.player.y-(ps ? ps.frameH : 32); }
             else { var room=Engine.Rooms.GetCurrentRoom(); (room.characters||[]).forEach(function (c) { if (c.id===d.speakerId) { var cs=Engine.CurrentGame.sprites[c.spriteId]; speakerX=c.x; speakerTop=c.y-(cs ? cs.frameH : 32); } }); }
             if (speakerTop===null || speakerX===null) { return; }
-            var text=d.speakerName ? d.speakerName+': '+d.text : d.text; var lines=this.BuildWrappedLines(text,168); var blockHeight=lines.length*this.GetLineHeight(); var y=Clamp(Math.round(speakerTop-blockHeight-6),2,112-blockHeight); var speechColor=this.GetDialogueTextColor(d.speakerId);
+            var lines=(d.textBlocks && d.textBlocks.length) ? d.textBlocks[d.textBlockIndex] : this.BuildWrappedLines(d.displayText || (d.speakerName ? d.speakerName+': '+d.text : d.text),168); var blockHeight=lines.length*this.GetLineHeight(); var y=Clamp(Math.round(speakerTop-blockHeight-6),2,112-blockHeight); var speechColor=this.GetDialogueTextColor(d.speakerId);
             for (var i=0;i<lines.length;i++) { var w=this.MeasureText(lines[i]); var x=Clamp(Math.round(speakerX-w/2),2,318-w); this.TextWithShadow(lines[i],x,y+i*this.GetLineHeight(),speechColor); }
         },
         RenderHoverLabel: function () { if (Engine.State.mode!=='play' || Engine.State.dialogue.active || !Engine.State.hoveredTargetId || Engine.State.pointerY>=UI_TOP) { return; } var target=Engine.Interactions.GetTarget(Engine.State.hoveredTargetId); if (!target || !target.name) { return; } var label=CapitaliseFirst(target.name); var w=this.MeasureText(label); var x=Clamp(Engine.State.pointerX+6,2,318-w); var y=Clamp(Engine.State.pointerY-12,2,UI_TOP-9); this.TextWithShadow(label,x,y,this.GetTextColor('hoverTextColor','#ffff55')); },
