@@ -178,6 +178,25 @@
           content-defined and must be triggered through api.SetAnimation(...)
           and api.ClearAnimation(...). The engine must not contain narrative-
           specific animation names such as tail wagging.
+        - Lifecycle hooks are central engine extension points, not replacement
+          game loops. Game scripts may define game.hooks entries such as
+          beforeRoomEnter, afterRoomEnter, beforeRoomExit, afterRoomExit,
+          beforeTransition, afterTransition, beforeCommand, afterCommand,
+          onInventoryChanged, beforeCutscene, afterCutscene, onMenuEnter and
+          onMenuExit. Rooms may define beforeEnter/onBeforeEnter,
+          afterEnter/onAfterEnter, beforeExit/onBeforeExit and
+          afterExit/onAfterExit. Transition zones may define beforeTransition,
+          onBeforeTransition, afterTransition and onAfterTransition. Hook
+          scripts receive (api, context). Returning false from a before hook
+          cancels that operation.
+        - Per-object variables are stored centrally in Engine.State.scopedVariables
+          and must be accessed through the public API. Use room, character and
+          item variable helpers for puzzle state that belongs to a specific
+          entity, rather than inventing parallel state objects in game scripts.
+          Scoped variables are saved, loaded and reset by the engine. Values must
+          be strings or finite numbers. Arithmetic helpers validate types and
+          write clear debug warnings for invalid operations such as adding to a
+          string or dividing by zero.
     -->
 
     <style>
@@ -195,7 +214,7 @@
 (function () {
 
     var ENGINE_API_VERSION = 1;
-    var SAVE_DATA_VERSION = 2;
+    var SAVE_DATA_VERSION = 3;
     var LOGICAL_WIDTH = 320;
     var LOGICAL_HEIGHT = 200;
     var SCENE_HEIGHT = 136;
@@ -257,11 +276,11 @@
     Engine.State = {
         mode: 'boot', gameId: null, currentRoomId: null, selectedVerbId: 'walkTo', selectedInventoryItemId: null,
         hoveredTargetId: null, hoveredInventoryItemId: null, pointerX: 0, pointerY: 0, pendingCommand: null,
-        activeCutscene: null, cutsceneQueue: [], flags: {}, variables: {}, roomStates: {}, objectStates: {}, characterStates: {}, inventory: [], inventoryScroll: 0,
+        activeCutscene: null, cutsceneQueue: [], flags: {}, variables: {}, scopedVariables: { rooms:{}, characters:{}, items:{} }, roomStates: {}, objectStates: {}, characterStates: {}, inventory: [], inventoryScroll: 0,
         endGame: { title: '', text: '' },
         gameStarted: false,
         previousMode: null,
-        saveLoadList: [], saveLoadMessage: '', playerTrail: [],
+        saveLoadList: [], saveLoadMessage: '', debugMessages: [], playerTrail: [],
         audio: { musicVolume: 0.25, sfxVolume: 0.75, musicMuted: false, sfxMuted: false },
         dialogue: { active: false, speakerId: null, speakerName: '', text: '', displayText: '', timer: 0, duration: 0, explicitDuration: null, options: [], onComplete: null, voiceAudio: null, color: null, textBlocks: [], textBlockIndex: 0 },
         player: { id: 'player', roomId: null, x: 80, y: 112, facing: 'down', animation: 'idleDown', visible: true, controllable: true, speed: 48, walkTarget: null, walkPath: [], walkCallback: null, spriteId: null, scale: 1 },
@@ -320,6 +339,164 @@
         }
     };
 
+
+    // DEBUG, HOOK AND SCOPED VARIABLE SYSTEMS
+    // --------------------------------------
+    // Engine.Debug is the central diagnostic path for content-authoring mistakes.
+    // It logs to the browser console and keeps a short in-memory message list so
+    // a future debug UI can display recent problems without each game script
+    // inventing its own logger.
+    //
+    // Engine.Hooks is the single lifecycle-hook dispatcher. Hook scripts are
+    // normal game scripts looked up by name in game.scripts. They receive
+    // (api, context) and may return false from "before" hooks to cancel the
+    // current operation. Hook entries may be a single script name or an array of
+    // script names. Missing hook scripts do not crash the game; they produce a
+    // clear debug warning and the operation continues.
+    //
+    // Engine.ScopedVariables stores per-room, per-character and per-item variables
+    // in Engine.State.scopedVariables. Game scripts must use the public API
+    // wrappers rather than writing directly to this object. Values are deliberately
+    // restricted to strings and finite numbers so saves remain stable and puzzle
+    // state stays easy to inspect. Arithmetic helpers operate only on numbers and
+    // report detailed debug warnings for bad scope names, bad ids, missing scripts,
+    // arithmetic on strings, non-finite numbers and division by zero.
+    Engine.Debug = {
+        Add: function (level, message) {
+            var text='[PointClickEngine] '+level+': '+message;
+            if (window.console) {
+                if (level === 'ERROR' && console.error) { console.error(text); }
+                else if (level === 'WARN' && console.warn) { console.warn(text); }
+                else if (console.log) { console.log(text); }
+            }
+            Engine.State.debugMessages=Engine.State.debugMessages||[];
+            Engine.State.debugMessages.push({ level:level, message:message });
+            while (Engine.State.debugMessages.length>60) { Engine.State.debugMessages.shift(); }
+        },
+        Warn: function (message) { this.Add('WARN',message); },
+        Error: function (message) { this.Add('ERROR',message); },
+        Info: function (message) { this.Add('INFO',message); }
+    };
+    Engine.Hooks = {
+        NormaliseList: function (scripts) {
+            if (!scripts) { return []; }
+            if (Array.isArray(scripts)) { return scripts; }
+            return [scripts];
+        },
+        RunScript: function (scriptName, context, label) {
+            if (!scriptName) { return true; }
+            if (typeof scriptName !== 'string') { Engine.Debug.Warn('Hook '+(label||'unknown')+' ignored because script name is not a string.'); return true; }
+            if (!Engine.CurrentGame || !Engine.CurrentGame.scripts || !Engine.CurrentGame.scripts[scriptName]) { Engine.Debug.Warn('Hook '+(label||'unknown')+' references missing script "'+scriptName+'".'); return true; }
+            try { return Engine.CurrentGame.scripts[scriptName](Engine.API, context||{}) !== false; }
+            catch (err) { Engine.Debug.Error('Hook '+(label||scriptName)+' failed: '+(err && err.message ? err.message : err)); return true; }
+        },
+        RunList: function (scripts, context, label) {
+            var list=this.NormaliseList(scripts);
+            for (var i=0;i<list.length;i++) { if (this.RunScript(list[i],context,label) === false) { return false; } }
+            return true;
+        },
+        RunGameHook: function (name, context) {
+            var hooks=(Engine.CurrentGame && Engine.CurrentGame.hooks) ? Engine.CurrentGame.hooks : {};
+            return this.RunList(hooks[name],context,'game.hooks.'+name);
+        },
+        RunRoomHook: function (room, names, context, label) {
+            if (!room) { return true; }
+            for (var i=0;i<names.length;i++) { if (this.RunList(room[names[i]],context,label+'.'+names[i]) === false) { return false; } }
+            return true;
+        },
+        RunTransitionHook: function (zone, name, context) {
+            var onName='on'+CapitaliseFirst(name);
+            if (this.RunGameHook(name,context) === false) { return false; }
+            if (zone && this.RunList([zone[name],zone[onName]],context,'transition.'+name) === false) { return false; }
+            return true;
+        }
+    };
+    Engine.ScopedVariables = {
+        ScopeName: function (scopeType) {
+            var s=String(scopeType||'').toLowerCase();
+            if (s==='room' || s==='rooms') { return 'rooms'; }
+            if (s==='character' || s==='characters' || s==='actor' || s==='actors' || s==='npc' || s==='npcs') { return 'characters'; }
+            if (s==='item' || s==='items' || s==='inventory' || s==='inventoryitem') { return 'items'; }
+            Engine.Debug.Warn('Scoped variable operation used unknown scope "'+scopeType+'". Use room, character or item.');
+            return null;
+        },
+        ObjectExists: function (scope, objectId) {
+            if (!Engine.CurrentGame || !objectId) { return false; }
+            if (scope==='rooms') { return !!(Engine.CurrentGame.rooms && Engine.CurrentGame.rooms[objectId]); }
+            if (scope==='items') { return !!(Engine.CurrentGame.items && Engine.CurrentGame.items[objectId]); }
+            if (scope==='characters') {
+                if (objectId==='player') { return true; }
+                if (Engine.CurrentGame.characters && Engine.CurrentGame.characters[objectId]) { return true; }
+                var rooms=Engine.CurrentGame.rooms||{};
+                var ids=Object.keys(rooms);
+                for (var r=0;r<ids.length;r++) {
+                    var chars=rooms[ids[r]].characters||[];
+                    for (var c=0;c<chars.length;c++) { if (chars[c].id===objectId) { return true; } }
+                }
+            }
+            return false;
+        },
+        Bucket: function (scopeType, objectId, create) {
+            var scope=this.ScopeName(scopeType);
+            if (!scope) { return null; }
+            if (!objectId) { Engine.Debug.Warn('Scoped variable operation for '+scope+' omitted an object id.'); return null; }
+            if (!this.ObjectExists(scope,objectId)) { Engine.Debug.Warn('Scoped variable operation references missing '+scope.slice(0,-1)+' "'+objectId+'".'); return null; }
+            Engine.State.scopedVariables=Engine.State.scopedVariables||{ rooms:{}, characters:{}, items:{} };
+            if (!Engine.State.scopedVariables[scope]) { Engine.State.scopedVariables[scope]={}; }
+            if (!Engine.State.scopedVariables[scope][objectId]) {
+                if (!create) { return null; }
+                Engine.State.scopedVariables[scope][objectId]={};
+            }
+            return Engine.State.scopedVariables[scope][objectId];
+        },
+        IsAllowedValue: function (value) { return typeof value === 'string' || (typeof value === 'number' && isFinite(value)); },
+        Set: function (scopeType, objectId, name, value) {
+            if (!name) { Engine.Debug.Warn('Scoped variable set on '+scopeType+' "'+objectId+'" omitted a variable name.'); return false; }
+            if (!this.IsAllowedValue(value)) { Engine.Debug.Warn('Scoped variable '+scopeType+' "'+objectId+'".'+name+' rejected value of type '+(typeof value)+'. Use finite numbers or strings.'); return false; }
+            var bucket=this.Bucket(scopeType,objectId,true); if (!bucket) { return false; }
+            bucket[name]=value; return true;
+        },
+        Get: function (scopeType, objectId, name, defaultValue) {
+            if (!name) { Engine.Debug.Warn('Scoped variable get on '+scopeType+' "'+objectId+'" omitted a variable name.'); return defaultValue; }
+            var bucket=this.Bucket(scopeType,objectId,false); if (!bucket || !Object.prototype.hasOwnProperty.call(bucket,name)) { return defaultValue; }
+            return bucket[name];
+        },
+        Has: function (scopeType, objectId, name) {
+            var bucket=this.Bucket(scopeType,objectId,false); return !!(bucket && Object.prototype.hasOwnProperty.call(bucket,name));
+        },
+        Clear: function (scopeType, objectId, name) {
+            var bucket=this.Bucket(scopeType,objectId,false); if (!bucket) { return false; }
+            if (Object.prototype.hasOwnProperty.call(bucket,name)) { delete bucket[name]; return true; }
+            return false;
+        },
+        Arithmetic: function (scopeType, objectId, name, amount, op) {
+            if (typeof amount !== 'number' || !isFinite(amount)) { Engine.Debug.Warn('Scoped variable arithmetic on '+scopeType+' "'+objectId+'".'+name+' received non-numeric amount '+String(amount)+'.'); return null; }
+            if (op==='divide' && amount===0) { Engine.Debug.Warn('Scoped variable arithmetic refused to divide '+scopeType+' "'+objectId+'".'+name+' by zero.'); return null; }
+            var bucket=this.Bucket(scopeType,objectId,true); if (!bucket) { return null; }
+            var current=Object.prototype.hasOwnProperty.call(bucket,name) ? bucket[name] : 0;
+            if (typeof current !== 'number' || !isFinite(current)) { Engine.Debug.Warn('Scoped variable arithmetic on '+scopeType+' "'+objectId+'".'+name+' failed because current value is '+(typeof current)+' "'+current+'".'); return null; }
+            if (op==='add') { current += amount; }
+            else if (op==='subtract') { current -= amount; }
+            else if (op==='multiply') { current *= amount; }
+            else if (op==='divide') { current /= amount; }
+            else { Engine.Debug.Warn('Unknown scoped variable arithmetic operation "'+op+'".'); return null; }
+            bucket[name]=current; return current;
+        },
+        Compare: function (scopeType, objectId, name, operator, value) {
+            var current=this.Get(scopeType,objectId,name,undefined);
+            if (operator==='==' || operator==='equals') { return current == value; }
+            if (operator==='===' || operator==='strictEquals') { return current === value; }
+            if (operator==='!=' || operator==='notEquals') { return current != value; }
+            if (operator==='!==' || operator==='strictNotEquals') { return current !== value; }
+            if (operator==='contains') { if (typeof current !== 'string' || typeof value !== 'string') { Engine.Debug.Warn('Scoped variable contains comparison needs two strings for '+scopeType+' "'+objectId+'".'+name+'.'); return false; } return current.indexOf(value)>=0; }
+            if (typeof current !== 'number' || typeof value !== 'number') { Engine.Debug.Warn('Scoped variable comparison '+operator+' needs numbers for '+scopeType+' "'+objectId+'".'+name+'.'); return false; }
+            if (operator==='>') { return current>value; }
+            if (operator==='>=') { return current>=value; }
+            if (operator==='<') { return current<value; }
+            if (operator==='<=') { return current<=value; }
+            Engine.Debug.Warn('Unknown scoped variable comparison operator "'+operator+'".'); return false;
+        }
+    };
     Engine.RegisterGame = function (gameDefinition) {
         if (!gameDefinition || !gameDefinition.id) { throw new Error('Game registration failed: missing id.'); }
         Engine.Games[gameDefinition.id] = gameDefinition;
@@ -386,6 +563,8 @@
             Engine.State.inventoryScroll = 0;
             Engine.State.flags = {};
             Engine.State.variables = {};
+            Engine.State.scopedVariables = { rooms:{}, characters:{}, items:{} };
+            Engine.State.roomStates = {};
             Engine.State.objectStates = {};
             Engine.State.characterStates = {};
             Engine.State.dialogue.active = false;
@@ -422,6 +601,7 @@
         Engine.State.cutsceneQueue = [];
         Engine.State.flags = {};
         Engine.State.variables = {};
+        Engine.State.scopedVariables = { rooms:{}, characters:{}, items:{} };
         Engine.State.roomStates = {};
         Engine.State.objectStates = {};
         Engine.State.characterStates = {};
@@ -431,6 +611,7 @@
         Engine.State.previousMode = null;
         Engine.State.saveLoadList = [];
         Engine.State.saveLoadMessage = '';
+        Engine.State.debugMessages = [];
         Engine.State.playerTrail = [];
         if (Engine.State.dialogue.voiceAudio) { Engine.State.dialogue.voiceAudio.pause(); }
         Engine.Animations.ClearDialogueAnimation();
@@ -445,6 +626,7 @@
         Engine.Inventory.NormalizeScroll();
     };
     Engine.Private.StartNewGame = function () {
+        Engine.Hooks.RunGameHook('onMenuExit',{ mode:'newGame' });
         var game=Engine.CurrentGame;
         Engine.Private.ResetGameData(game);
         Engine.State.gameStarted = true;
@@ -456,10 +638,12 @@
         if (Engine.State.mode === 'play' || Engine.State.mode === 'cutscene') { Engine.State.previousMode = Engine.State.mode; }
         Engine.State.mode = 'menu';
         Engine.Assets.PlayMusic(Engine.CurrentGame.titleMusic || Engine.CurrentGame.menuMusic || []);
+        Engine.Hooks.RunGameHook('onMenuEnter',{ previousMode:Engine.State.previousMode });
     };
 
     Engine.Private.ResumeGame = function () {
         if (!Engine.State.gameStarted) { return; }
+        Engine.Hooks.RunGameHook('onMenuExit',{ mode:'resume' });
         Engine.State.mode = Engine.State.activeCutscene ? 'cutscene' : 'play';
         Engine.State.previousMode = null;
         var room=Engine.Rooms.GetCurrentRoom();
@@ -476,6 +660,37 @@
         GetRoomState: function (roomId) { if (!roomId) { return {}; } if (!Engine.State.roomStates[roomId]) { Engine.State.roomStates[roomId] = {}; } return Engine.State.roomStates[roomId]; },
         SetCharacterState: function (characterId, values) { if (!characterId) { return; } if (!Engine.State.characterStates[characterId]) { Engine.State.characterStates[characterId] = {}; } Object.keys(values || {}).forEach(function (key) { Engine.State.characterStates[characterId][key] = values[key]; }); },
         GetCharacterState: function (characterId) { if (!characterId) { return {}; } if (!Engine.State.characterStates[characterId]) { Engine.State.characterStates[characterId] = {}; } return Engine.State.characterStates[characterId]; },
+        RunHook: function (scriptName, context) { return Engine.Hooks.RunScript(scriptName, context || {}, 'api.RunHook'); },
+        SetScopedVariable: function (scopeType, objectId, name, value) { return Engine.ScopedVariables.Set(scopeType, objectId, name, value); },
+        GetScopedVariable: function (scopeType, objectId, name, defaultValue) { return Engine.ScopedVariables.Get(scopeType, objectId, name, defaultValue); },
+        HasScopedVariable: function (scopeType, objectId, name) { return Engine.ScopedVariables.Has(scopeType, objectId, name); },
+        ClearScopedVariable: function (scopeType, objectId, name) { return Engine.ScopedVariables.Clear(scopeType, objectId, name); },
+        AddScopedVariable: function (scopeType, objectId, name, amount) { return Engine.ScopedVariables.Arithmetic(scopeType, objectId, name, amount, 'add'); },
+        SubtractScopedVariable: function (scopeType, objectId, name, amount) { return Engine.ScopedVariables.Arithmetic(scopeType, objectId, name, amount, 'subtract'); },
+        MultiplyScopedVariable: function (scopeType, objectId, name, amount) { return Engine.ScopedVariables.Arithmetic(scopeType, objectId, name, amount, 'multiply'); },
+        DivideScopedVariable: function (scopeType, objectId, name, amount) { return Engine.ScopedVariables.Arithmetic(scopeType, objectId, name, amount, 'divide'); },
+        CompareScopedVariable: function (scopeType, objectId, name, operator, value) { return Engine.ScopedVariables.Compare(scopeType, objectId, name, operator, value); },
+        SetRoomVariable: function (roomId, name, value) { return Engine.ScopedVariables.Set('room', roomId, name, value); },
+        GetRoomVariable: function (roomId, name, defaultValue) { return Engine.ScopedVariables.Get('room', roomId, name, defaultValue); },
+        AddRoomVariable: function (roomId, name, amount) { return Engine.ScopedVariables.Arithmetic('room', roomId, name, amount, 'add'); },
+        SubtractRoomVariable: function (roomId, name, amount) { return Engine.ScopedVariables.Arithmetic('room', roomId, name, amount, 'subtract'); },
+        MultiplyRoomVariable: function (roomId, name, amount) { return Engine.ScopedVariables.Arithmetic('room', roomId, name, amount, 'multiply'); },
+        DivideRoomVariable: function (roomId, name, amount) { return Engine.ScopedVariables.Arithmetic('room', roomId, name, amount, 'divide'); },
+        CompareRoomVariable: function (roomId, name, operator, value) { return Engine.ScopedVariables.Compare('room', roomId, name, operator, value); },
+        SetCharacterVariable: function (characterId, name, value) { return Engine.ScopedVariables.Set('character', characterId, name, value); },
+        GetCharacterVariable: function (characterId, name, defaultValue) { return Engine.ScopedVariables.Get('character', characterId, name, defaultValue); },
+        AddCharacterVariable: function (characterId, name, amount) { return Engine.ScopedVariables.Arithmetic('character', characterId, name, amount, 'add'); },
+        SubtractCharacterVariable: function (characterId, name, amount) { return Engine.ScopedVariables.Arithmetic('character', characterId, name, amount, 'subtract'); },
+        MultiplyCharacterVariable: function (characterId, name, amount) { return Engine.ScopedVariables.Arithmetic('character', characterId, name, amount, 'multiply'); },
+        DivideCharacterVariable: function (characterId, name, amount) { return Engine.ScopedVariables.Arithmetic('character', characterId, name, amount, 'divide'); },
+        CompareCharacterVariable: function (characterId, name, operator, value) { return Engine.ScopedVariables.Compare('character', characterId, name, operator, value); },
+        SetItemVariable: function (itemId, name, value) { return Engine.ScopedVariables.Set('item', itemId, name, value); },
+        GetItemVariable: function (itemId, name, defaultValue) { return Engine.ScopedVariables.Get('item', itemId, name, defaultValue); },
+        AddItemVariable: function (itemId, name, amount) { return Engine.ScopedVariables.Arithmetic('item', itemId, name, amount, 'add'); },
+        SubtractItemVariable: function (itemId, name, amount) { return Engine.ScopedVariables.Arithmetic('item', itemId, name, amount, 'subtract'); },
+        MultiplyItemVariable: function (itemId, name, amount) { return Engine.ScopedVariables.Arithmetic('item', itemId, name, amount, 'multiply'); },
+        DivideItemVariable: function (itemId, name, amount) { return Engine.ScopedVariables.Arithmetic('item', itemId, name, amount, 'divide'); },
+        CompareItemVariable: function (itemId, name, operator, value) { return Engine.ScopedVariables.Compare('item', itemId, name, operator, value); },
         ChangeRoom: function (roomId, x, y, facing) { Engine.Rooms.EnterRoom(roomId, x, y, facing); }, MoveCharacter: function (characterId, x, y, options) { Engine.Rooms.MoveCharacter(characterId, x, y, options || {}); }, SetAnimation: function (actorId, animationName, options) { Engine.Animations.SetAnimation(actorId, animationName, options || {}); }, ClearAnimation: function (actorId) { Engine.Animations.ClearAnimation(actorId); }, SetObjectAnimation: function (objectId, animationName, options) { Engine.RoomObjects.SetAnimation(objectId, animationName, options || {}); }, ClearObjectAnimation: function (objectId) { Engine.RoomObjects.ClearAnimation(objectId); }, SetObjectState: function (objectId, values) { Engine.RoomObjects.SetState(objectId, values || {}); }, GetObjectState: function (objectId) { return Engine.RoomObjects.GetState(objectId); }, PlaySound: function (sources) { Engine.Assets.PlaySound(sources); },
         StartCutscene: function (steps) { Engine.Cutscenes.Start(steps); }, EndGame: function (title, text) { Engine.EndGame.Show(title, text); },
         Save: function (slot) { Engine.SaveLoad.Save(slot || '1'); }, Load: function (slot) { Engine.SaveLoad.Load(slot || '1'); }
@@ -492,7 +707,7 @@
         RegisterDefaultHandlers: function () { ['walkTo','lookAt','take','give','talkTo','open','close','use'].forEach(function (id) { Engine.Verbs.handlers[id] = function (command) { Engine.Interactions.Resolve(command); }; }); },
         GetByPoint: function (x, y) { for (var i=0;i<this.list.length;i++) { if (PointInRect(x,y,this.list[i].rect)) { return this.list[i]; } } return null; },
         GetLabel: function (id) { for (var i=0;i<this.list.length;i++) { if (this.list[i].id === id) { return this.list[i].label; } } return id; },
-        Execute: function (command) { var handler = this.handlers[command.verbId]; if (!handler) { Engine.Dialogue.ShowLine(null,'That verb is not implemented.',{}); return; } handler(command); }
+        Execute: function (command) { var context={ command:command }; if (Engine.Hooks.RunGameHook('beforeCommand',context) === false) { return; } var handler = this.handlers[command.verbId]; if (!handler) { Engine.Dialogue.ShowLine(null,'That verb is not implemented.',{}); return; } handler(command); Engine.Hooks.RunGameHook('afterCommand',context); }
     };
     Engine.Verbs.RegisterDefaultHandlers();
 
@@ -505,8 +720,8 @@
         CanScrollDown: function () { this.NormalizeScroll(); return Engine.State.inventoryScroll < this.MaxScroll(); },
         ScrollByRows: function (rows) { Engine.State.inventoryScroll = Clamp((Engine.State.inventoryScroll || 0) + rows * this.visibleCols, 0, this.MaxScroll()); },
         GetScrollArrowAtPoint: function (x, y) { if (x < this.arrowX || x >= 318) { return null; } if (y >= this.upArrowY && y < this.upArrowY + 16) { return 'up'; } if (y >= this.downArrowY && y < this.downArrowY + 16) { return 'down'; } return null; },
-        AddItem: function (itemId) { if (Engine.State.inventory.indexOf(itemId) < 0) { Engine.State.inventory.push(itemId); } this.NormalizeScroll(); },
-        RemoveItem: function (itemId) { var idx = Engine.State.inventory.indexOf(itemId); if (idx >= 0) { Engine.State.inventory.splice(idx,1); } if (Engine.State.selectedInventoryItemId === itemId) { Engine.State.selectedInventoryItemId = null; } this.NormalizeScroll(); },
+        AddItem: function (itemId) { var changed=false; if (Engine.State.inventory.indexOf(itemId) < 0) { Engine.State.inventory.push(itemId); changed=true; } this.NormalizeScroll(); if (changed) { Engine.Hooks.RunGameHook('onInventoryChanged',{ action:'add', itemId:itemId, inventory:DeepClone(Engine.State.inventory) }); } },
+        RemoveItem: function (itemId) { var idx = Engine.State.inventory.indexOf(itemId); var changed=false; if (idx >= 0) { Engine.State.inventory.splice(idx,1); changed=true; } if (Engine.State.selectedInventoryItemId === itemId) { Engine.State.selectedInventoryItemId = null; } this.NormalizeScroll(); if (changed) { Engine.Hooks.RunGameHook('onInventoryChanged',{ action:'remove', itemId:itemId, inventory:DeepClone(Engine.State.inventory) }); } },
         HasItem: function (itemId) { return Engine.State.inventory.indexOf(itemId) >= 0; },
         GetItemAtPoint: function (x, y) { this.NormalizeScroll(); if (x < this.originX || x >= this.arrowX || y < this.originY || y >= this.originY + this.visibleRows * this.cell) { return null; } var col=Math.floor((x-this.originX)/this.cell); var row=Math.floor((y-this.originY)/this.cell); if (col < 0 || col >= this.visibleCols || row < 0 || row >= this.visibleRows) { return null; } var index=(Engine.State.inventoryScroll || 0) + row*this.visibleCols+col; return Engine.State.inventory[index] || null; }
     };
@@ -539,11 +754,27 @@
         GetCurrentRoom: function () { return Engine.CurrentGame.rooms[Engine.State.currentRoomId]; },
         EnterRoom: function (roomId, x, y, facing, options) {
             options = options || {};
-            var room = Engine.CurrentGame.rooms[roomId]; if (!room) { Engine.Dialogue.ShowLine(null,'Missing room: '+roomId,{}); return; }
+            var room = Engine.CurrentGame.rooms[roomId]; if (!room) { Engine.Dialogue.ShowLine(null,'Missing room: '+roomId,{}); return false; }
+            var fromRoomId=Engine.State.currentRoomId;
+            var fromRoom=fromRoomId ? Engine.CurrentGame.rooms[fromRoomId] : null;
+            var context={ fromRoomId:fromRoomId, toRoomId:roomId, fromRoom:fromRoom, toRoom:room, x:x, y:y, facing:facing, transition:options.transition||null, options:options };
+            var skipHooks=!!(options.skipHooks || options.skipOnEnter);
+            if (!skipHooks) {
+                if (fromRoom && Engine.Hooks.RunGameHook('beforeRoomExit',context) === false) { return false; }
+                if (fromRoom && Engine.Hooks.RunRoomHook(fromRoom,['beforeExit','onBeforeExit'],context,'room.beforeExit') === false) { return false; }
+                if (Engine.Hooks.RunGameHook('beforeRoomEnter',context) === false) { return false; }
+                if (Engine.Hooks.RunRoomHook(room,['beforeEnter','onBeforeEnter'],context,'room.beforeEnter') === false) { return false; }
+            }
             Engine.State.currentRoomId = roomId; Engine.State.player.roomId = roomId;
             if (typeof x === 'number') { Engine.State.player.x = x; } if (typeof y === 'number') { Engine.State.player.y = y; } if (facing) { Engine.State.player.facing = facing; }
             Engine.State.player.walkTarget = null; Engine.State.player.walkPath = []; Engine.State.player.walkCallback = null; this.ResetPlayerTrail(); this.PlaceFollowers(); this.ApplyActorAvoidance(); Engine.Assets.PlayMusic(room.music || []);
             if (!options.skipOnEnter && room.onEnter && Engine.CurrentGame.scripts[room.onEnter]) { Engine.CurrentGame.scripts[room.onEnter](Engine.API); }
+            if (!skipHooks) {
+                if (fromRoom) { Engine.Hooks.RunRoomHook(fromRoom,['afterExit','onAfterExit'],context,'room.afterExit'); Engine.Hooks.RunGameHook('afterRoomExit',context); }
+                Engine.Hooks.RunRoomHook(room,['afterEnter','onAfterEnter'],context,'room.afterEnter');
+                Engine.Hooks.RunGameHook('afterRoomEnter',context);
+            }
+            return true;
         },
         GetCharacter: function (characterId) { var room=this.GetCurrentRoom(); var chars=room.characters||[]; for (var i=0;i<chars.length;i++) { if (chars[i].id===characterId) { return chars[i]; } } return null; },
         UpdateCharacterRect: function (c) { var hitW=c.hitW||c.rectW||16; var hitH=c.hitH||c.rectH||16; c.rect={x:Math.round(c.x-hitW/2),y:Math.round(c.y-hitH),w:hitW,h:hitH}; },
@@ -565,7 +796,7 @@
         ResolveAvoidancePair: function (a, b, area) { var ax=a.actor.x; var ay=a.actor.y; var bx=b.actor.x; var by=b.actor.y; var dx=bx-ax; var dy=by-ay; var dist=Math.sqrt(dx*dx+dy*dy); var minDist=a.radius+b.radius; if (dist>=minDist) { return false; } if (!a.movable && !b.movable) { return false; } if (dist<0.001) { dx=(String(b.actor.id||'')>String(a.actor.id||'')) ? 1 : -1; dy=0; dist=1; } var push=(minDist-dist); var nx=dx/dist; var ny=dy/dist; var aIntent=this.GetActorIntentVector(a); var bIntent=this.GetActorIntentVector(b); var aMoving=!!aIntent; var bMoving=!!bIntent; if (aMoving && !bMoving && b.movable) { this.PushAvoidanceActor(b,nx*push,ny*push,area); } else if (bMoving && !aMoving && a.movable) { this.PushAvoidanceActor(a,-nx*push,-ny*push,area); } else if (a.movable && b.movable) { this.PushAvoidanceActor(a,-nx*push*0.5,-ny*push*0.5,area); this.PushAvoidanceActor(b,nx*push*0.5,ny*push*0.5,area); } else if (a.movable) { this.PushAvoidanceActor(a,-nx*push,-ny*push,area); } else if (b.movable) { this.PushAvoidanceActor(b,nx*push,ny*push,area); } return true; },
         ApplyActorAvoidance: function () { var actors=this.GetAvoidanceActors(); if (actors.length<2) { return; } var area=this.GetAvoidanceArea(); for (var pass=0; pass<3; pass++) { var changed=false; for (var i=0;i<actors.length;i++) { for (var j=i+1;j<actors.length;j++) { if (this.ResolveAvoidancePair(actors[i],actors[j],area)) { changed=true; } } } if (!changed) { break; } } },
         UpdateCharacters: function (dt) { this.UpdateCharacterMovement(dt); this.UpdateFollowers(dt); this.ApplyActorAvoidance(); },
-        CheckTransitions: function () { var room=this.GetCurrentRoom(); var zones=room.transitionZones||[]; var p=Engine.State.player; for (var i=0;i<zones.length;i++) { var z=zones[i]; if (z.enabledFlag && !Engine.State.flags[z.enabledFlag]) { continue; } if (z.disabledFlag && Engine.State.flags[z.disabledFlag]) { continue; } if (z.rect && PointInRect(p.x,p.y,z.rect)) { if (z.script && Engine.CurrentGame.scripts[z.script]) { Engine.CurrentGame.scripts[z.script](Engine.API); return true; } this.EnterRoom(z.targetRoomId,z.targetX,z.targetY,z.targetFacing); return true; } } return false; }
+        CheckTransitions: function () { var room=this.GetCurrentRoom(); var zones=room.transitionZones||[]; var p=Engine.State.player; for (var i=0;i<zones.length;i++) { var z=zones[i]; if (z.enabledFlag && !Engine.State.flags[z.enabledFlag]) { continue; } if (z.disabledFlag && Engine.State.flags[z.disabledFlag]) { continue; } if (z.rect && PointInRect(p.x,p.y,z.rect)) { var context={ transition:z, fromRoomId:Engine.State.currentRoomId, toRoomId:z.targetRoomId||null, player:Engine.State.player }; if (Engine.Hooks.RunTransitionHook(z,'beforeTransition',context) === false) { return true; } if (z.script && Engine.CurrentGame.scripts[z.script]) { Engine.CurrentGame.scripts[z.script](Engine.API,context); Engine.Hooks.RunTransitionHook(z,'afterTransition',context); return true; } if (this.EnterRoom(z.targetRoomId,z.targetX,z.targetY,z.targetFacing,{ transition:z }) !== false) { Engine.Hooks.RunTransitionHook(z,'afterTransition',context); } return true; } } return false; }
     };
     Engine.Movement = {
         RequestWalk: function (x, y, callback) {
@@ -737,8 +968,8 @@
     };
 
     Engine.Cutscenes = {
-        Start: function (steps) { Engine.State.activeCutscene={steps:steps||[],index:0,waiting:false}; Engine.State.mode='cutscene'; this.RunNext(); },
-        RunNext: function () { var cs=Engine.State.activeCutscene; if (!cs || cs.index >= cs.steps.length) { Engine.State.activeCutscene=null; Engine.State.mode='play'; return; } var step=cs.steps[cs.index++]; if (step.type==='say') { Engine.Dialogue.ShowLine(step.speakerId||null, step.text||'', {duration:step.duration, voice:step.voice, onComplete:function () { Engine.Cutscenes.RunNext(); }}); } else if (step.type==='walk') { Engine.Movement.RequestWalk(step.x,step.y,function () { Engine.Cutscenes.RunNext(); }); } else if (step.type==='script' && Engine.CurrentGame.scripts[step.script]) { Engine.CurrentGame.scripts[step.script](Engine.API); Engine.Cutscenes.RunNext(); } else { Engine.Cutscenes.RunNext(); } }
+        Start: function (steps) { var context={ steps:steps||[] }; if (Engine.Hooks.RunGameHook('beforeCutscene',context) === false) { return; } Engine.State.activeCutscene={steps:steps||[],index:0,waiting:false}; Engine.State.mode='cutscene'; this.RunNext(); },
+        RunNext: function () { var cs=Engine.State.activeCutscene; if (!cs || cs.index >= cs.steps.length) { var finished=cs; Engine.State.activeCutscene=null; Engine.State.mode='play'; if (finished) { Engine.Hooks.RunGameHook('afterCutscene',{ steps:finished.steps }); } return; } var step=cs.steps[cs.index++]; if (step.type==='say') { Engine.Dialogue.ShowLine(step.speakerId||null, step.text||'', {duration:step.duration, voice:step.voice, onComplete:function () { Engine.Cutscenes.RunNext(); }}); } else if (step.type==='walk') { Engine.Movement.RequestWalk(step.x,step.y,function () { Engine.Cutscenes.RunNext(); }); } else if (step.type==='script' && Engine.CurrentGame.scripts[step.script]) { Engine.CurrentGame.scripts[step.script](Engine.API); Engine.Cutscenes.RunNext(); } else { Engine.Cutscenes.RunNext(); } }
     };
 
     Engine.EndGame = {
@@ -777,6 +1008,9 @@
             // Version 2 adds playerTrail so followers can resume following the
             // player's recent route rather than a fixed screen-side offset.
             if (version<2) { data.playerTrail=data.playerTrail||((data.player&&typeof data.player.x==='number')?[{x:data.player.x,y:data.player.y,facing:data.player.facing||'down'}]:[]); data.saveDataVersion=2; version=2; }
+            // Version 3 adds scopedVariables for per-room, per-character and
+            // per-item puzzle state. Older saves start with empty scoped data.
+            if (version<3) { data.scopedVariables=data.scopedVariables||{ rooms:{}, characters:{}, items:{} }; data.saveDataVersion=3; version=3; }
             return data;
         },
         CaptureRoomCharacters: function () { var result={}; var rooms=Engine.CurrentGame.rooms||{}; Object.keys(rooms).forEach(function (roomId) { result[roomId]=(rooms[roomId].characters||[]).map(function (c) { return { id:c.id, x:c.x, y:c.y, facing:c.facing, animation:c.animation, hidden:!!c.hidden, customAnimation:c.customAnimation||null, dialogueAnimation:c.dialogueAnimation||null, moveTarget:null, followTarget:c.followTarget||null, lastMoveX:c.lastMoveX||0, lastMoveY:c.lastMoveY||0, speed:c.speed, rect:c.rect ? DeepClone(c.rect) : null }; }); }); return result; },
@@ -798,7 +1032,7 @@
         // in Engine.Private.ResetGameData(). A New Game must be a clean session,
         // not a continuation of mutated room, character, cutscene, dialogue,
         // inventory, movement or end-game state from an earlier run.
-        BuildData: function (slot) { return { engineApi:ENGINE_API_VERSION, saveDataVersion:SAVE_DATA_VERSION, savedAt:this.NowStamp(), gameId:Engine.State.gameId, slot:slot, title:(Engine.CurrentGame && Engine.CurrentGame.title) ? Engine.CurrentGame.title : Engine.State.gameId, currentRoomId:Engine.State.currentRoomId, selectedVerbId:Engine.State.selectedVerbId, selectedInventoryItemId:Engine.State.selectedInventoryItemId, player:DeepClone(Engine.State.player), playerTrail:DeepClone(Engine.State.playerTrail||[]), inventory:DeepClone(Engine.State.inventory), inventoryScroll:Engine.State.inventoryScroll||0, flags:DeepClone(Engine.State.flags), variables:DeepClone(Engine.State.variables), roomStates:DeepClone(Engine.State.roomStates), objectStates:DeepClone(Engine.State.objectStates), characterStates:DeepClone(Engine.State.characterStates), runtimeCharacters:this.CaptureRoomCharacters(), endGame:DeepClone(Engine.State.endGame), gameStarted:!!Engine.State.gameStarted, audio:DeepClone(Engine.State.audio) }; },
+        BuildData: function (slot) { return { engineApi:ENGINE_API_VERSION, saveDataVersion:SAVE_DATA_VERSION, savedAt:this.NowStamp(), gameId:Engine.State.gameId, slot:slot, title:(Engine.CurrentGame && Engine.CurrentGame.title) ? Engine.CurrentGame.title : Engine.State.gameId, currentRoomId:Engine.State.currentRoomId, selectedVerbId:Engine.State.selectedVerbId, selectedInventoryItemId:Engine.State.selectedInventoryItemId, player:DeepClone(Engine.State.player), playerTrail:DeepClone(Engine.State.playerTrail||[]), inventory:DeepClone(Engine.State.inventory), inventoryScroll:Engine.State.inventoryScroll||0, flags:DeepClone(Engine.State.flags), variables:DeepClone(Engine.State.variables), scopedVariables:DeepClone(Engine.State.scopedVariables||{ rooms:{}, characters:{}, items:{} }), roomStates:DeepClone(Engine.State.roomStates), objectStates:DeepClone(Engine.State.objectStates), characterStates:DeepClone(Engine.State.characterStates), runtimeCharacters:this.CaptureRoomCharacters(), endGame:DeepClone(Engine.State.endGame), gameStarted:!!Engine.State.gameStarted, audio:DeepClone(Engine.State.audio) }; },
         Summarise: function (slot, data) { var roomName=data.currentRoomId; if (Engine.CurrentGame && Engine.CurrentGame.rooms && Engine.CurrentGame.rooms[data.currentRoomId]) { roomName=Engine.CurrentGame.rooms[data.currentRoomId].name||data.currentRoomId; } return 'Slot '+slot+' - '+(data.savedAt||'unknown time')+' - '+roomName; },
         ReadSlot: function (slot) { var raw=null; try { raw=localStorage.getItem(this.Key(slot)); } catch (e) { return null; } if (!raw) { return null; } try { return JSON.parse(raw); } catch (e2) { return null; } },
         List: function () { var list=[]; for (var i=1;i<=this.maxSlots;i++) { var data=this.ReadSlot(String(i)); data=this.MigrateSaveData(data); if (this.IsCompatibleSave(data)) { list.push({ slot:String(i), data:data, label:this.Summarise(String(i),data) }); } } return list; },
@@ -808,7 +1042,7 @@
         // SAVE-STATE WARNING: Load() must be kept in lockstep with BuildData().
         // Whenever a field is added to the saved data above, restore it here and
         // perform any normalisation needed before gameplay resumes.
-        Load: function (slot) { var data=this.ReadSlot(slot||'1'); if (!data) { Engine.State.saveLoadMessage='No saved game was found in that slot.'; return; } data=this.MigrateSaveData(data); if (!this.IsCompatibleSave(data)) { Engine.State.saveLoadMessage='This saved game is not compatible.'; return; } Engine.State.currentRoomId=data.currentRoomId; Engine.State.selectedVerbId=data.selectedVerbId||'walkTo'; Engine.State.selectedInventoryItemId=data.selectedInventoryItemId||null; Engine.State.player=data.player; Engine.State.inventory=data.inventory||[]; Engine.State.inventoryScroll=data.inventoryScroll||0; Engine.State.flags=data.flags||{}; Engine.State.variables=data.variables||{}; Engine.State.roomStates=data.roomStates||{}; Engine.State.objectStates=data.objectStates||{}; Engine.State.characterStates=data.characterStates||{}; Engine.State.endGame=data.endGame||{ title:'', text:'' }; Engine.State.audio=data.audio||Engine.State.audio; Engine.State.dialogue.active=false; Engine.State.dialogue.speakerId=null; Engine.State.dialogue.speakerName=''; Engine.State.dialogue.text=''; Engine.State.dialogue.displayText=''; Engine.State.dialogue.timer=0; Engine.State.dialogue.duration=0; Engine.State.dialogue.explicitDuration=null; Engine.State.dialogue.options=[]; Engine.State.dialogue.onComplete=null; Engine.State.dialogue.voiceAudio=null; Engine.State.dialogue.color=null; Engine.State.dialogue.textBlocks=[]; Engine.State.dialogue.textBlockIndex=0; Engine.State.activeCutscene=null; Engine.State.gameStarted=true; this.RestoreRoomCharacters(data.runtimeCharacters); Engine.Inventory.NormalizeScroll(); Engine.Rooms.EnterRoom(data.currentRoomId,data.player.x,data.player.y,data.player.facing,{ skipOnEnter:true }); Engine.State.player=Object.assign(Engine.State.player,data.player); Engine.State.player.walkTarget=null; Engine.State.player.walkPath=[]; Engine.State.player.walkCallback=null; Engine.State.playerTrail=data.playerTrail&&data.playerTrail.length?data.playerTrail:[{x:Engine.State.player.x,y:Engine.State.player.y,facing:Engine.State.player.facing||'down'}]; Engine.State.mode='play'; Engine.Dialogue.ShowLine(null,'Game loaded.',{}); }
+        Load: function (slot) { var data=this.ReadSlot(slot||'1'); if (!data) { Engine.State.saveLoadMessage='No saved game was found in that slot.'; return; } data=this.MigrateSaveData(data); if (!this.IsCompatibleSave(data)) { Engine.State.saveLoadMessage='This saved game is not compatible.'; return; } Engine.State.currentRoomId=data.currentRoomId; Engine.State.selectedVerbId=data.selectedVerbId||'walkTo'; Engine.State.selectedInventoryItemId=data.selectedInventoryItemId||null; Engine.State.player=data.player; Engine.State.inventory=data.inventory||[]; Engine.State.inventoryScroll=data.inventoryScroll||0; Engine.State.flags=data.flags||{}; Engine.State.variables=data.variables||{}; Engine.State.scopedVariables=data.scopedVariables||{ rooms:{}, characters:{}, items:{} }; Engine.State.roomStates=data.roomStates||{}; Engine.State.objectStates=data.objectStates||{}; Engine.State.characterStates=data.characterStates||{}; Engine.State.endGame=data.endGame||{ title:'', text:'' }; Engine.State.audio=data.audio||Engine.State.audio; Engine.State.dialogue.active=false; Engine.State.dialogue.speakerId=null; Engine.State.dialogue.speakerName=''; Engine.State.dialogue.text=''; Engine.State.dialogue.displayText=''; Engine.State.dialogue.timer=0; Engine.State.dialogue.duration=0; Engine.State.dialogue.explicitDuration=null; Engine.State.dialogue.options=[]; Engine.State.dialogue.onComplete=null; Engine.State.dialogue.voiceAudio=null; Engine.State.dialogue.color=null; Engine.State.dialogue.textBlocks=[]; Engine.State.dialogue.textBlockIndex=0; Engine.State.activeCutscene=null; Engine.State.gameStarted=true; this.RestoreRoomCharacters(data.runtimeCharacters); Engine.Inventory.NormalizeScroll(); Engine.Rooms.EnterRoom(data.currentRoomId,data.player.x,data.player.y,data.player.facing,{ skipOnEnter:true }); Engine.State.player=Object.assign(Engine.State.player,data.player); Engine.State.player.walkTarget=null; Engine.State.player.walkPath=[]; Engine.State.player.walkCallback=null; Engine.State.playerTrail=data.playerTrail&&data.playerTrail.length?data.playerTrail:[{x:Engine.State.player.x,y:Engine.State.player.y,facing:Engine.State.player.facing||'down'}]; Engine.State.mode='play'; Engine.Dialogue.ShowLine(null,'Game loaded.',{}); }
     };
 
     Engine.Input = {
