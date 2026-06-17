@@ -73,7 +73,14 @@
           Transition checks run through the room system and are triggered from the
           single movement update path when the canonical player position enters a
           zone. Game scripts must not implement their own movement or transition
-          loops for ordinary room exits.
+          loops for ordinary room exits. If an interactive object covers a doorway
+          but the player should be able to walk through it when a script permits,
+          set walkThrough:true and walkThroughTo:{x,y} on that object. For Walk To
+          only, the interaction dispatcher then walks to that through-point instead
+          of the object's ordinary approach point; other verbs such as Open and
+          Close still use walkTo as normal. A walkTo interaction script may still
+          decide whether passage is allowed, while transition zones remain the
+          canonical way to perform the room change or ending.
         - Inventory items are also interaction targets. Single-target inventory
           actions such as Look At, Open and Close go through the same interaction
           dispatcher as world objects. Use and Give remain two-target verbs: first
@@ -186,7 +193,11 @@
           backY/frontY and backScale/frontScale are also accepted. Actor scale is
           still honoured as a base multiplier; set scaleWithPerspective:false or
           fixedScale:true on an actor to opt out. Game scripts must not resize
-          sprites directly.
+          sprites directly. Scaled sprite smoothing is configurable from content:
+          set rendering:{ imageSmoothing:false } or imageSmoothing:false on the
+          game for hard-edged pixel art, or true for painted/anti-aliased art. The
+          same setting may be overridden on individual sprites or actors with
+          imageSmoothing. The renderer applies this before scaled drawImage calls.
         - Talking animation is a built-in dialogue presentation feature: if the
           speaking actor's sprite defines an animation named talk, api.Say(...)
           uses it automatically for that spoken line. Other named animations are
@@ -934,6 +945,7 @@
             if (command.verbId === 'walkTo' && !target) { Engine.Movement.RequestWalk(command.x, command.y, null); return; }
             if (!target) { Engine.Dialogue.ShowLine(null,'There is nothing useful there.',{}); return; }
             var run=function () { Engine.Interactions.RunTargetInteraction(command,target); };
+            if (command.verbId === 'walkTo' && target.walkThrough) { var through=target.walkThroughTo || target.walkThroughPoint || {x:command.x,y:command.y}; Engine.Movement.RequestWalk(through.x,through.y,run); return; }
             if (target.walkTo) { Engine.Movement.RequestWalk(target.walkTo.x,target.walkTo.y,run); } else { run(); }
         },
         GetTarget: function (targetId) { if (!targetId) { return null; } var room=Engine.Rooms.GetCurrentRoom(); var all=(room.hotspots||[]).concat(room.characters||[]); for (var i=0;i<all.length;i++) { if (all[i].id===targetId) { return all[i]; } } return null; },
@@ -1454,13 +1466,15 @@
             for (var i=0;i<drawables.length;i++) { if (drawables[i].type==='player') { this.DrawActor(drawables[i].data); } else if (drawables[i].type==='character') { this.DrawCharacter(drawables[i].data); } else { this.DrawHotspotSprite(drawables[i].data); } }
             this.RenderSpeechAboveCharacter(); this.RenderHoverLabel();
         },
+        GetImageSmoothing: function (subject, sprite) { var game=Engine.CurrentGame||{}; if (subject && typeof subject.imageSmoothing === 'boolean') { return subject.imageSmoothing; } if (sprite && typeof sprite.imageSmoothing === 'boolean') { return sprite.imageSmoothing; } if (game.rendering && typeof game.rendering.imageSmoothing === 'boolean') { return game.rendering.imageSmoothing; } if (typeof game.imageSmoothing === 'boolean') { return game.imageSmoothing; } return false; },
+        SetImageSmoothing: function (enabled) { Engine.Ctx.imageSmoothingEnabled=!!enabled; Engine.Ctx.mozImageSmoothingEnabled=!!enabled; Engine.Ctx.webkitImageSmoothingEnabled=!!enabled; Engine.Ctx.msImageSmoothingEnabled=!!enabled; },
         NormaliseAnimationName: function (name) { var s=String(name||'idle'); if (s.indexOf('walk')===0) { return 'walk'; } if (s.indexOf('idle')===0) { return 'idle'; } return s; },
         GetActorAnimationName: function (actor) { return actor.customAnimation || actor.dialogueAnimation || actor.animation || 'idle'; },
         GetAnimationSpec: function (sprite, actor, isPlayer) { var base=this.NormaliseAnimationName(this.GetActorAnimationName(actor)); if (sprite.animations && sprite.animations[base]) { return Object.assign({ name: base }, sprite.animations[base]); } if (base === 'walk') { return { name:'walk', rowOffset:0, frames:sprite.walkFrames||sprite.frames||1, fps:actor.walkFps||sprite.walkFps||(isPlayer ? TARGET_FPS : 4) }; } return { name:'idle', rowOffset:0, frames:Math.max(1,actor.idleFrames||sprite.idleFrames||sprite.frames||1), fps:actor.idleFps||sprite.idleFps||2 }; },
         GetAnimationStart: function (actor, spec) { if (actor.customAnimation) { return actor.customAnimationStarted||0; } if (actor.dialogueAnimation) { return actor.dialogueAnimationStarted||0; } if (spec.name==='idle') { if (!actor.idleAnimationStarted) { actor.idleAnimationStarted=this.frameTime; } return actor.idleAnimationStarted||0; } return actor.animationStarted||0; },
         GetRoomScaleConfig: function () { var room=Engine.Rooms.GetCurrentRoom(); var game=Engine.CurrentGame||{}; return (room && (room.characterScale||room.perspectiveScale)) || game.characterScale || game.perspectiveScale || null; },
         GetActorVisualScale: function (actor) { var base=(typeof actor.scale === 'number') ? actor.scale : 1; if (actor.fixedScale || actor.scaleWithPerspective === false || actor.perspectiveScale === false) { return base; } var cfg=actor.characterScale||actor.perspectiveScale||this.GetRoomScaleConfig(); if (!cfg) { return base; } var room=Engine.Rooms.GetCurrentRoom(); var area=(room && room.walkableArea) ? room.walkableArea : {x:0,y:80,w:320,h:56}; var farY=(typeof cfg.farY === 'number') ? cfg.farY : ((typeof cfg.backY === 'number') ? cfg.backY : area.y); var nearY=(typeof cfg.nearY === 'number') ? cfg.nearY : ((typeof cfg.frontY === 'number') ? cfg.frontY : area.y+area.h); var farScale=(typeof cfg.farScale === 'number') ? cfg.farScale : ((typeof cfg.backScale === 'number') ? cfg.backScale : 1); var nearScale=(typeof cfg.nearScale === 'number') ? cfg.nearScale : ((typeof cfg.frontScale === 'number') ? cfg.frontScale : 1); if (nearY===farY) { return base*nearScale; } var t=Clamp((actor.y-farY)/(nearY-farY),0,1); return base*(farScale+(nearScale-farScale)*t); },
-        DrawSpriteActor: function (actor, isPlayer) { var sprite=Engine.CurrentGame.sprites[actor.spriteId]; var img=sprite ? Engine.Assets.GetImage(sprite.image) : null; if (!img) { return; } var spec=this.GetAnimationSpec(sprite,actor,isPlayer); var directional=(spec.directional === false) ? false : (sprite.directional || sprite.rows>=4); var directionRow=directional ? ({down:0,left:1,right:2,up:3}[actor.facing]||0) : 0; var row=(spec.rowOffset||0)+directionRow; var frames=Math.max(1,spec.frames||1); var fps=spec.fps||1; var frame=spec.frame||0; if (frames>1) { frame=Math.floor(Math.max(0,this.frameTime-this.GetAnimationStart(actor,spec))*fps)%frames; } var scale=this.GetActorVisualScale(actor); var dw=Math.max(1,Math.round(sprite.frameW*scale)); var dh=Math.max(1,Math.round(sprite.frameH*scale)); Engine.Ctx.drawImage(img,frame*sprite.frameW,row*sprite.frameH,sprite.frameW,sprite.frameH,Math.round(actor.x-dw/2),Math.round(actor.y-dh),dw,dh); },
+        DrawSpriteActor: function (actor, isPlayer) { var sprite=Engine.CurrentGame.sprites[actor.spriteId]; var img=sprite ? Engine.Assets.GetImage(sprite.image) : null; if (!img) { return; } var spec=this.GetAnimationSpec(sprite,actor,isPlayer); var directional=(spec.directional === false) ? false : (sprite.directional || sprite.rows>=4); var directionRow=directional ? ({down:0,left:1,right:2,up:3}[actor.facing]||0) : 0; var row=(spec.rowOffset||0)+directionRow; var frames=Math.max(1,spec.frames||1); var fps=spec.fps||1; var frame=spec.frame||0; if (frames>1) { frame=Math.floor(Math.max(0,this.frameTime-this.GetAnimationStart(actor,spec))*fps)%frames; } var scale=this.GetActorVisualScale(actor); var dw=Math.max(1,Math.round(sprite.frameW*scale)); var dh=Math.max(1,Math.round(sprite.frameH*scale)); this.SetImageSmoothing(this.GetImageSmoothing(actor,sprite)); Engine.Ctx.drawImage(img,frame*sprite.frameW,row*sprite.frameH,sprite.frameW,sprite.frameH,Math.round(actor.x-dw/2),Math.round(actor.y-dh),dw,dh); },
         DrawActor: function (actor) { this.DrawSpriteActor(actor,true); },
         DrawCharacter: function (c) { this.DrawSpriteActor(c,false); },
         GetHotspotSpritePath: function (h) { if (!h) { return null; } if (h.sprite) { return h.sprite; } if (h.itemId && Engine.CurrentGame && Engine.CurrentGame.items && Engine.CurrentGame.items[h.itemId]) { var item=Engine.CurrentGame.items[h.itemId]; return item.worldSprite || item.icon || null; } return null; },
@@ -1490,7 +1504,7 @@
         // tiny icon art. The central renderer scales icons down, preserving aspect
         // ratio, so they fit inside the fixed inventory grid. It never scales small
         // icons up, which avoids blurred or chunky enlargement artefacts.
-        DrawInventoryIcon: function (item, x, y) { if (!item || !item.icon) { return; } var img=Engine.Assets.GetImage(item.icon); if (!img) { return; } var max=this.GetInventoryIconMaxSize(); var iw=img.naturalWidth||img.width; var ih=img.naturalHeight||img.height; if (!iw || !ih) { return; } var scale=Math.min(1,max.w/iw,max.h/ih); var dw=Math.max(1,Math.floor(iw*scale)); var dh=Math.max(1,Math.floor(ih*scale)); var dx=x+Math.floor((Engine.Inventory.cell-dw)/2); var dy=y+Math.floor((Engine.Inventory.cell-dh)/2); Engine.Ctx.drawImage(img,dx,dy,dw,dh); },
+        DrawInventoryIcon: function (item, x, y) { if (!item || !item.icon) { return; } var img=Engine.Assets.GetImage(item.icon); if (!img) { return; } var max=this.GetInventoryIconMaxSize(); var iw=img.naturalWidth||img.width; var ih=img.naturalHeight||img.height; if (!iw || !ih) { return; } var scale=Math.min(1,max.w/iw,max.h/ih); var dw=Math.max(1,Math.floor(iw*scale)); var dh=Math.max(1,Math.floor(ih*scale)); var dx=x+Math.floor((Engine.Inventory.cell-dw)/2); var dy=y+Math.floor((Engine.Inventory.cell-dh)/2); this.SetImageSmoothing(this.GetImageSmoothing(item,null)); Engine.Ctx.drawImage(img,dx,dy,dw,dh); },
         // CONTENT AUTHORING NOTE FOR FUTURE AIS:
         // Inventory item names are displayed here as a hover tooltip. Game scripts
         // should set item.name and should not draw their own inventory labels.
