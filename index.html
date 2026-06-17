@@ -210,6 +210,20 @@
           If an ending or one-off api.EndGame() call omits music/endMusic, the
           engine falls back to game.endMusic so older games keep their existing
           end music. To deliberately end in silence, set music:[] on that ending.
+        - Dialogue trees are data-defined in game.dialogueTrees and started with
+          api.StartDialogue(treeId). This is deliberately more declarative than
+          hand-written branching scripts so future AIs can author conversations
+          reliably. Nodes contain speakerId, text and choices. Choices may define
+          id, text, playerText, response, next, script, conditions, actions and
+          persistence. By default, a choice with an id is hidden after use; set
+          repeat:true, stay:true or hideAfterUse:false to keep it. Use conditions
+          to show choices only when flags, inventory or variables match. Use
+          templates such as {{var:playerName}}, {{flag:doorOpen}},
+          {{room:kitchen.visits}}, {{character:guard.mood}} and
+          {{item:key.label}} in player text, NPC text and choices. Use
+          api.AskText() or api.AskNumber() for player input such as naming the
+          protagonist; store that input in a normal variable or scoped variable
+          and refer to it through placeholders.
     -->
 
     <style>
@@ -227,7 +241,7 @@
 (function () {
 
     var ENGINE_API_VERSION = 1;
-    var SAVE_DATA_VERSION = 4;
+    var SAVE_DATA_VERSION = 5;
     var LOGICAL_WIDTH = 320;
     var LOGICAL_HEIGHT = 200;
     var SCENE_HEIGHT = 136;
@@ -289,7 +303,7 @@
     Engine.State = {
         mode: 'boot', gameId: null, currentRoomId: null, selectedVerbId: 'walkTo', selectedInventoryItemId: null,
         hoveredTargetId: null, hoveredInventoryItemId: null, pointerX: 0, pointerY: 0, pendingCommand: null,
-        activeCutscene: null, cutsceneQueue: [], flags: {}, variables: {}, scopedVariables: { rooms:{}, characters:{}, items:{} }, roomStates: {}, objectStates: {}, characterStates: {}, inventory: [], inventoryScroll: 0,
+        activeCutscene: null, cutsceneQueue: [], flags: {}, variables: {}, dialogueMemory: {}, inputPrompt: null, scopedVariables: { rooms:{}, characters:{}, items:{} }, roomStates: {}, objectStates: {}, characterStates: {}, inventory: [], inventoryScroll: 0,
         endGame: { title: '', text: '', endingId: null, background: null, animation: null, animationStarted: 0 },
         gameStarted: false,
         previousMode: null,
@@ -583,6 +597,8 @@
             Engine.State.inventoryScroll = 0;
             Engine.State.flags = {};
             Engine.State.variables = {};
+            Engine.State.dialogueMemory = {};
+            Engine.State.inputPrompt = null;
             Engine.State.scopedVariables = { rooms:{}, characters:{}, items:{} };
             Engine.State.roomStates = {};
             Engine.State.objectStates = {};
@@ -622,6 +638,8 @@
         Engine.State.cutsceneQueue = [];
         Engine.State.flags = {};
         Engine.State.variables = {};
+        Engine.State.dialogueMemory = {};
+        Engine.State.inputPrompt = null;
         Engine.State.scopedVariables = { rooms:{}, characters:{}, items:{} };
         Engine.State.roomStates = {};
         Engine.State.objectStates = {};
@@ -672,8 +690,12 @@
     };
 
     Engine.API = {
-        Say: function (speakerId, text, options) { Engine.Dialogue.ShowLine(speakerId, text, options || {}); },
-        Narrate: function (text, options) { Engine.Dialogue.ShowLine(null, text, options || {}); },
+        Say: function (speakerId, text, options) { Engine.Dialogue.ShowLine(speakerId, Engine.Text.Format(text), options || {}); },
+        Narrate: function (text, options) { Engine.Dialogue.ShowLine(null, Engine.Text.Format(text), options || {}); },
+        StartDialogue: function (treeId, nodeId, context) { Engine.DialogueTrees.Start(treeId, nodeId, context || {}); },
+        ShowDialogue: function (treeId, nodeId, context) { Engine.DialogueTrees.Start(treeId, nodeId, context || {}); },
+        AskText: function (prompt, target, options) { Engine.InputPrompt.Start(prompt, target, options || {}); },
+        AskNumber: function (prompt, target, options) { options=options||{}; options.numeric=true; Engine.InputPrompt.Start(prompt, target, options); },
         AddItem: function (itemId) { Engine.Inventory.AddItem(itemId); }, RemoveItem: function (itemId) { Engine.Inventory.RemoveItem(itemId); }, HasItem: function (itemId) { return Engine.Inventory.HasItem(itemId); },
         SetFlag: function (name, value) { Engine.State.flags[name] = !!value; }, GetFlag: function (name) { return !!Engine.State.flags[name]; },
         SetVariable: function (name, value) { Engine.State.variables[name] = value; }, GetVariable: function (name) { return Engine.State.variables[name]; },
@@ -983,11 +1005,201 @@
             this.Clear();
         },
         Advance: function () { var d=Engine.State.dialogue; if (!d.active) { return; } if (d.options && d.options.length) { return; } this.AdvanceBlockOrClear(); },
-        Choose: function (index) { var d=Engine.State.dialogue; if (!d.active || !d.options || !d.options[index]) { return; } var choice=d.options[index]; var run=function () { if (choice.script && Engine.CurrentGame.scripts[choice.script]) { Engine.CurrentGame.scripts[choice.script](Engine.API); } }; this.Clear(); var playerLine=(typeof choice.playerText === 'string') ? choice.playerText : choice.text; if (choice.skipPlayerLine || !playerLine) { run(); } else { Engine.Dialogue.ShowLine('player', playerLine, { onComplete: run }); } },
+        Choose: function (index) { var d=Engine.State.dialogue; if (!d.active || !d.options || !d.options[index]) { return; } var choice=d.options[index]; var run=function () { if (choice.onSelect) { choice.onSelect(choice); return; } if (choice.script && Engine.CurrentGame.scripts[choice.script]) { Engine.CurrentGame.scripts[choice.script](Engine.API); } }; this.Clear(); var playerLine=(typeof choice.playerText === 'string') ? choice.playerText : choice.text; playerLine=Engine.Text.Format(playerLine); if (choice.skipPlayerLine || !playerLine) { run(); } else { Engine.Dialogue.ShowLine('player', playerLine, { onComplete: run }); } },
         Clear: function () { var cb=Engine.State.dialogue.onComplete; if (Engine.State.dialogue.voiceAudio) { Engine.State.dialogue.voiceAudio.pause(); } Engine.Animations.ClearDialogueAnimation(); Engine.State.dialogue.active=false; Engine.State.dialogue.speakerId=null; Engine.State.dialogue.speakerName=''; Engine.State.dialogue.text=''; Engine.State.dialogue.displayText=''; Engine.State.dialogue.timer=0; Engine.State.dialogue.duration=0; Engine.State.dialogue.explicitDuration=null; Engine.State.dialogue.options=[]; Engine.State.dialogue.voiceAudio=null; Engine.State.dialogue.onComplete=null; Engine.State.dialogue.color=null; Engine.State.dialogue.textBlocks=[]; Engine.State.dialogue.textBlockIndex=0; if (cb) { cb(); } },
         Update: function (dt) { var d=Engine.State.dialogue; if (!d.active || (d.options && d.options.length)) { return; } d.timer += dt; if (d.timer >= d.duration) { this.AdvanceBlockOrClear(); } }
     };
 
+
+    Engine.Text = {
+        // Template formatter for dialogue trees, narration and player input echoes.
+        // Supported placeholders are deliberately explicit so AI-authored scripts
+        // are easy to inspect: {{var:name}}, {{flag:name}}, {{room:roomId.name}},
+        // {{character:characterId.name}}, {{item:itemId.name}} and {{playerName}}.
+        Format: function (text, context) {
+            context=context||{};
+            return String(text||'').replace(/\{\{\s*([^}]+?)\s*\}\}/g,function (match, token) {
+                return Engine.Text.ResolveToken(token,context);
+            });
+        },
+        ResolveToken: function (token, context) {
+            token=String(token||'').trim();
+            if (token==='playerName') { return Engine.State.variables.playerName || Engine.State.variables.player || 'the player'; }
+            var parts=token.split(':');
+            if (parts.length===1) { return Engine.State.variables[token] !== undefined ? Engine.State.variables[token] : ''; }
+            var kind=parts[0]; var rest=parts.slice(1).join(':');
+            if (kind==='var') { return Engine.State.variables[rest] !== undefined ? Engine.State.variables[rest] : ''; }
+            if (kind==='flag') { return Engine.State.flags[rest] ? 'true' : 'false'; }
+            return Engine.Text.ResolveScopedToken(kind,rest);
+        },
+        ResolveScopedToken: function (kind, rest) {
+            var dot=String(rest||'').indexOf('.');
+            if (dot<0) { Engine.Debug.Warn('Template placeholder {{'+kind+':'+rest+'}} is missing .variableName.'); return ''; }
+            var objectId=rest.slice(0,dot); var name=rest.slice(dot+1);
+            var value=Engine.ScopedVariables.Get(kind,objectId,name,'');
+            return value === undefined || value === null ? '' : String(value);
+        }
+    };
+    Engine.DialogueTrees = {
+        // DATA AUTHORING SUMMARY
+        // ----------------------
+        // Define conversations in game.dialogueTrees. A minimal tree is:
+        // dialogueTrees:{ guard:{ speakerId:'guard', start:'start', nodes:{
+        //   start:{ text:'Hello {{var:playerName}}.', choices:[
+        //     { id:'askJob', text:'What do you do?', response:'I guard this door.', once:true },
+        //     { id:'bye', text:'Goodbye.', response:'Farewell.', end:true, repeat:true }
+        //   ]}
+        // }}}
+        // Conditions are arrays or single objects. Common forms are:
+        // {flag:'doorOpen'}, {notFlag:'doorOpen'}, {hasItem:'key'},
+        // {missingItem:'key'}, {var:'score', op:'>=', value:3},
+        // {roomVar:['kitchen','visits'], op:'>', value:1},
+        // {characterVar:['guard','mood'], op:'==', value:'angry'},
+        // {itemVar:['key','label'], op:'contains', value:'brass'},
+        // {script:'customConditionScript'} where the script returns truthy/falsey.
+        // Actions use the same compact form: {setFlag:'x', value:true},
+        // {setVar:'name', value:'Ada'}, {addVar:'score', value:1}, or
+        // {script:'scriptName'}. For complex logic, use a script action.
+        GetTree: function (treeId) { return Engine.CurrentGame && Engine.CurrentGame.dialogueTrees ? Engine.CurrentGame.dialogueTrees[treeId] : null; },
+        MemoryKey: function (treeId, choiceId) { return treeId+'.'+choiceId; },
+        IsUsed: function (treeId, choiceId) { return !!(Engine.State.dialogueMemory && Engine.State.dialogueMemory[this.MemoryKey(treeId,choiceId)]); },
+        MarkUsed: function (treeId, choiceId) { if (!choiceId) { return; } Engine.State.dialogueMemory=Engine.State.dialogueMemory||{}; Engine.State.dialogueMemory[this.MemoryKey(treeId,choiceId)]=true; },
+        Start: function (treeId, nodeId, context) { this.ShowNode(treeId,nodeId||null,context||{}); },
+        ShowNode: function (treeId, nodeId, context) {
+            context=context||{};
+            var tree=this.GetTree(treeId);
+            if (!tree) { Engine.Debug.Warn('Dialogue tree "'+treeId+'" is missing.'); return; }
+            var node=this.GetNode(tree,nodeId||tree.start||'start');
+            if (!node) { Engine.Debug.Warn('Dialogue tree "'+treeId+'" node "'+(nodeId||tree.start||'start')+'" is missing.'); return; }
+            var speakerId=node.speakerId || tree.speakerId || context.speakerId || null;
+            var choices=this.BuildChoices(treeId,tree,node,context);
+            var text=Engine.Text.Format(node.text||'',Object.assign({},context,{treeId:treeId,nodeId:node.id||nodeId}));
+            Engine.Dialogue.ShowLine(speakerId,text,{ choices:choices });
+        },
+        GetNode: function (tree, nodeId) { return tree && tree.nodes ? tree.nodes[nodeId] : null; },
+        BuildChoices: function (treeId, tree, node, context) {
+            var self=this; var result=[];
+            (node.choices||[]).forEach(function (choice) {
+                if (!self.ShouldShowChoice(treeId,choice,context)) { return; }
+                var displayText=Engine.Text.Format(choice.text||'',context);
+                var playerText=Engine.Text.Format((typeof choice.playerText==='string') ? choice.playerText : displayText,context);
+                result.push({
+                    text:displayText,
+                    playerText:playerText,
+                    skipPlayerLine:!!choice.skipPlayerLine,
+                    onSelect:function () { self.SelectChoice(treeId,tree,node,choice,context); }
+                });
+            });
+            if (!result.length && (node.emptyText || tree.emptyText)) { result.push({ text:Engine.Text.Format(node.emptyText||tree.emptyText,context), skipPlayerLine:true, onSelect:function () { Engine.Dialogue.Clear(); } }); }
+            return result;
+        },
+        ShouldShowChoice: function (treeId, choice, context) {
+            if (!choice) { return false; }
+            if (choice.id && choice.hideAfterUse !== false && !choice.repeat && !choice.stay && this.IsUsed(treeId,choice.id)) { return false; }
+            return this.CheckConditions(choice.conditions || choice.condition || choice.showIf,context);
+        },
+        CheckConditions: function (conditions, context) {
+            if (!conditions) { return true; }
+            if (!Array.isArray(conditions)) { conditions=[conditions]; }
+            for (var i=0;i<conditions.length;i++) { if (!this.CheckCondition(conditions[i],context)) { return false; } }
+            return true;
+        },
+        CheckCondition: function (condition, context) {
+            if (!condition) { return true; }
+            if (typeof condition === 'string') { return !!Engine.State.flags[condition]; }
+            if (condition.flag) { return !!Engine.State.flags[condition.flag]; }
+            if (condition.notFlag) { return !Engine.State.flags[condition.notFlag]; }
+            if (condition.hasItem) { return Engine.Inventory.HasItem(condition.hasItem); }
+            if (condition.missingItem) { return !Engine.Inventory.HasItem(condition.missingItem); }
+            if (condition.script && Engine.CurrentGame.scripts && Engine.CurrentGame.scripts[condition.script]) { return !!Engine.CurrentGame.scripts[condition.script](Engine.API,context||{}); }
+            if (condition.var) { return this.Compare(Engine.State.variables[condition.var],condition.op||'==',condition.value); }
+            if (condition.roomVar) { return this.Compare(this.GetScopedFromCondition('room',condition.roomVar),condition.op||'==',condition.value); }
+            if (condition.characterVar) { return this.Compare(this.GetScopedFromCondition('character',condition.characterVar),condition.op||'==',condition.value); }
+            if (condition.itemVar) { return this.Compare(this.GetScopedFromCondition('item',condition.itemVar),condition.op||'==',condition.value); }
+            Engine.Debug.Warn('Unknown dialogue condition: '+JSON.stringify(condition)); return true;
+        },
+        GetScopedFromCondition: function (scope, pair) { return Engine.ScopedVariables.Get(scope,pair[0],pair[1],undefined); },
+        Compare: function (left, op, right) {
+            if (op==='==' || op==='equals') { return left == right; }
+            if (op==='===' || op==='strictEquals') { return left === right; }
+            if (op==='!=' || op==='notEquals') { return left != right; }
+            if (op==='!==' || op==='strictNotEquals') { return left !== right; }
+            if (op==='contains') { return String(left||'').indexOf(String(right||''))>=0; }
+            if (typeof left !== 'number' || typeof right !== 'number') { Engine.Debug.Warn('Dialogue comparison '+op+' needs numbers but got '+(typeof left)+' and '+(typeof right)+'.'); return false; }
+            if (op==='>') { return left>right; } if (op==='>=') { return left>=right; } if (op==='<') { return left<right; } if (op==='<=') { return left<=right; }
+            Engine.Debug.Warn('Unknown dialogue comparison operator "'+op+'".'); return false;
+        },
+        SelectChoice: function (treeId, tree, node, choice, context) {
+            context=Object.assign({},context||{},{ treeId:treeId, node:node, choice:choice });
+            if (choice.id) { this.MarkUsed(treeId,choice.id); }
+            this.ApplyActions(choice.actions||choice.action,context);
+            if (choice.script && Engine.CurrentGame.scripts && Engine.CurrentGame.scripts[choice.script]) { Engine.CurrentGame.scripts[choice.script](Engine.API,context); }
+            var self=this;
+            var after=function () { if (choice.end) { return; } if (choice.next) { self.ShowNode(treeId,choice.next,context); } else { self.ShowNode(treeId,node.id||tree.start||'start',context); } };
+            var speakerId=choice.speakerId || node.speakerId || tree.speakerId || context.speakerId || null;
+            var response=Engine.Text.Format(choice.response||'',context);
+            if (response) { Engine.Dialogue.ShowLine(speakerId,response,{ onComplete:after }); } else { after(); }
+        },
+        ApplyActions: function (actions, context) {
+            if (!actions) { return; }
+            if (!Array.isArray(actions)) { actions=[actions]; }
+            var self=this; actions.forEach(function (action) { self.ApplyAction(action,context); });
+        },
+        ApplyAction: function (action, context) {
+            if (!action) { return; }
+            var value=Object.prototype.hasOwnProperty.call(action,'value') ? action.value : true;
+            if (typeof value === 'string') { value=Engine.Text.Format(value,context); }
+            if (action.setFlag) { Engine.State.flags[action.setFlag]=!!value; return; }
+            if (action.clearFlag) { Engine.State.flags[action.clearFlag]=false; return; }
+            if (action.setVar) { Engine.State.variables[action.setVar]=value; return; }
+            if (action.addVar) { Engine.State.variables[action.addVar]=(Number(Engine.State.variables[action.addVar])||0)+(Number(value)||0); return; }
+            if (action.roomVar) { Engine.ScopedVariables.Set('room',action.roomVar[0],action.roomVar[1],value); return; }
+            if (action.characterVar) { Engine.ScopedVariables.Set('character',action.characterVar[0],action.characterVar[1],value); return; }
+            if (action.itemVar) { Engine.ScopedVariables.Set('item',action.itemVar[0],action.itemVar[1],value); return; }
+            if (action.script && Engine.CurrentGame.scripts && Engine.CurrentGame.scripts[action.script]) { Engine.CurrentGame.scripts[action.script](Engine.API,context||{}); return; }
+            Engine.Debug.Warn('Unknown dialogue action: '+JSON.stringify(action));
+        }
+    };
+    Engine.InputPrompt = {
+        Start: function (prompt, target, options) {
+            options=options||{};
+            Engine.State.previousMode=Engine.State.mode;
+            Engine.State.inputPrompt={ prompt:Engine.Text.Format(prompt), value:'', target:target, numeric:!!options.numeric, maxLength:options.maxLength||32, onComplete:options.onComplete||null, script:options.script||null, allowBlank:!!options.allowBlank };
+            Engine.State.mode='textInput';
+        },
+        Accept: function () {
+            var p=Engine.State.inputPrompt; if (!p) { return; }
+            var value=p.numeric ? Number(p.value) : p.value;
+            if (p.numeric && (p.value==='' || !isFinite(value))) { Engine.Debug.Warn('Numeric input rejected because "'+p.value+'" is not a finite number.'); return; }
+            if (!p.allowBlank && !p.numeric && !String(value).length) { return; }
+            this.StoreValue(p.target,value);
+            if (p.script && Engine.CurrentGame.scripts && Engine.CurrentGame.scripts[p.script]) { Engine.CurrentGame.scripts[p.script](Engine.API,{ value:value, target:p.target }); }
+            if (p.onComplete) { p.onComplete(value); }
+            Engine.State.inputPrompt=null;
+            Engine.State.mode=Engine.State.previousMode || 'play';
+            Engine.State.previousMode=null;
+        },
+        Cancel: function () { Engine.State.inputPrompt=null; Engine.State.mode=Engine.State.previousMode || 'play'; Engine.State.previousMode=null; },
+        StoreValue: function (target, value) {
+            if (!target) { return; }
+            if (typeof target === 'string') { Engine.State.variables[target]=value; return; }
+            if (target.scope === 'variable' || target.type === 'variable') { Engine.State.variables[target.name]=value; return; }
+            if (target.scope === 'room') { Engine.ScopedVariables.Set('room',target.id,target.name,value); return; }
+            if (target.scope === 'character') { Engine.ScopedVariables.Set('character',target.id,target.name,value); return; }
+            if (target.scope === 'item') { Engine.ScopedVariables.Set('item',target.id,target.name,value); return; }
+            Engine.Debug.Warn('Input prompt target is not understood: '+JSON.stringify(target));
+        },
+        KeyDown: function (event) {
+            var p=Engine.State.inputPrompt; if (!p) { return; }
+            if (event.key==='Enter') { event.preventDefault(); this.Accept(); return; }
+            if (event.key==='Escape') { event.preventDefault(); this.Cancel(); return; }
+            if (event.key==='Backspace') { event.preventDefault(); p.value=p.value.slice(0,-1); return; }
+            if (event.key && event.key.length===1 && p.value.length < p.maxLength) {
+                if (p.numeric && !/[0-9.\-]/.test(event.key)) { return; }
+                event.preventDefault(); p.value += event.key;
+            }
+        }
+    };
     Engine.Cutscenes = {
         Start: function (steps) { var context={ steps:steps||[] }; if (Engine.Hooks.RunGameHook('beforeCutscene',context) === false) { return; } Engine.State.activeCutscene={steps:steps||[],index:0,waiting:false}; Engine.State.mode='cutscene'; this.RunNext(); },
         RunNext: function () { var cs=Engine.State.activeCutscene; if (!cs || cs.index >= cs.steps.length) { var finished=cs; Engine.State.activeCutscene=null; Engine.State.mode='play'; if (finished) { Engine.Hooks.RunGameHook('afterCutscene',{ steps:finished.steps }); } return; } var step=cs.steps[cs.index++]; if (step.type==='say') { Engine.Dialogue.ShowLine(step.speakerId||null, step.text||'', {duration:step.duration, voice:step.voice, onComplete:function () { Engine.Cutscenes.RunNext(); }}); } else if (step.type==='walk') { Engine.Movement.RequestWalk(step.x,step.y,function () { Engine.Cutscenes.RunNext(); }); } else if (step.type==='script' && Engine.CurrentGame.scripts[step.script]) { Engine.CurrentGame.scripts[step.script](Engine.API); Engine.Cutscenes.RunNext(); } else { Engine.Cutscenes.RunNext(); } }
@@ -1078,6 +1290,9 @@
             // Version 4 expands endGame so multiple endings can store an ending id,
             // ending-specific background and optional ending animation.
             if (version<4) { data.endGame=data.endGame||{ title:'', text:'' }; data.endGame.endingId=data.endGame.endingId||null; data.endGame.background=data.endGame.background||null; data.endGame.animation=data.endGame.animation||null; data.endGame.animationStarted=data.endGame.animationStarted||0; data.saveDataVersion=4; version=4; }
+            // Version 5 adds dialogueMemory for data-defined dialogue trees so
+            // used one-shot dialogue choices stay hidden after save/load.
+            if (version<5) { data.dialogueMemory=data.dialogueMemory||{}; data.saveDataVersion=5; version=5; }
             return data;
         },
         CaptureRoomCharacters: function () { var result={}; var rooms=Engine.CurrentGame.rooms||{}; Object.keys(rooms).forEach(function (roomId) { result[roomId]=(rooms[roomId].characters||[]).map(function (c) { return { id:c.id, x:c.x, y:c.y, facing:c.facing, animation:c.animation, hidden:!!c.hidden, customAnimation:c.customAnimation||null, dialogueAnimation:c.dialogueAnimation||null, moveTarget:null, followTarget:c.followTarget||null, lastMoveX:c.lastMoveX||0, lastMoveY:c.lastMoveY||0, speed:c.speed, rect:c.rect ? DeepClone(c.rect) : null }; }); }); return result; },
@@ -1099,7 +1314,7 @@
         // in Engine.Private.ResetGameData(). A New Game must be a clean session,
         // not a continuation of mutated room, character, cutscene, dialogue,
         // inventory, movement or end-game state from an earlier run.
-        BuildData: function (slot) { return { engineApi:ENGINE_API_VERSION, saveDataVersion:SAVE_DATA_VERSION, savedAt:this.NowStamp(), gameId:Engine.State.gameId, slot:slot, title:(Engine.CurrentGame && Engine.CurrentGame.title) ? Engine.CurrentGame.title : Engine.State.gameId, currentRoomId:Engine.State.currentRoomId, selectedVerbId:Engine.State.selectedVerbId, selectedInventoryItemId:Engine.State.selectedInventoryItemId, player:DeepClone(Engine.State.player), playerTrail:DeepClone(Engine.State.playerTrail||[]), inventory:DeepClone(Engine.State.inventory), inventoryScroll:Engine.State.inventoryScroll||0, flags:DeepClone(Engine.State.flags), variables:DeepClone(Engine.State.variables), scopedVariables:DeepClone(Engine.State.scopedVariables||{ rooms:{}, characters:{}, items:{} }), roomStates:DeepClone(Engine.State.roomStates), objectStates:DeepClone(Engine.State.objectStates), characterStates:DeepClone(Engine.State.characterStates), runtimeCharacters:this.CaptureRoomCharacters(), endGame:DeepClone(Engine.State.endGame), gameStarted:!!Engine.State.gameStarted, audio:DeepClone(Engine.State.audio) }; },
+        BuildData: function (slot) { return { engineApi:ENGINE_API_VERSION, saveDataVersion:SAVE_DATA_VERSION, savedAt:this.NowStamp(), gameId:Engine.State.gameId, slot:slot, title:(Engine.CurrentGame && Engine.CurrentGame.title) ? Engine.CurrentGame.title : Engine.State.gameId, currentRoomId:Engine.State.currentRoomId, selectedVerbId:Engine.State.selectedVerbId, selectedInventoryItemId:Engine.State.selectedInventoryItemId, player:DeepClone(Engine.State.player), playerTrail:DeepClone(Engine.State.playerTrail||[]), inventory:DeepClone(Engine.State.inventory), inventoryScroll:Engine.State.inventoryScroll||0, flags:DeepClone(Engine.State.flags), variables:DeepClone(Engine.State.variables), dialogueMemory:DeepClone(Engine.State.dialogueMemory||{}), scopedVariables:DeepClone(Engine.State.scopedVariables||{ rooms:{}, characters:{}, items:{} }), roomStates:DeepClone(Engine.State.roomStates), objectStates:DeepClone(Engine.State.objectStates), characterStates:DeepClone(Engine.State.characterStates), runtimeCharacters:this.CaptureRoomCharacters(), endGame:DeepClone(Engine.State.endGame), gameStarted:!!Engine.State.gameStarted, audio:DeepClone(Engine.State.audio) }; },
         Summarise: function (slot, data) { var roomName=data.currentRoomId; if (Engine.CurrentGame && Engine.CurrentGame.rooms && Engine.CurrentGame.rooms[data.currentRoomId]) { roomName=Engine.CurrentGame.rooms[data.currentRoomId].name||data.currentRoomId; } return 'Slot '+slot+' - '+(data.savedAt||'unknown time')+' - '+roomName; },
         ReadSlot: function (slot) { var raw=null; try { raw=localStorage.getItem(this.Key(slot)); } catch (e) { return null; } if (!raw) { return null; } try { return JSON.parse(raw); } catch (e2) { return null; } },
         List: function () { var list=[]; for (var i=1;i<=this.maxSlots;i++) { var data=this.ReadSlot(String(i)); data=this.MigrateSaveData(data); if (this.IsCompatibleSave(data)) { list.push({ slot:String(i), data:data, label:this.Summarise(String(i),data) }); } } return list; },
@@ -1109,7 +1324,7 @@
         // SAVE-STATE WARNING: Load() must be kept in lockstep with BuildData().
         // Whenever a field is added to the saved data above, restore it here and
         // perform any normalisation needed before gameplay resumes.
-        Load: function (slot) { var data=this.ReadSlot(slot||'1'); if (!data) { Engine.State.saveLoadMessage='No saved game was found in that slot.'; return; } data=this.MigrateSaveData(data); if (!this.IsCompatibleSave(data)) { Engine.State.saveLoadMessage='This saved game is not compatible.'; return; } Engine.State.currentRoomId=data.currentRoomId; Engine.State.selectedVerbId=data.selectedVerbId||'walkTo'; Engine.State.selectedInventoryItemId=data.selectedInventoryItemId||null; Engine.State.player=data.player; Engine.State.inventory=data.inventory||[]; Engine.State.inventoryScroll=data.inventoryScroll||0; Engine.State.flags=data.flags||{}; Engine.State.variables=data.variables||{}; Engine.State.scopedVariables=data.scopedVariables||{ rooms:{}, characters:{}, items:{} }; Engine.State.roomStates=data.roomStates||{}; Engine.State.objectStates=data.objectStates||{}; Engine.State.characterStates=data.characterStates||{}; Engine.State.endGame=data.endGame||{ title:'', text:'', endingId:null, background:null, animation:null, animationStarted:0 }; if (!Engine.State.endGame.animationStarted) { Engine.State.endGame.animationStarted=0; } Engine.State.audio=data.audio||Engine.State.audio; Engine.State.dialogue.active=false; Engine.State.dialogue.speakerId=null; Engine.State.dialogue.speakerName=''; Engine.State.dialogue.text=''; Engine.State.dialogue.displayText=''; Engine.State.dialogue.timer=0; Engine.State.dialogue.duration=0; Engine.State.dialogue.explicitDuration=null; Engine.State.dialogue.options=[]; Engine.State.dialogue.onComplete=null; Engine.State.dialogue.voiceAudio=null; Engine.State.dialogue.color=null; Engine.State.dialogue.textBlocks=[]; Engine.State.dialogue.textBlockIndex=0; Engine.State.activeCutscene=null; Engine.State.gameStarted=true; this.RestoreRoomCharacters(data.runtimeCharacters); Engine.Inventory.NormalizeScroll(); Engine.Rooms.EnterRoom(data.currentRoomId,data.player.x,data.player.y,data.player.facing,{ skipOnEnter:true }); Engine.State.player=Object.assign(Engine.State.player,data.player); Engine.State.player.walkTarget=null; Engine.State.player.walkPath=[]; Engine.State.player.walkCallback=null; Engine.State.playerTrail=data.playerTrail&&data.playerTrail.length?data.playerTrail:[{x:Engine.State.player.x,y:Engine.State.player.y,facing:Engine.State.player.facing||'down'}]; Engine.State.mode='play'; Engine.Dialogue.ShowLine(null,'Game loaded.',{}); }
+        Load: function (slot) { var data=this.ReadSlot(slot||'1'); if (!data) { Engine.State.saveLoadMessage='No saved game was found in that slot.'; return; } data=this.MigrateSaveData(data); if (!this.IsCompatibleSave(data)) { Engine.State.saveLoadMessage='This saved game is not compatible.'; return; } Engine.State.currentRoomId=data.currentRoomId; Engine.State.selectedVerbId=data.selectedVerbId||'walkTo'; Engine.State.selectedInventoryItemId=data.selectedInventoryItemId||null; Engine.State.player=data.player; Engine.State.inventory=data.inventory||[]; Engine.State.inventoryScroll=data.inventoryScroll||0; Engine.State.flags=data.flags||{}; Engine.State.variables=data.variables||{}; Engine.State.dialogueMemory=data.dialogueMemory||{}; Engine.State.inputPrompt=null; Engine.State.scopedVariables=data.scopedVariables||{ rooms:{}, characters:{}, items:{} }; Engine.State.roomStates=data.roomStates||{}; Engine.State.objectStates=data.objectStates||{}; Engine.State.characterStates=data.characterStates||{}; Engine.State.endGame=data.endGame||{ title:'', text:'', endingId:null, background:null, animation:null, animationStarted:0 }; if (!Engine.State.endGame.animationStarted) { Engine.State.endGame.animationStarted=0; } Engine.State.audio=data.audio||Engine.State.audio; Engine.State.dialogue.active=false; Engine.State.dialogue.speakerId=null; Engine.State.dialogue.speakerName=''; Engine.State.dialogue.text=''; Engine.State.dialogue.displayText=''; Engine.State.dialogue.timer=0; Engine.State.dialogue.duration=0; Engine.State.dialogue.explicitDuration=null; Engine.State.dialogue.options=[]; Engine.State.dialogue.onComplete=null; Engine.State.dialogue.voiceAudio=null; Engine.State.dialogue.color=null; Engine.State.dialogue.textBlocks=[]; Engine.State.dialogue.textBlockIndex=0; Engine.State.activeCutscene=null; Engine.State.gameStarted=true; this.RestoreRoomCharacters(data.runtimeCharacters); Engine.Inventory.NormalizeScroll(); Engine.Rooms.EnterRoom(data.currentRoomId,data.player.x,data.player.y,data.player.facing,{ skipOnEnter:true }); Engine.State.player=Object.assign(Engine.State.player,data.player); Engine.State.player.walkTarget=null; Engine.State.player.walkPath=[]; Engine.State.player.walkCallback=null; Engine.State.playerTrail=data.playerTrail&&data.playerTrail.length?data.playerTrail:[{x:Engine.State.player.x,y:Engine.State.player.y,facing:Engine.State.player.facing||'down'}]; Engine.State.mode='play'; Engine.Dialogue.ShowLine(null,'Game loaded.',{}); }
     };
 
     Engine.Input = {
@@ -1119,6 +1334,7 @@
             event.preventDefault(); var p=this.PointerToGame(event); Engine.State.pointerX=p.x; Engine.State.pointerY=p.y;
             if (Engine.State.mode==='ended') { Engine.State.gameStarted=false; Engine.State.endGame={ title:'', text:'', endingId:null, background:null, animation:null, animationStarted:0 }; Engine.State.mode='menu'; Engine.Assets.PlayMusic(Engine.CurrentGame.titleMusic || Engine.CurrentGame.menuMusic || []); return; }
             if (Engine.State.mode==='intro') { Engine.Assets.PlayMusic(Engine.CurrentGame.titleMusic || Engine.CurrentGame.menuMusic || []); Engine.State.mode='menu'; return; }
+            if (Engine.State.mode==='textInput') { return; }
             if (Engine.State.mode==='menu') { Engine.Input.HandleMenuClick(p.x,p.y); return; }
             if (Engine.State.mode==='options') { Engine.Input.HandleOptionsClick(p.x,p.y); return; }
             if (Engine.State.mode==='saveGame' || Engine.State.mode==='loadGame') { Engine.Input.HandleSaveLoadClick(p.x,p.y); return; }
@@ -1154,7 +1370,7 @@
     Engine.Canvas.addEventListener('pointermove', function (e) { Engine.Input.OnPointerMove(e); });
     Engine.Canvas.addEventListener('pointerdown', function (e) { Engine.Input.OnPointerDown(e); });
     Engine.Canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
-    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && (Engine.State.mode === 'play' || Engine.State.mode === 'cutscene')) { e.preventDefault(); Engine.Private.ShowMainMenu(); return; } if (e.key === 'Escape' && (Engine.State.mode === 'saveGame' || Engine.State.mode === 'loadGame' || Engine.State.mode === 'options')) { e.preventDefault(); Engine.State.mode='menu'; } });
+    document.addEventListener('keydown', function (e) { if (Engine.State.mode === 'textInput') { Engine.InputPrompt.KeyDown(e); return; } if (e.key === 'Escape' && (Engine.State.mode === 'play' || Engine.State.mode === 'cutscene')) { e.preventDefault(); Engine.Private.ShowMainMenu(); return; } if (e.key === 'Escape' && (Engine.State.mode === 'saveGame' || Engine.State.mode === 'loadGame' || Engine.State.mode === 'options')) { e.preventDefault(); Engine.State.mode='menu'; } });
 
     Engine.Renderer = {
         frameTime: 0,
@@ -1193,6 +1409,7 @@
             if (Engine.State.mode==='options') { this.RenderOptions(); return; }
             if (Engine.State.mode==='saveGame' || Engine.State.mode==='loadGame') { this.RenderSaveLoadMenu(); return; }
             if (Engine.State.mode==='ended') { this.RenderEnded(); return; }
+            if (Engine.State.mode==='textInput') { this.RenderRoom(); this.RenderTextInputPanel(); return; }
             if (Engine.State.mode==='loading') { this.Rect(0,0,320,200,'#000020'); this.Text('Loading game assets...',84,92,'#ffffff'); return; }
             this.RenderRoom(); this.RenderUI(); if (Engine.State.debug) { this.RenderDebug(); }
         },
@@ -1233,6 +1450,7 @@
         },
         RenderHoverLabel: function () { if (Engine.State.mode!=='play' || Engine.State.dialogue.active || !Engine.State.hoveredTargetId || Engine.State.pointerY>=UI_TOP) { return; } var target=Engine.Interactions.GetTarget(Engine.State.hoveredTargetId); if (!target || !target.name) { return; } var label=CapitaliseFirst(target.name); var w=this.MeasureText(label); var x=Clamp(Engine.State.pointerX+6,2,318-w); var y=Clamp(Engine.State.pointerY-12,2,UI_TOP-9); this.TextWithShadow(label,x,y,this.GetTextColor('hoverTextColor','#ffff55')); },
         RenderNarrationPanel: function () { var d=Engine.State.dialogue; this.RenderUIPanelBackground(true); this.RenderWrappedLinesInBox(d.text,8,142,304,54,this.GetTextColor('narrationTextColor','#ffffff'),false); },
+        RenderTextInputPanel: function () { var p=Engine.State.inputPrompt||{}; this.RenderUIPanelBackground(true); this.RenderWrappedLinesInBox(p.prompt||'Enter text:',8,142,304,18,this.GetTextColor('narrationTextColor','#ffffff'),false); var value=String(p.value||''); var suffix=(Math.floor(this.frameTime*2)%2) ? '_' : ''; this.TextWithShadow(value+suffix,8,166,this.GetTextColor('commandTextColor','#55ff55')); this.TextWithShadow('Enter accepts, Esc cancels',8,190,this.GetTextColor('choiceTextColor','#ffffff')); },
         DrawInventoryArrow: function (x, y, direction, enabled) { var ctx=Engine.Ctx; ctx.fillStyle=enabled ? '#ffffff' : '#606060'; ctx.beginPath(); if (direction === 'up') { ctx.moveTo(x+7,y+2); ctx.lineTo(x+2,y+12); ctx.lineTo(x+12,y+12); } else { ctx.moveTo(x+2,y+2); ctx.lineTo(x+12,y+2); ctx.lineTo(x+7,y+12); } ctx.closePath(); ctx.fill(); },
         RenderInventoryArrows: function () { this.DrawInventoryArrow(304,142,'up',Engine.Inventory.CanScrollUp()); this.DrawInventoryArrow(304,166,'down',Engine.Inventory.CanScrollDown()); },
         GetInventoryIconMaxSize: function () { var ui=this.GetUIConfig(); return { w:ui.inventoryIconMaxW||16, h:ui.inventoryIconMaxH||16 }; },
