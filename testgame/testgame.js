@@ -82,6 +82,58 @@ PointClickEngine.RegisterGame({
             ]
         }
     },
+    dialogueTrees: {
+        caretakerTalk: {
+            speakerId: 'caretaker',
+            start: 'start',
+            nodes: {
+                start: {
+                    text: 'Good day. What can I do for you?',
+                    choices: [
+                        {
+                            id: 'whoAreYou',
+                            text: 'Who are you?',
+                            response: 'I am here to test dialogue choices, speech placement, and timed text.',
+                            repeat: true
+                        },
+                        {
+                            id: 'askKeyNoCoin',
+                            text: 'Do you have a key?',
+                            conditions: [ { missingItem: 'coin' }, { missingItem: 'key' } ],
+                            response: 'I might trade it for a coin, if you happen to find one in a suspiciously convenient place.',
+                            repeat: true
+                        },
+                        {
+                            id: 'askKeyWithCoin',
+                            text: 'Will you trade this coin for a key?',
+                            conditions: [ { hasItem: 'coin' }, { missingItem: 'key' } ],
+                            response: 'That coin would do nicely. Give it to me and I shall give you the key.',
+                            repeat: true
+                        },
+                        {
+                            id: 'askKeyAlreadyHaveKey',
+                            text: 'Do you have another key?',
+                            conditions: { hasItem: 'key' },
+                            response: 'I already gave you the key. Try it on the door before it starts feeling underappreciated.',
+                            repeat: true
+                        },
+                        {
+                            id: 'sillyQuestion',
+                            text: 'If a cupboard dreams of porridge, should I apologise to the spoon?',
+                            response: 'Only on Thursdays. On Fridays the spoon is legally represented by a startled turnip.'
+                        },
+                        {
+                            id: 'neverMind',
+                            text: 'Never mind.',
+                            response: 'Very well.',
+                            end: true,
+                            repeat: true
+                        }
+                    ]
+                }
+            }
+        }
+    },
     scripts: {
         lookCoin: function (api) { api.Narrate('It is a small brass coin. Adventure game law says you should probably take it, now that you have won the preliminary contest of noticing it.'); },
         takeCoin: function (api) { api.SetFlag('coinTaken', true); api.AddItem('coin'); api.Narrate('Taken.'); },
@@ -97,7 +149,7 @@ PointClickEngine.RegisterGame({
         openKey: function (api) { api.Narrate('The key has no moving parts to open.'); },
         closeKey: function (api) { api.Narrate('The key has no moving parts to close.'); },
         useCoinWithKey: function (api) { api.Narrate('The coin and the key decline to become a more complicated currency system.'); },
-        talkCaretaker: function (api) { api.Say('caretaker', 'Good day. What can I do for you?', { choices: [ { text: 'Who are you?', script: 'askWho' }, { text: 'Do you have a key?', script: 'askKey' }, { text: 'Never mind.', script: 'endTalk' } ] }); },
+        talkCaretaker: function (api) { api.StartDialogue('caretakerTalk'); },
         askWho: function (api) { api.Say('caretaker', 'I am here to test dialogue choices, speech placement, and timed text.'); },
         askKey: function (api) { if (api.HasItem('key')) { api.Say('caretaker', 'I already gave you the key. Try it on the door.'); } else { api.Say('caretaker', 'I might trade it for a coin.'); } },
         endTalk: function (api) { api.Say('caretaker', 'Very well.'); },
