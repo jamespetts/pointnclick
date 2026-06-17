@@ -223,7 +223,12 @@
           {{item:key.label}} in player text, NPC text and choices. Use
           api.AskText() or api.AskNumber() for player input such as naming the
           protagonist; store that input in a normal variable or scoped variable
-          and refer to it through placeholders.
+          and refer to it through placeholders. Dialogue choices are word-wrapped
+          by the central renderer and pointer hit-testing uses the same wrapped
+          layout, so long AI-authored choices must not draw their own choice UI.
+          Dialogue actions may also addItem/removeItem, so a dialogue option can
+          perform the same inventory exchange as a Give command while keeping the
+          ordinary Give path available.
     -->
 
     <style>
@@ -1153,6 +1158,8 @@
             if (action.clearFlag) { Engine.State.flags[action.clearFlag]=false; return; }
             if (action.setVar) { Engine.State.variables[action.setVar]=value; return; }
             if (action.addVar) { Engine.State.variables[action.addVar]=(Number(Engine.State.variables[action.addVar])||0)+(Number(value)||0); return; }
+            if (action.addItem) { Engine.Inventory.AddItem(action.addItem); return; }
+            if (action.removeItem) { Engine.Inventory.RemoveItem(action.removeItem); return; }
             if (action.roomVar) { Engine.ScopedVariables.Set('room',action.roomVar[0],action.roomVar[1],value); return; }
             if (action.characterVar) { Engine.ScopedVariables.Set('character',action.characterVar[0],action.characterVar[1],value); return; }
             if (action.itemVar) { Engine.ScopedVariables.Set('item',action.itemVar[0],action.itemVar[1],value); return; }
@@ -1340,7 +1347,7 @@
             if (Engine.State.mode==='saveGame' || Engine.State.mode==='loadGame') { Engine.Input.HandleSaveLoadClick(p.x,p.y); return; }
             if (Engine.State.mode==='selectGame') { var games=Engine.State.availableGames||[]; var idx=Math.floor((p.y-62)/18); if (idx>=0 && idx<games.length) { Engine.Private.LoadGameFromManifest(games[idx]); } return; }
             if (Engine.State.mode !== 'play') { if (Engine.State.mode==='cutscene' && Engine.State.dialogue.active) { Engine.Dialogue.Advance(); } return; }
-            if (Engine.State.dialogue.active) { if (Engine.State.dialogue.options && Engine.State.dialogue.options.length) { var opt=Math.floor((p.y-142)/12); Engine.Dialogue.Choose(opt); } else { Engine.Dialogue.Advance(); } return; }
+            if (Engine.State.dialogue.active) { if (Engine.State.dialogue.options && Engine.State.dialogue.options.length) { var opt=Engine.Renderer.GetChoiceIndexAtPoint(p.x,p.y); if (opt >= 0) { Engine.Dialogue.Choose(opt); } } else { Engine.Dialogue.Advance(); } return; }
             if (p.y >= UI_TOP) { var arrow=Engine.Inventory.GetScrollArrowAtPoint(p.x,p.y); if (arrow === 'up' && Engine.Inventory.CanScrollUp()) { Engine.Inventory.ScrollByRows(-1); return; } if (arrow === 'down' && Engine.Inventory.CanScrollDown()) { Engine.Inventory.ScrollByRows(1); return; } var verb=Engine.Verbs.GetByPoint(p.x,p.y); if (verb) { Engine.State.selectedVerbId=verb.id; Engine.State.selectedInventoryItemId=null; return; } var itemId=Engine.Inventory.GetItemAtPoint(p.x,p.y); if (itemId) { if (Engine.State.selectedVerbId === 'use' || Engine.State.selectedVerbId === 'give') { if (Engine.State.selectedInventoryItemId) { Engine.Interactions.ResolveInventoryCommand(Engine.State.selectedVerbId,itemId,Engine.State.selectedInventoryItemId); Engine.State.selectedInventoryItemId=null; } else { Engine.State.selectedInventoryItemId=itemId; } } else { Engine.Interactions.ResolveInventoryCommand(Engine.State.selectedVerbId,itemId,null); } return; } return; }
             var targetId=Engine.Interactions.HitTest(p.x,p.y); var verbId=(event.button === 2 || event.altKey) ? 'walkTo' : Engine.State.selectedVerbId; var command=Engine.Interactions.BuildCommand(verbId,targetId,p.x,p.y); Engine.Verbs.Execute(command); if (command.inventoryItemId && (verbId === 'use' || verbId === 'give')) { Engine.State.selectedInventoryItemId=null; }
         },
@@ -1450,6 +1457,9 @@
         },
         RenderHoverLabel: function () { if (Engine.State.mode!=='play' || Engine.State.dialogue.active || !Engine.State.hoveredTargetId || Engine.State.pointerY>=UI_TOP) { return; } var target=Engine.Interactions.GetTarget(Engine.State.hoveredTargetId); if (!target || !target.name) { return; } var label=CapitaliseFirst(target.name); var w=this.MeasureText(label); var x=Clamp(Engine.State.pointerX+6,2,318-w); var y=Clamp(Engine.State.pointerY-12,2,UI_TOP-9); this.TextWithShadow(label,x,y,this.GetTextColor('hoverTextColor','#ffff55')); },
         RenderNarrationPanel: function () { var d=Engine.State.dialogue; this.RenderUIPanelBackground(true); this.RenderWrappedLinesInBox(d.text,8,142,304,54,this.GetTextColor('narrationTextColor','#ffffff'),false); },
+        GetChoiceLayout: function () { var d=Engine.State.dialogue; var options=d.options||[]; var layout=[]; var y=142; var lineHeight=this.GetLineHeight(); var maxWidth=304; for (var i=0;i<options.length;i++) { var label=String(i+1)+'. '+String(options[i].text||''); var lines=this.BuildWrappedLines(label,maxWidth); layout.push({ index:i, x:8, y:y, h:lines.length*lineHeight, lines:lines }); y += lines.length*lineHeight + 2; } return layout; },
+        GetChoiceIndexAtPoint: function (x,y) { if (x < 0 || x >= 320) { return -1; } var layout=this.GetChoiceLayout(); for (var i=0;i<layout.length;i++) { if (y >= layout[i].y-1 && y < layout[i].y + layout[i].h + 2) { return layout[i].index; } } return -1; },
+        RenderDialogueChoices: function () { this.RenderUIPanelBackground(true); var layout=this.GetChoiceLayout(); var color=this.GetTextColor('choiceTextColor','#ffffff'); for (var i=0;i<layout.length;i++) { for (var j=0;j<layout[i].lines.length;j++) { if (layout[i].y+j*this.GetLineHeight() > 194) { return; } this.Text(layout[i].lines[j],layout[i].x,layout[i].y+j*this.GetLineHeight(),color); } } },
         RenderTextInputPanel: function () { var p=Engine.State.inputPrompt||{}; this.RenderUIPanelBackground(true); this.RenderWrappedLinesInBox(p.prompt||'Enter text:',8,142,304,18,this.GetTextColor('narrationTextColor','#ffffff'),false); var value=String(p.value||''); var suffix=(Math.floor(this.frameTime*2)%2) ? '_' : ''; this.TextWithShadow(value+suffix,8,166,this.GetTextColor('commandTextColor','#55ff55')); this.TextWithShadow('Enter accepts, Esc cancels',8,190,this.GetTextColor('choiceTextColor','#ffffff')); },
         DrawInventoryArrow: function (x, y, direction, enabled) { var ctx=Engine.Ctx; ctx.fillStyle=enabled ? '#ffffff' : '#606060'; ctx.beginPath(); if (direction === 'up') { ctx.moveTo(x+7,y+2); ctx.lineTo(x+2,y+12); ctx.lineTo(x+12,y+12); } else { ctx.moveTo(x+2,y+2); ctx.lineTo(x+12,y+2); ctx.lineTo(x+7,y+12); } ctx.closePath(); ctx.fill(); },
         RenderInventoryArrows: function () { this.DrawInventoryArrow(304,142,'up',Engine.Inventory.CanScrollUp()); this.DrawInventoryArrow(304,166,'down',Engine.Inventory.CanScrollDown()); },
@@ -1468,7 +1478,7 @@
         RenderUI: function () {
             var d=Engine.State.dialogue;
             if (d.active && !d.speakerId && !(d.options && d.options.length)) { this.RenderNarrationPanel(); return; }
-            if (d.active && d.options && d.options.length) { this.RenderUIPanelBackground(true); for (var i=0;i<d.options.length;i++) { this.Text(String(i+1)+'. '+d.options[i].text,8,142+i*12,this.GetTextColor('choiceTextColor','#ffffff')); } return; }
+            if (d.active && d.options && d.options.length) { this.RenderDialogueChoices(); return; }
             this.RenderUIPanelBackground(false);
             for (var v=0;v<Engine.Verbs.list.length;v++) { var verb=Engine.Verbs.list[v]; var selected=verb.id===Engine.State.selectedVerbId; this.RenderVerbLabel(verb,selected); }
             Engine.Inventory.NormalizeScroll(); this.RenderInventoryArrows();

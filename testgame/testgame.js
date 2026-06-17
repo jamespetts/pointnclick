@@ -107,7 +107,8 @@ PointClickEngine.RegisterGame({
                             id: 'askKeyWithCoin',
                             text: 'Will you trade this coin for a key?',
                             conditions: [ { hasItem: 'coin' }, { missingItem: 'key' } ],
-                            response: 'That coin would do nicely. Give it to me and I shall give you the key.',
+                            actions: [ { removeItem: 'coin' }, { addItem: 'key' }, { script: 'caretakerLeavesAfterTrade' } ],
+                            response: 'A fair trade. Here is the key.',
                             repeat: true
                         },
                         {
@@ -153,6 +154,7 @@ PointClickEngine.RegisterGame({
         askWho: function (api) { api.Say('caretaker', 'I am here to test dialogue choices, speech placement, and timed text.'); },
         askKey: function (api) { if (api.HasItem('key')) { api.Say('caretaker', 'I already gave you the key. Try it on the door.'); } else { api.Say('caretaker', 'I might trade it for a coin.'); } },
         endTalk: function (api) { api.Say('caretaker', 'Very well.'); },
+        caretakerLeavesAfterTrade: function (api) { api.MoveCharacter('caretaker', 332, 116, { speed: 42, hideOnComplete: true }); },
         giveCoinToCaretaker: function (api) { if (api.HasItem('coin')) { api.RemoveItem('coin'); api.AddItem('key'); api.Say('caretaker', 'A fair trade. Here is the key.', { onComplete: function () { api.MoveCharacter('caretaker', 332, 116, { speed: 42, hideOnComplete: true }); } }); } else { api.Say('caretaker', 'You appear to be short of coin.'); } }
     }
 });
