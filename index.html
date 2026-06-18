@@ -71,14 +71,18 @@
         - Do not add ellipses to wrapped text unless a line is actually truncated
           to fit a fixed-size text box.
         - Spoken character dialogue is rendered above the relevant actor and the
-          renderer nudges each line horizontally where possible so it does not sit
-          on top of nearby actors. While any dialogue line is active, the existing
-          lower-panel renderer suppresses the verb and inventory controls; dialogue
-          choices and narration still use the lower UI panel. Non-speaker narration
-          and object descriptions, including Look At responses, are rendered in the
-          lower UI panel so that they cannot run off the scene area or obscure
-          characters. Future scripts should use api.Say(...) for spoken character
-          dialogue and api.Narrate(...) for descriptive interface text.
+          renderer nudges the whole text block horizontally where possible so it
+          does not sit on top of nearby actors. All lines in the same speech block
+          share one horizontal origin, so multi-line speech does not zig-zag across
+          different horizontal planes. Spoken text is not prefixed with the speaker
+          name because the actor-relative position identifies the speaker. While
+          any dialogue line is active, the existing lower-panel renderer suppresses
+          the verb and inventory controls; dialogue choices and narration still use
+          the lower UI panel. Non-speaker narration and object descriptions,
+          including Look At responses, are rendered in the lower UI panel so that
+          they cannot run off the scene area or obscure characters. Future scripts
+          should use api.Say(...) for spoken character dialogue and api.Narrate(...)
+          for descriptive interface text.
         - Dialogue choices are selected from the lower UI panel, but a chosen line
           is then spoken by the player actor using the normal api.Say('player', ...)
           path before the selected response script runs. This keeps player speech,
@@ -3507,7 +3511,7 @@
             if (speakerId && Engine.CurrentGame.characters && Engine.CurrentGame.characters[speakerId]) { speakerName=Engine.CurrentGame.characters[speakerId].name;
             }
             var choices=options.choices||[];
-            var displayText=speakerName ? speakerName+': '+lineText : lineText;
+            var displayText=lineText;
             var textBlocks=[];
             if (speakerId && !choices.length && Engine.Renderer) {
                 var lines=Engine.Renderer.BuildWrappedLines(displayText,168);
@@ -4824,13 +4828,17 @@ Engine.Renderer = {
         for (var i=0;i<avoidRects.length;i++) { if (this.RectsOverlap(rect,avoidRects[i],2)) { return true;
             } } return false;
     },
-    FindSpeechLineX: function (speakerX, y, w, avoidRects) { var preferred=Clamp(Math.round(speakerX-w/2),2,318-w);
-        if (!this.SpeechLineHitsActor(preferred,y,w,this.GetLineHeight(),avoidRects)) { return preferred;
-        } for (var offset=4;offset<160;offset+=4) { var left=Clamp(preferred-offset,2,318-w);
-            if (left!==preferred && !this.SpeechLineHitsActor(left,y,w,this.GetLineHeight(),avoidRects)) { return left;
-            } var right=Clamp(preferred+offset,2,318-w);
-            if (right!==preferred && !this.SpeechLineHitsActor(right,y,w,this.GetLineHeight(),avoidRects)) { return right;
-            } } return preferred;
+    FindSpeechBlockX: function (speakerX, y, w, h, avoidRects) { var preferred=Clamp(Math.round(speakerX-w/2),2,318-w);
+        if (!this.SpeechLineHitsActor(preferred,y,w,h,avoidRects)) { return preferred;
+        }
+        for (var offset=4;offset<160;offset+=4) { var left=Clamp(preferred-offset,2,318-w);
+            if (left!==preferred && !this.SpeechLineHitsActor(left,y,w,h,avoidRects)) { return left;
+            }
+            var right=Clamp(preferred+offset,2,318-w);
+            if (right!==preferred && !this.SpeechLineHitsActor(right,y,w,h,avoidRects)) { return right;
+            }
+        }
+        return preferred;
     },
     RenderSpeechAboveCharacter: function () {
         var d=Engine.State.dialogue;
@@ -4853,15 +4861,17 @@ Engine.Renderer = {
         }
         if (speakerTop===null || speakerX===null) { return;
         }
-        var lines=(d.textBlocks && d.textBlocks.length) ? d.textBlocks[d.textBlockIndex] : this.BuildWrappedLines(d.displayText || (d.speakerName ? d.speakerName+': '+d.text : d.text),168);
+        var lines=(d.textBlocks && d.textBlocks.length) ? d.textBlocks[d.textBlockIndex] : this.BuildWrappedLines(d.displayText || d.text,168);
         var blockHeight=lines.length*this.GetLineHeight();
         var y=Clamp(Math.round(speakerTop-blockHeight-6),2,112-blockHeight);
         var speechColor=this.GetDialogueTextColor(d.speakerId);
         var avoidRects=this.GetDialogueAvoidRects(d.speakerId);
-        for (var i=0;i<lines.length;i++) { var w=this.MeasureText(lines[i]);
-            var lineY=y+i*this.GetLineHeight();
-            var x=this.FindSpeechLineX(speakerX,lineY,w,avoidRects);
-            this.TextWithShadow(lines[i],x,lineY,speechColor);
+        var blockWidth=1;
+        for (var i=0;i<lines.length;i++) { blockWidth=Math.max(blockWidth,this.MeasureText(lines[i]));
+        }
+        var blockX=this.FindSpeechBlockX(speakerX,y,blockWidth,blockHeight,avoidRects);
+        for (var j=0;j<lines.length;j++) {
+            this.TextWithShadow(lines[j],blockX,y+j*this.GetLineHeight(),speechColor);
         }
     },
     RenderHoverLabel: function () { if (Engine.State.mode!=='play' || Engine.State.dialogue.active || !Engine.State.hoveredTargetId || Engine.State.pointerY>=UI_TOP) { return;
