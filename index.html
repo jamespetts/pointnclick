@@ -1046,7 +1046,7 @@
             Engine.Lifecycle.BumpRoom();
             Engine.State.currentRoomId = roomId; Engine.State.player.roomId = roomId;
             if (typeof x === 'number') { Engine.State.player.x = x; } if (typeof y === 'number') { Engine.State.player.y = y; } if (facing) { Engine.State.player.facing = facing; }
-            Engine.State.player.walkTarget = null; Engine.State.player.walkPath = []; Engine.State.player.walkCallback = null; Engine.State.player.walkToken = null; this.ResetPlayerTrail(); this.PlaceFollowers(); this.ApplyActorAvoidance(); Engine.Assets.PlayMusic(room.music || []);
+            Engine.State.player.walkTarget = null; Engine.State.player.walkPath = []; Engine.State.player.walkCallback = null; Engine.State.player.walkToken = null; if (!options.preservePlayerTrail) { this.ResetPlayerTrail(); } this.PlaceFollowers(); this.ApplyActorAvoidance(); Engine.Assets.PlayMusic(room.music || []);
             if (!options.skipOnEnter && room.onEnter && Engine.CurrentGame.scripts[room.onEnter]) { Engine.CurrentGame.scripts[room.onEnter](Engine.API); }
             if (!skipHooks) {
                 if (fromRoom) { Engine.Hooks.RunRoomHook(fromRoom,['afterExit','onAfterExit'],context,'room.afterExit'); Engine.Hooks.RunGameHook('afterRoomExit',context); }
@@ -1314,15 +1314,16 @@
             context=context||{};
             var tree=this.GetTree(treeId);
             if (!tree) { Engine.Debug.Warn('Dialogue tree "'+treeId+'" is missing.'); return; }
-            var node=this.GetNode(tree,nodeId||tree.start||'start');
-            if (!node) { Engine.Debug.Warn('Dialogue tree "'+treeId+'" node "'+(nodeId||tree.start||'start')+'" is missing.'); return; }
+            var resolvedNodeId=nodeId||tree.start||'start';
+            var node=this.GetNode(tree,resolvedNodeId);
+            if (!node) { Engine.Debug.Warn('Dialogue tree "'+treeId+'" node "'+resolvedNodeId+'" is missing.'); return; }
             var speakerId=node.speakerId || tree.speakerId || context.speakerId || null;
-            var choices=this.BuildChoices(treeId,tree,node,context);
-            var text=Engine.Text.Format(node.text||'',Object.assign({},context,{treeId:treeId,nodeId:node.id||nodeId}));
+            var choices=this.BuildChoices(treeId,tree,node,resolvedNodeId,context);
+            var text=Engine.Text.Format(node.text||'',Object.assign({},context,{treeId:treeId,nodeId:resolvedNodeId}));
             Engine.Dialogue.ShowLine(speakerId,text,{ choices:choices });
         },
         GetNode: function (tree, nodeId) { return tree && tree.nodes ? tree.nodes[nodeId] : null; },
-        BuildChoices: function (treeId, tree, node, context) {
+        BuildChoices: function (treeId, tree, node, nodeId, context) {
             var self=this; var result=[];
             (node.choices||[]).forEach(function (choice) {
                 if (!self.ShouldShowChoice(treeId,choice,context)) { return; }
@@ -1332,7 +1333,7 @@
                     text:displayText,
                     playerText:playerText,
                     skipPlayerLine:!!choice.skipPlayerLine,
-                    onSelect:function () { self.SelectChoice(treeId,tree,node,choice,context); }
+                    onSelect:function () { self.SelectChoice(treeId,tree,node,nodeId,choice,context); }
                 });
             });
             if (!result.length && (node.emptyText || tree.emptyText)) { result.push({ text:Engine.Text.Format(node.emptyText||tree.emptyText,context), skipPlayerLine:true, onSelect:function () { Engine.Dialogue.Clear(); } }); }
@@ -1374,12 +1375,12 @@
             if (op==='>') { return left>right; } if (op==='>=') { return left>=right; } if (op==='<') { return left<right; } if (op==='<=') { return left<=right; }
             Engine.Debug.Warn('Unknown dialogue comparison operator "'+op+'".'); return false;
         },
-        SelectChoice: function (treeId, tree, node, choice, context) {
+        SelectChoice: function (treeId, tree, node, nodeId, choice, context) {
             context=Object.assign({},context||{},{ treeId:treeId, node:node, choice:choice });
             if (choice.id) { this.MarkUsed(treeId,choice.id); }
             this.ApplyActions(choice.preActions||choice.preAction,context);
             var self=this;
-            var continueTree=function () { if (choice.end) { return; } if (choice.next) { self.ShowNode(treeId,choice.next,context); } else { self.ShowNode(treeId,node.id||tree.start||'start',context); } };
+            var continueTree=function () { if (choice.end) { return; } if (choice.next) { self.ShowNode(treeId,choice.next,context); } else { self.ShowNode(treeId,nodeId||tree.start||'start',context); } };
             var applyPostResponse=function () { self.ApplyActions(choice.actions||choice.action,context); if (choice.script && Engine.CurrentGame.scripts && Engine.CurrentGame.scripts[choice.script]) { Engine.CurrentGame.scripts[choice.script](Engine.API,context); } self.ApplyActions(choice.postResponseActions||choice.postResponseAction,context); continueTree(); };
             var speakerId=choice.speakerId || node.speakerId || tree.speakerId || context.speakerId || null;
             var response=Engine.Text.Format(choice.response||'',context);
@@ -1573,7 +1574,7 @@
         // SAVE-STATE WARNING: Load() must be kept in lockstep with BuildData().
         // Whenever a field is added to the saved data above, restore it here and
         // perform any normalisation needed before gameplay resumes.
-        Load: function (slot) { var data=this.ReadSlot(slot||'1'); if (!data) { Engine.State.saveLoadMessage='No saved game was found in that slot.'; return; } data=this.MigrateSaveData(data); if (!this.IsCompatibleSave(data)) { Engine.State.saveLoadMessage='This saved game is not compatible.'; return; } Engine.Lifecycle.BumpSession(); Engine.State.currentRoomId=data.currentRoomId; Engine.State.selectedVerbId=data.selectedVerbId||'walkTo'; Engine.State.selectedInventoryItemId=data.selectedInventoryItemId||null; Engine.State.player=data.player; Engine.State.inventory=data.inventory||[]; Engine.State.inventoryScroll=data.inventoryScroll||0; Engine.State.flags=data.flags||{}; Engine.State.variables=data.variables||{}; Engine.State.dialogueMemory=data.dialogueMemory||{}; Engine.State.inputPrompt=null; Engine.State.scopedVariables=data.scopedVariables||{ rooms:{}, characters:{}, items:{} }; Engine.State.roomStates=data.roomStates||{}; Engine.State.objectStates=data.objectStates||{}; Engine.State.characterStates=data.characterStates||{}; Engine.State.endGame=data.endGame||{ title:'', text:'', endingId:null, background:null, animation:null, animationStarted:0 }; if (!Engine.State.endGame.animationStarted) { Engine.State.endGame.animationStarted=0; } Engine.State.audio=data.audio||Engine.State.audio; Engine.State.dialogue.active=false; Engine.State.dialogue.speakerId=null; Engine.State.dialogue.speakerName=''; Engine.State.dialogue.text=''; Engine.State.dialogue.displayText=''; Engine.State.dialogue.timer=0; Engine.State.dialogue.duration=0; Engine.State.dialogue.explicitDuration=null; Engine.State.dialogue.options=[]; Engine.State.dialogue.onComplete=null; Engine.State.dialogue.voiceAudio=null; Engine.State.dialogue.color=null; Engine.State.dialogue.textBlocks=[]; Engine.State.dialogue.textBlockIndex=0; Engine.State.activeCutscene=null; Engine.State.gameStarted=true; this.RestoreRoomCharacters(data.runtimeCharacters); Engine.Inventory.NormalizeScroll(); Engine.Rooms.EnterRoom(data.currentRoomId,data.player.x,data.player.y,data.player.facing,{ skipOnEnter:true }); Engine.State.player=Object.assign(Engine.State.player,data.player); Engine.State.player.walkTarget=null; Engine.State.player.walkPath=[]; Engine.State.player.walkCallback=null; Engine.State.playerTrail=data.playerTrail&&data.playerTrail.length?data.playerTrail:[{x:Engine.State.player.x,y:Engine.State.player.y,facing:Engine.State.player.facing||'down'}]; Engine.State.mode='play'; Engine.Dialogue.ShowLine(null,'Game loaded.',{}); }
+        Load: function (slot) { var data=this.ReadSlot(slot||'1'); if (!data) { Engine.State.saveLoadMessage='No saved game was found in that slot.'; return; } data=this.MigrateSaveData(data); if (!this.IsCompatibleSave(data)) { Engine.State.saveLoadMessage='This saved game is not compatible.'; return; } Engine.Lifecycle.BumpSession(); Engine.State.currentRoomId=data.currentRoomId; Engine.State.selectedVerbId=data.selectedVerbId||'walkTo'; Engine.State.selectedInventoryItemId=data.selectedInventoryItemId||null; Engine.State.player=data.player; Engine.State.playerTrail=data.playerTrail&&data.playerTrail.length?data.playerTrail:[{x:Engine.State.player.x,y:Engine.State.player.y,facing:Engine.State.player.facing||'down'}]; Engine.State.inventory=data.inventory||[]; Engine.State.inventoryScroll=data.inventoryScroll||0; Engine.State.flags=data.flags||{}; Engine.State.variables=data.variables||{}; Engine.State.dialogueMemory=data.dialogueMemory||{}; Engine.State.inputPrompt=null; Engine.State.scopedVariables=data.scopedVariables||{ rooms:{}, characters:{}, items:{} }; Engine.State.roomStates=data.roomStates||{}; Engine.State.objectStates=data.objectStates||{}; Engine.State.characterStates=data.characterStates||{}; Engine.State.endGame=data.endGame||{ title:'', text:'', endingId:null, background:null, animation:null, animationStarted:0 }; if (!Engine.State.endGame.animationStarted) { Engine.State.endGame.animationStarted=0; } Engine.State.audio=data.audio||Engine.State.audio; Engine.State.dialogue.active=false; Engine.State.dialogue.speakerId=null; Engine.State.dialogue.speakerName=''; Engine.State.dialogue.text=''; Engine.State.dialogue.displayText=''; Engine.State.dialogue.timer=0; Engine.State.dialogue.duration=0; Engine.State.dialogue.explicitDuration=null; Engine.State.dialogue.options=[]; Engine.State.dialogue.onComplete=null; Engine.State.dialogue.voiceAudio=null; Engine.State.dialogue.color=null; Engine.State.dialogue.textBlocks=[]; Engine.State.dialogue.textBlockIndex=0; Engine.State.activeCutscene=null; Engine.State.gameStarted=true; this.RestoreRoomCharacters(data.runtimeCharacters); Engine.Inventory.NormalizeScroll(); Engine.Rooms.EnterRoom(data.currentRoomId,data.player.x,data.player.y,data.player.facing,{ skipOnEnter:true, preservePlayerTrail:true }); Engine.State.player=Object.assign(Engine.State.player,data.player); Engine.State.player.walkTarget=null; Engine.State.player.walkPath=[]; Engine.State.player.walkCallback=null; Engine.State.mode='play'; Engine.Dialogue.ShowLine(null,'Game loaded.',{}); }
     };
 
     Engine.Input = {
