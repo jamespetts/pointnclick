@@ -64,9 +64,13 @@
           simulation at logical resolution.
         - Do not add ellipses to wrapped text unless a line is actually truncated
           to fit a fixed-size text box.
-        - Spoken character dialogue is rendered above the relevant actor. Non-speaker
-          narration and object descriptions, including Look At responses, are rendered
-          in the lower UI panel so that they cannot run off the scene area or obscure
+        - Spoken character dialogue is rendered above the relevant actor and the
+          renderer nudges each line horizontally where possible so it does not sit
+          on top of nearby actors. While any dialogue line is active, the existing
+          lower-panel renderer suppresses the verb and inventory controls; dialogue
+          choices and narration still use the lower UI panel. Non-speaker narration
+          and object descriptions, including Look At responses, are rendered in the
+          lower UI panel so that they cannot run off the scene area or obscure
           characters. Future scripts should use api.Say(...) for spoken character
           dialogue and api.Narrate(...) for descriptive interface text.
         - Dialogue choices are selected from the lower UI panel, but a chosen line
@@ -2425,14 +2429,19 @@
         GetHotspotSpriteRole: function (h) { if (!h) { return 'hotspot'; } var sprite=Engine.Properties.Get(h,'sprite',{purpose:'render'},h.sprite||null); if (sprite) { return 'hotspot'; } if (h.itemId && Engine.CurrentGame && Engine.CurrentGame.items && Engine.CurrentGame.items[h.itemId]) { var item=Engine.CurrentGame.items[h.itemId]; return item.worldSprite ? 'itemWorld' : 'itemIcon'; } return 'hotspot'; },
         DrawHotspotSprite: function (h) { var spritePath=this.GetHotspotSpritePath(h); if (!spritePath) { return; } var img=Engine.Assets.GetImage(spritePath,this.GetHotspotSpriteRole(h)); if (!img) { return; } var x=Engine.Properties.Get(h,'x',{purpose:'render'},h.x||0); var y=Engine.Properties.Get(h,'y',{purpose:'render'},h.y||0); var frameW=Engine.Properties.Get(h,'frameW',{purpose:'render'},h.frameW||null); var frameH=Engine.Properties.Get(h,'frameH',{purpose:'render'},h.frameH||null); if (frameW && frameH) { var frame=Engine.RoomObjects.GetFrame(h); this.DrawImage(img,frame*frameW,0,frameW,frameH,x,y,frameW,frameH); return; } this.DrawImage(img,x,y); },
         GetDialogueTextColor: function (speakerId) { var d=Engine.State.dialogue; if (d.color) { return d.color; } var ui=this.GetUIConfig(); if (speakerId && Engine.CurrentGame && Engine.CurrentGame.characters && Engine.CurrentGame.characters[speakerId] && Engine.CurrentGame.characters[speakerId].dialogueColor) { return Engine.CurrentGame.characters[speakerId].dialogueColor; } if (speakerId==='player' && ui.playerDialogueColor) { return ui.playerDialogueColor; } return ui.dialogueTextColor || ui.textColor || '#ffffff'; },
+        GetActorSpeechBounds: function (actor) { if (!actor) { return null; } var sprite=(actor.spriteId && Engine.CurrentGame && Engine.CurrentGame.sprites) ? Engine.CurrentGame.sprites[actor.spriteId] : null; var scale=this.GetActorVisualScale(actor); var w=(sprite ? sprite.frameW : (actor.hitW||actor.rectW||16))*scale; var h=(sprite ? sprite.frameH : (actor.hitH||actor.rectH||32))*scale; return {x:Math.round(actor.x-w/2),y:Math.round(actor.y-h),w:Math.round(w),h:Math.round(h)}; },
+        GetDialogueAvoidRects: function (speakerId) { var rects=[]; var player=Engine.State.player; if (speakerId!=='player' && player && player.visible!==false) { var pr=this.GetActorSpeechBounds(player); if (pr) { rects.push(pr); } } var room=Engine.Rooms.GetCurrentRoom(); var self=this; (room.characters||[]).forEach(function (c) { if (!c.hidden && c.id!==speakerId) { var cr=self.GetActorSpeechBounds(c); if (cr) { rects.push(cr); } } }); return rects; },
+        RectsOverlap: function (a,b,pad) { pad=pad||0; return !!(a && b && a.x < b.x+b.w+pad && a.x+a.w+pad > b.x && a.y < b.y+b.h+pad && a.y+a.h+pad > b.y); },
+        SpeechLineHitsActor: function (x,y,w,h,avoidRects) { var rect={x:x,y:y,w:w,h:h}; for (var i=0;i<avoidRects.length;i++) { if (this.RectsOverlap(rect,avoidRects[i],2)) { return true; } } return false; },
+        FindSpeechLineX: function (speakerX, y, w, avoidRects) { var preferred=Clamp(Math.round(speakerX-w/2),2,318-w); if (!this.SpeechLineHitsActor(preferred,y,w,this.GetLineHeight(),avoidRects)) { return preferred; } for (var offset=4;offset<160;offset+=4) { var left=Clamp(preferred-offset,2,318-w); if (left!==preferred && !this.SpeechLineHitsActor(left,y,w,this.GetLineHeight(),avoidRects)) { return left; } var right=Clamp(preferred+offset,2,318-w); if (right!==preferred && !this.SpeechLineHitsActor(right,y,w,this.GetLineHeight(),avoidRects)) { return right; } } return preferred; },
         RenderSpeechAboveCharacter: function () {
             var d=Engine.State.dialogue; if (!d.active || !d.speakerId || (d.options && d.options.length)) { return; }
             var speakerTop=null; var speakerX=null;
             if (d.speakerId==='player') { var ps=Engine.CurrentGame.sprites[Engine.State.player.spriteId]; var pScale=this.GetActorVisualScale(Engine.State.player); speakerX=Engine.State.player.x; speakerTop=Engine.State.player.y-(ps ? ps.frameH*pScale : 32*pScale); }
             else { var room=Engine.Rooms.GetCurrentRoom(); var self=this; (room.characters||[]).forEach(function (c) { if (c.id===d.speakerId) { var cs=Engine.CurrentGame.sprites[c.spriteId]; var cScale=self.GetActorVisualScale(c); speakerX=c.x; speakerTop=c.y-(cs ? cs.frameH*cScale : 32*cScale); } }); }
             if (speakerTop===null || speakerX===null) { return; }
-            var lines=(d.textBlocks && d.textBlocks.length) ? d.textBlocks[d.textBlockIndex] : this.BuildWrappedLines(d.displayText || (d.speakerName ? d.speakerName+': '+d.text : d.text),168); var blockHeight=lines.length*this.GetLineHeight(); var y=Clamp(Math.round(speakerTop-blockHeight-6),2,112-blockHeight); var speechColor=this.GetDialogueTextColor(d.speakerId);
-            for (var i=0;i<lines.length;i++) { var w=this.MeasureText(lines[i]); var x=Clamp(Math.round(speakerX-w/2),2,318-w); this.TextWithShadow(lines[i],x,y+i*this.GetLineHeight(),speechColor); }
+            var lines=(d.textBlocks && d.textBlocks.length) ? d.textBlocks[d.textBlockIndex] : this.BuildWrappedLines(d.displayText || (d.speakerName ? d.speakerName+': '+d.text : d.text),168); var blockHeight=lines.length*this.GetLineHeight(); var y=Clamp(Math.round(speakerTop-blockHeight-6),2,112-blockHeight); var speechColor=this.GetDialogueTextColor(d.speakerId); var avoidRects=this.GetDialogueAvoidRects(d.speakerId);
+            for (var i=0;i<lines.length;i++) { var w=this.MeasureText(lines[i]); var lineY=y+i*this.GetLineHeight(); var x=this.FindSpeechLineX(speakerX,lineY,w,avoidRects); this.TextWithShadow(lines[i],x,lineY,speechColor); }
         },
         RenderHoverLabel: function () { if (Engine.State.mode!=='play' || Engine.State.dialogue.active || !Engine.State.hoveredTargetId || Engine.State.pointerY>=UI_TOP) { return; } var target=(Engine.Overlays && Engine.Overlays.IsActive()) ? Engine.Overlays.HitTest(Engine.State.pointerX,Engine.State.pointerY) : Engine.Interactions.GetTarget(Engine.State.hoveredTargetId); if (!target) { return; } var name=Engine.Properties.Get(target,'name',{purpose:'hover'},target.name||''); if (!name) { return; } var label=CapitaliseFirst(name); var w=this.MeasureText(label); var x=Clamp(Engine.State.pointerX+6,2,318-w); var y=Clamp(Engine.State.pointerY-12,2,UI_TOP-9); this.TextWithShadow(label,x,y,this.GetTextColor('hoverTextColor','#ffff55')); },
         RenderNarrationPanel: function () { var d=Engine.State.dialogue; this.RenderUIPanelBackground(true); this.RenderWrappedLinesInBox(d.text,8,142,304,54,this.GetTextColor('narrationTextColor','#ffffff'),false); },
@@ -2458,7 +2467,8 @@
             var d=Engine.State.dialogue;
             if (d.active && !d.speakerId && !(d.options && d.options.length)) { this.RenderNarrationPanel(); return; }
             if (d.active && d.options && d.options.length) { this.RenderDialogueChoices(); return; }
-            this.RenderUIPanelBackground(false);
+            this.RenderUIPanelBackground(!!d.active);
+            if (d.active) { return; }
             for (var v=0;v<Engine.Verbs.list.length;v++) { var verb=Engine.Verbs.list[v]; var selected=verb.id===Engine.State.selectedVerbId; this.RenderVerbLabel(verb,selected); }
             Engine.Inventory.NormalizeScroll(); this.RenderInventoryArrows();
             var visibleSlots=Engine.Inventory.VisibleSlots(); for (var j=0;j<visibleSlots;j++) { var invIndex=(Engine.State.inventoryScroll||0)+j; var itemId=Engine.State.inventory[invIndex]; if (!itemId) { continue; } var item=Engine.CurrentGame.items[itemId]; var x=Engine.Inventory.originX+(j%Engine.Inventory.visibleCols)*Engine.Inventory.cell; var y=Engine.Inventory.originY+Math.floor(j/Engine.Inventory.visibleCols)*Engine.Inventory.cell; if (Engine.State.selectedInventoryItemId===itemId) { this.Rect(x-1,y-1,20,18,this.GetTextColor('inventorySelectedBackColor','#606020')); } this.DrawInventoryIcon(item,x,y); }
