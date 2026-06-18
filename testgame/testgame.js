@@ -16,12 +16,12 @@ PointClickEngine.RegisterGame({
     items: {
         coin: { id: 'coin', name: 'coin', icon: 'objects/coin_inventory_cartoon90s_v2.png', worldSprite: 'objects/coin_table_cartoon90s_v2.png', defaultText: 'A small brass coin. It has seen a lot of pockets.', interactions: { 'use:key': 'useCoinWithKey' }, refusals: { open: 'It is a coin, not a tin.', close: 'It is already as closed as a coin can be.' } },
         key: { id: 'key', name: 'key', template: 'key', unlocks: ['door'], icon: 'objects/key.png', defaultText: 'A small brass key. It looks suitable for the door.', interactions: { open: 'openKey', close: 'closeKey', 'use:coin': 'useCoinWithKey' } },
-        map: { id: 'map', name: 'map', template: 'map', icon: 'data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20width%3D%2218%22%20height%3D%2210%22%20viewBox%3D%220%200%2018%2010%22%3E%3Crect%20width%3D%2218%22%20height%3D%2210%22%20rx%3D%221%22%20fill%3D%22%23d7c082%22/%3E%3Cpath%20d%3D%22M2%202L7%204L11%202L16%205M3%207L8%205L14%208%22%20stroke%3D%22%2361462a%22%20stroke-width%3D%221%22%20fill%3D%22none%22/%3E%3C/svg%3E', worldSprite: 'data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20width%3D%2218%22%20height%3D%2210%22%20viewBox%3D%220%200%2018%2010%22%3E%3Crect%20width%3D%2218%22%20height%3D%2210%22%20rx%3D%221%22%20fill%3D%22%23d7c082%22/%3E%3Cpath%20d%3D%22M2%202L7%204L11%202L16%205M3%207L8%205L14%208%22%20stroke%3D%22%2361462a%22%20stroke-width%3D%221%22%20fill%3D%22none%22/%3E%3C/svg%3E', defaultText: 'A small sketch map of the test area.', map: { image: 'rooms/testroom_start_room_object_door_v1.png', places: [ { id: 'mapStartRoom', name: 'starting room', rect: { x: 218, y: 46, w: 70, h: 44 }, targetRoomId: 'testRoom', targetX: 70, targetY: 118, targetFacing: 'down', description: 'The starting room, complete with one suspiciously important door.' }, { id: 'mapStoreRoom', name: 'store room', rect: { x: 38, y: 72, w: 76, h: 44 }, targetRoomId: 'storeRoom', targetX: 154, targetY: 116, targetFacing: 'down', description: 'The store room, where convenient objects traditionally gather.' } ] }, propertyGetters: { travelBlocked: 'mapTravelBlocked' } }
+        map: { id: 'map', name: 'map', template: 'map', icon: 'objects/map_table_sprite_20260618_2140.png', worldSprite: 'objects/map_table_sprite_20260618_2140.png', defaultText: 'A small sketch map of the test area.', map: { image: 'objects/map_detail_overlay_20260618_2140.png', places: [ { id: 'mapStartRoom', name: 'starting room', rect: { x: 218, y: 46, w: 70, h: 44 }, targetRoomId: 'testRoom', targetX: 70, targetY: 118, targetFacing: 'down', description: 'The starting room, complete with one suspiciously important door.' }, { id: 'mapStoreRoom', name: 'store room', rect: { x: 38, y: 72, w: 76, h: 44 }, targetRoomId: 'storeRoom', targetX: 154, targetY: 116, targetFacing: 'down', description: 'The store room, where convenient objects traditionally gather.' } ] }, propertyGetters: { travelBlocked: 'mapTravelBlocked' } }
     },
     defaultRefusals: { take: 'That is not something you can carry.', open: 'That does not open.', close: 'That does not close.', give: 'That is not a promising recipient.', talkTo: 'There is no reply.', use: 'That does not seem to work.' },
     rooms: {
         testRoom: {
-            id: 'testRoom', name: 'Starting Room', background: 'rooms/testroom_start_room_object_door_v1.png', walkableArea: { x: 8, y: 86, w: 304, h: 48 }, characterScale: { farY: 86, nearY: 134, farScale: 0.84, nearScale: 1.12 }, music: ['music/main_room.mp3'],
+            id: 'testRoom', name: 'Starting Room', background: 'rooms/testroom_start_room_object_door_v1.png', walkableArea: { x: 8, y: 86, w: 304, h: 48 }, walkBoxes: [ { id: 'mainFloor', rect: { x: 8, y: 86, w: 304, h: 48 } } ], characterScale: { farY: 86, nearY: 134, farScale: 0.84, nearScale: 1.12 }, music: ['music/main_room.mp3'],
             walkGraph: {
                 nodes: [
                     { id: 'leftExit', x: 18, y: 112 },
@@ -44,7 +44,8 @@ PointClickEngine.RegisterGame({
                 { id: 'throughDoor', rect: { x: 258, y: 86, w: 28, h: 24 }, enabledFlag: 'doorOpen', script: 'endThroughDoor' }
             ],
             hotspots: [
-                { id: 'door', name: 'door', template: 'door', locked: true, rect: { x: 250, y: 31, w: 45, h: 56 }, x: 248, y: 30, closedSprite: 'objects/door_opening_animation_v1.png', openSprite: 'objects/door_opening_animation_v1.png', frameW: 48, frameH: 58, animation: 'closed', transitionAnimation: 'open', animations: { closed: { frame: 0, frames: 1 }, open: { frames: 4, fps: 5, loop: false } }, walkTo: { x: 270, y: 114 }, walkThroughTo: { x: 270, y: 86 }, lockedText: 'The door is locked. A small keyhole glints in the dim light.', unlockedText: 'The door is unlocked. It now awaits the rare and specialised operation known as opening.', openText: 'The door is open. Beyond it lies the end of the test, which is unusually literal.', lockedOpenText: 'It will not open. The lock is making a persuasive argument.', openActionText: 'The door creaks open.', closeActionText: 'The door closes with a modest wooden thunk.', alreadyOpenText: 'The door is already open. The corridor is available for walking through.', alreadyClosedText: 'The door is already closed.', unlockText: 'The key turns with a satisfying click. The door is now unlocked.', lockText: 'The key turns back with a small, unnecessary click. The door is locked again.', wrongKeyText: 'You do not have the right key.', closedWalkText: 'The door is closed. Walking through it would be poor form, and probably sore.', onOpen: 'doorTemplateOpened', onClose: 'doorTemplateClosed' }
+                { id: 'door', name: 'door', template: 'door', locked: true, rect: { x: 250, y: 31, w: 45, h: 56 }, x: 248, y: 30, closedSprite: 'objects/door_opening_animation_v1.png', openSprite: 'objects/door_opening_animation_v1.png', frameW: 48, frameH: 58, animation: 'closed', transitionAnimation: 'open', animations: { closed: { frame: 0, frames: 1 }, open: { frames: 4, fps: 5, loop: false } }, walkTo: { x: 270, y: 114 }, walkThroughTo: { x: 270, y: 86 }, lockedText: 'The door is locked. A small keyhole glints in the dim light.', unlockedText: 'The door is unlocked. It now awaits the rare and specialised operation known as opening.', openText: 'The door is open. Beyond it lies the end of the test, which is unusually literal.', lockedOpenText: 'It will not open. The lock is making a persuasive argument.', openActionText: 'The door creaks open.', closeActionText: 'The door closes with a modest wooden thunk.', alreadyOpenText: 'The door is already open. The corridor is available for walking through.', alreadyClosedText: 'The door is already closed.', unlockText: 'The key turns with a satisfying click. The door is now unlocked.', lockText: 'The key turns back with a small, unnecessary click. The door is locked again.', wrongKeyText: 'You do not have the right key.', closedWalkText: 'The door is closed. Walking through it would be poor form, and probably sore.', onOpen: 'doorTemplateOpened', onClose: 'doorTemplateClosed' },
+                { id: 'chair', name: 'chair', template: 'furniture', sprite: 'objects/chair_furniture_sprite_20260618_2230.png', rect: { x: 106, y: 82, w: 24, h: 30 }, x: 106, y: 82, frameW: 24, frameH: 30, walkTo: { x: 118, y: 118 }, collisionShape: { rect: { x: 109, y: 106, w: 18, h: 8 } }, baseline: 114, defaultText: 'A small wooden chair. It looks serviceable, if not urgently relevant.', refusals: { use: 'There is no time to sit down now.' } }
             ],
             characters: [
                 { id: 'caretaker', name: 'caretaker', spriteId: 'caretaker', x: 190, y: 116, facing: 'down', scaleWithPerspective: false, rect: { x: 182, y: 84, w: 16, h: 32 }, hitW: 16, hitH: 32, walkTo: { x: 174, y: 116 }, defaultText: 'The caretaker waits patiently.', refusals: { open: "I'm not qualified to perform surgery" }, interactions: { lookAt: 'lookCaretaker', talkTo: 'talkCaretaker', 'give:coin': 'giveCoinToCaretaker' } },
@@ -52,18 +53,20 @@ PointClickEngine.RegisterGame({
             ]
         },
         storeRoom: {
-            id: 'storeRoom', name: 'Store Room', background: 'rooms/testroom_left_v1.png', walkableArea: { x: 8, y: 86, w: 304, h: 48 }, characterScale: { farY: 86, nearY: 134, farScale: 0.84, nearScale: 1.12 }, music: ['music/main_room.mp3'],
+            id: 'storeRoom', name: 'Store Room', background: 'rooms/testroom_left_v1.png', walkableArea: { x: 8, y: 86, w: 304, h: 48 }, walkBoxes: [ { id: 'backFloor', rect: { x: 8, y: 86, w: 304, h: 20 }, links: ['frontFloor', 'rightFloor'] }, { id: 'frontFloor', rect: { x: 8, y: 121, w: 304, h: 13 }, links: ['backFloor', 'rightFloor'] }, { id: 'rightFloor', rect: { x: 126, y: 86, w: 186, h: 48 }, links: ['backFloor', 'frontFloor'] } ], characterScale: { farY: 86, nearY: 134, farScale: 0.84, nearScale: 1.12 }, music: ['music/main_room.mp3'],
             walkGraph: {
                 nodes: [
                     { id: 'leftFloor', x: 28, y: 112 },
-                    { id: 'tableApproach', x: 72, y: 116 },
-                    { id: 'coinApproach', x: 76, y: 112 },
+                    { id: 'frontLeft', x: 28, y: 124 },
+                    { id: 'tableApproach', x: 72, y: 124 },
+                    { id: 'coinApproach', x: 76, y: 124 },
                     { id: 'centreFloor', x: 154, y: 116 },
                     { id: 'rightFloor', x: 266, y: 116 },
                     { id: 'rightExit', x: 300, y: 112 }
                 ],
                 edges: [
-                    ['leftFloor', 'tableApproach'],
+                    ['leftFloor', 'frontLeft'],
+                    ['frontLeft', 'tableApproach'],
                     ['tableApproach', 'coinApproach'],
                     ['tableApproach', 'centreFloor'],
                     ['coinApproach', 'centreFloor'],
@@ -75,9 +78,9 @@ PointClickEngine.RegisterGame({
                 { id: 'toStartingRoom', rect: { x: 306, y: 86, w: 14, h: 48 }, targetRoomId: 'testRoom', targetX: 18, targetY: 112, targetFacing: 'right' }
             ],
             hotspots: [
-                { id: 'coinHotspot', name: 'coin', itemId: 'coin', hitPriority: 10, rect: { x: 73, y: 77, w: 8, h: 5 }, x: 74, y: 78, walkTo: { x: 76, y: 112 }, hiddenFlag: 'coinTaken', defaultText: 'It is a small brass coin, assuming your mouse has the necessary qualifications.', interactions: { lookAt: 'lookCoin', take: 'takeCoin' } },
-                { id: 'mapHotspot', name: 'map', itemId: 'map', hitPriority: 9, rect: { x: 84, y: 84, w: 18, h: 10 }, x: 84, y: 84, walkTo: { x: 76, y: 112 }, hiddenFlag: 'mapTaken', defaultText: 'It is a small sketch map of this very demanding test area.', interactions: { take: 'takeMap' } },
-                { id: 'table', name: 'table', rect: { x: 40, y: 74, w: 70, h: 46 }, walkTo: { x: 72, y: 116 }, defaultText: 'A plain wooden table. It has survived worse engines than this one.', refusals: { take: "It's far too heavy" }, interactions: { lookAt: 'lookTable' } }
+                { id: 'coinHotspot', name: 'coin', template: 'pickup', itemId: 'coin', hitPriority: 10, rect: { x: 73, y: 77, w: 8, h: 5 }, x: 74, y: 78, walkTo: { x: 76, y: 124 }, hiddenFlag: 'coinTaken', defaultText: 'It is a small brass coin, assuming your mouse has the necessary qualifications.', takeText: 'Taken.', interactions: { lookAt: 'lookCoin' } },
+                { id: 'mapHotspot', name: 'map', template: 'pickup', itemId: 'map', hitPriority: 9, rect: { x: 86, y: 78, w: 18, h: 10 }, x: 86, y: 78, walkTo: { x: 76, y: 124 }, hiddenFlag: 'mapTaken', defaultText: 'It is a small sketch map of this very demanding test area.', takeText: 'Taken.' },
+                { id: 'table', name: 'table', template: 'furniture', rect: { x: 40, y: 74, w: 70, h: 46 }, x: 40, y: 74, walkTo: { x: 72, y: 124 }, baseline: 106, defaultText: 'A plain wooden table. It has survived worse engines than this one.', onCollide: 'bumpTable', refusals: { take: "It's far too heavy" }, interactions: { lookAt: 'lookTable' } }
             ],
             characters: [
                 { id: 'woofer', name: 'Woofer', spriteId: 'woofer', x: 280, y: 118, facing: 'left', rect: { x: 268, y: 103, w: 24, h: 15 }, hitW: 24, hitH: 15, followPlayer: true, followOffsetX: -20, followOffsetY: 0, followStopDistance: 12, speed: 42, walkTo: { x: 266, y: 116 }, defaultText: 'Woofer is a small light grey dog who looks like a mop without a handle.', interactions: { lookAt: 'lookWoofer', talkTo: 'talkWoofer' } }
@@ -146,6 +149,7 @@ PointClickEngine.RegisterGame({
         completeTestGame: function (api) { api.EndGame('Test Complete', 'You have completed the test game, negotiated its tiny economy, opened the locked door, and walked through it. Somewhere, a test harness nods approvingly.'); },
         endThroughDoor: function (api) { api.RunHook('completeTestGame'); },
         mapTravelBlocked: function () { return false; },  
+        bumpTable: function (api) { if (!api.GetFlag('bumpedTable')) { api.SetFlag('bumpedTable', true); api.Narrate('The table declines to move. Furniture has become more object-oriented lately.'); } },  
         lookTable: function (api) { if (api.GetFlag('coinTaken') && api.GetFlag('mapTaken')) { api.Narrate('A plain wooden table. The suspiciously convenient objects have gone, leaving only table and regret.'); } else if (api.GetFlag('coinTaken')) { api.Narrate('A plain wooden table. The suspiciously convenient coin has gone, but the map is still doing cartography nearby.'); } else if (api.GetFlag('mapTaken')) { api.Narrate('A plain wooden table. The map has gone, but the coin remains committed to being obvious.'); } else { api.Narrate('A plain wooden table. Somewhere on it, allegedly, are a coin and a map. This is what historians call interface design.'); } },
         lookCaretaker: function (api) { api.Narrate('The caretaker looks like the sort of person who exchanges coins for keys.'); },
         lookWoofer: function (api) { api.Narrate('Woofer is a small light grey dog who looks like a mop without a handle. He trots after you faithfully.'); },
