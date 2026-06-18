@@ -242,6 +242,17 @@
           newer session or room. If a story action needs delayed sequencing,
           express it through the engine systems instead of setTimeout or custom
           loops.
+        - Deferred callbacks receive a standard action result object with fields
+          such as status, action, reason, reached, actorId, targetId, blockerId,
+          roomId and continueCutscene. Status values include completed, blocked,
+          cancelled, superseded, transitioned and ended. Game scripts should test
+          result.status rather than assuming that a callback means success.
+        - Callback result properties are effective properties. Objects and
+          templates may define callbackStatus, callbackResult or callbackResults;
+          getters may use the read-only property API and object variables to vary
+          the result without mutating state. This lets common template behaviours
+          such as furniture blockers and doors standardise callback outcomes while
+          individual objects override messages or statuses declaratively.
         - Per-object variables are stored centrally in Engine.State.scopedVariables
           and must be accessed through the public API. Use room, character and
           item variable helpers for puzzle state that belongs to a specific
@@ -555,6 +566,34 @@
             };
         }
     };
+    // ACTION RESULT SYSTEM
+    // --------------------
+    // All deferred engine callbacks use a standard result object instead of a
+    // bare success callback. The result is deliberately plain save-safe data:
+    //   status: completed, blocked, cancelled, superseded, transitioned or ended
+    //   action: walk, dialogue, characterMove, objectAnimation, input or cutscene
+    //   reason: optional machine-readable detail such as collision or roomChange
+    //   reached: true only when the requested destination/action was reached
+    //   actorId, targetId, blockerId, roomId: optional diagnostic ids
+    //   continueCutscene: false tells the cutscene sequencer to stop cleanly
+    // callbackStatus, callbackResult and callbackResults are effective properties
+    // so templates and individual objects can standardise or override callback
+    // outcomes without duplicating movement, dialogue or cutscene code.
+    Engine.ActionResults = {
+        ValidStatuses:{ completed:true, blocked:true, cancelled:true, superseded:true, transitioned:true, ended:true },
+        Create:function (status, values) { values=values||{}; status=this.ValidStatuses[status] ? status : 'completed'; var result={ status:status, action:values.action||null, reason:values.reason||null, reached:!!values.reached, actorId:values.actorId||null, targetId:values.targetId||null, blockerId:values.blockerId||null, roomId:values.roomId||Engine.State.currentRoomId||null, continueCutscene:values.continueCutscene!==false }; Object.keys(values).forEach(function (key) { if (!Object.prototype.hasOwnProperty.call(result,key)) { result[key]=values[key]; } }); result.status=status; return result; },
+        Completed:function (values) { values=values||{}; values.reached=values.reached!==false; return this.Create('completed',values); },
+        Blocked:function (values) { values=values||{}; values.reached=false; if (values.continueCutscene===undefined) { values.continueCutscene=false; } return this.Create('blocked',values); },
+        Cancelled:function (values) { values=values||{}; values.reached=false; if (values.continueCutscene===undefined) { values.continueCutscene=false; } return this.Create('cancelled',values); },
+        Superseded:function (values) { values=values||{}; values.reached=false; if (values.continueCutscene===undefined) { values.continueCutscene=false; } return this.Create('superseded',values); },
+        Transitioned:function (values) { values=values||{}; values.reached=values.reached!==false; return this.Create('transitioned',values); },
+        Ended:function (values) { values=values||{}; values.reached=false; values.continueCutscene=false; return this.Create('ended',values); },
+        Normalise:function (value, fallback) { fallback=fallback||this.Completed({}); if (!value) { return fallback; } if (typeof value === 'string') { return Object.assign({},fallback,{status:this.ValidStatuses[value] ? value : fallback.status}); } if (typeof value === 'object') { return this.Create(value.status||fallback.status,Object.assign({},fallback,value)); } return fallback; },
+        MergeResultMap:function (entity, result, context) { var map=Engine.Properties.Get(entity,'callbackResults',context||{},null); if (!map || typeof map !== 'object') { return result; } var command=context && context.command ? context.command : null; var keys=['*',result.status]; if (command && command.verbId) { keys.push(command.verbId); keys.push(command.verbId+':'+result.status); } for (var i=0;i<keys.length;i++) { if (map[keys[i]]) { result=this.Normalise(map[keys[i]],result); } } return result; },
+        ApplyEntityProperties:function (entity, result, context) { result=this.Normalise(result,this.Completed({})); if (!entity) { return result; } context=Object.assign({},context||{},{ result:result, purpose:'callback' }); result=this.MergeResultMap(entity,result,context); var status=Engine.Properties.Get(entity,'callbackStatus',context,null); if (typeof status === 'string' && this.ValidStatuses[status]) { result=this.Create(status,result); } var override=Engine.Properties.Get(entity,'callbackResult',context,null); if (override) { result=this.Normalise(override,result); } return result; },
+        IsCompleted:function (result) { return result && result.status === 'completed'; },
+        ShouldContinueCutscene:function (result) { result=this.Normalise(result,this.Completed({})); return result.continueCutscene !== false && (result.status === 'completed' || result.status === 'transitioned'); }
+    };
     Engine.Hooks = {
         NormaliseList: function (scripts) {
             if (!scripts) { return []; }
@@ -739,7 +778,8 @@
     //   zIndex,
     //   walkTo, walkThrough, walkThroughTo, interactions, refusals, walkBoxes,
     //   blockers, collisionShape, blocksMovement, walkBehind, occluderShape,
-    //   baseline, triggerZones, onCollide and onBump.
+    //   baseline, triggerZones, onCollide, onBump, callbackStatus,
+    //   callbackResult and callbackResults.
     //
     // Resolution order:
     //   1. Runtime object state override in Engine.State.objectStates, where
@@ -750,9 +790,12 @@
     //      passed the base value as fallback and may replace it.
     //   5. template default property, if the entity has template:'...'.
     //   6. supplied caller default.
-    // For interactions and refusals, template maps are merged with entity maps so
-    // content can override or add individual verbs without copying the whole
-    // template interaction table.
+    // For interactions, refusals and callbackResults, template maps are merged
+    // with entity maps so content can override or add individual verbs/statuses
+    // without copying the whole template table. callbackResults supports keys
+    // such as '*', 'blocked', 'walkTo' and 'walkTo:blocked'. callbackStatus and
+    // callbackResult may also be computed by property getters; these getters are
+    // query-only like all other effective-property getters.
     //
     // TEMPLATE SUMMARY
     // ----------------
@@ -850,7 +893,8 @@
             if (propertyName==='visible' || propertyName==='hidden' || propertyName==='hitDisabled' || propertyName==='walkThrough' || propertyName==='renderHidden' || propertyName==='blocksWhenHidden' || propertyName==='interactionDisabled' || propertyName==='blocksMovement' || propertyName==='blocksActors' || propertyName==='walkBehind') { return !!value; }
             if (propertyName==='hitRect' || propertyName==='rect') { if (value && typeof value.x==='number' && typeof value.y==='number' && typeof value.w==='number' && typeof value.h==='number') { return value; } Engine.Debug.Warn('Property '+propertyName+' returned an invalid rectangle.'); return fallback; }
             if (propertyName==='walkTo' || propertyName==='walkThroughTo') { if (!value || (typeof value.x==='number' && typeof value.y==='number')) { return value; } Engine.Debug.Warn('Property '+propertyName+' returned an invalid point.'); return fallback; }
-            if (propertyName==='interactions' || propertyName==='refusals') { if (!value || typeof value==='object') { return value; } Engine.Debug.Warn('Property '+propertyName+' returned a non-object value.'); return fallback; }
+            if (propertyName==='interactions' || propertyName==='refusals' || propertyName==='callbackResult' || propertyName==='callbackResults') { if (!value || typeof value==='object' || (propertyName==='callbackResult' && typeof value==='string')) { return value; } Engine.Debug.Warn('Property '+propertyName+' returned an invalid callback/object value.'); return fallback; }
+            if (propertyName==='callbackStatus') { if (!value || typeof value==='string') { return value; } Engine.Debug.Warn('Property callbackStatus returned a non-string value.'); return fallback; }
             if (propertyName==='walkBoxes' || propertyName==='blockers' || propertyName==='walkBehinds' || propertyName==='triggerZones') { if (!value || Array.isArray(value)) { return value; } Engine.Debug.Warn('Property '+propertyName+' returned a non-array value.'); return fallback; }
             if (propertyName==='collisionShape' || propertyName==='occluderShape') { if (!value || typeof value==='object') { return value; } Engine.Debug.Warn('Property '+propertyName+' returned a non-object value.'); return fallback; }
             if (propertyName==='baseline' || propertyName==='zIndex') { if (typeof value==='number' && isFinite(value)) { return value; } Engine.Debug.Warn('Property '+propertyName+' returned a non-numeric value.'); return fallback; }
@@ -867,7 +911,7 @@
             var raw=this.GetRaw(entity,propertyName,undefined);
             var gotRaw=(raw !== undefined);
             var value=this.RunGetter(entity,propertyName,context,gotRaw ? raw : undefined);
-            if (value !== undefined && !(propertyName==='interactions' || propertyName==='refusals')) { return value; }
+            if (value !== undefined && !(propertyName==='interactions' || propertyName==='refusals' || propertyName==='callbackResults')) { return value; }
             var templates=this.GetTemplates(entity);
             var tvalue=undefined;
             var templateMap={};
@@ -875,11 +919,11 @@
                 var template=templates[ti].template;
                 if (template && template.properties && template.properties[propertyName]) {
                     var tv=template.properties[propertyName](entity,context||{},defaultValue);
-                    if ((propertyName==='interactions' || propertyName==='refusals') && tv && typeof tv==='object') { templateMap=Object.assign(templateMap,tv); }
+                    if ((propertyName==='interactions' || propertyName==='refusals' || propertyName==='callbackResults') && tv && typeof tv==='object') { templateMap=Object.assign(templateMap,tv); }
                     else if (tvalue===undefined && tv!==undefined) { tvalue=tv; }
                 }
             }
-            if ((propertyName==='interactions' || propertyName==='refusals') && Object.keys(templateMap).length) { return Object.assign({},templateMap,value||raw||{}); }
+            if ((propertyName==='interactions' || propertyName==='refusals' || propertyName==='callbackResults') && Object.keys(templateMap).length) { return Object.assign({},templateMap,value||raw||{}); }
             if (value !== undefined) { return this.Validate(propertyName,value,defaultValue); }
             if (tvalue !== undefined) { return this.Validate(propertyName,tvalue,defaultValue); }
             if (gotRaw) { return this.Validate(propertyName,raw,defaultValue); }
@@ -955,6 +999,7 @@
         door:{
             properties:{
                 interactions:function () { return { lookAt:'template:door.lookAt', open:'template:door.open', close:'template:door.close', use:'template:door.useKey', walkTo:'template:door.walkTo' }; },
+                callbackResults:function () { return { transitioned:{status:'transitioned',reason:'doorTransition',continueCutscene:true}, blocked:{status:'blocked',reason:'doorBlocked',continueCutscene:false} }; },
                 defaultText:function (entity) { var self=Engine.Entities.CreateFacade(entity,'object'); if (self.GetBool('open',!!Engine.Properties.GetRaw(entity,'open',false))) { return Engine.Properties.GetRaw(entity,'openText','The door is open.'); } if (self.GetBool('locked',!!Engine.Properties.GetRaw(entity,'locked',false))) { return Engine.Properties.GetRaw(entity,'lockedText','The door is closed and locked.'); } return Engine.Properties.GetRaw(entity,'unlockedText',Engine.Properties.GetRaw(entity,'closedText','The door is closed.')); },
                 walkThrough:function (entity) { var self=Engine.Entities.CreateFacade(entity,'object'); return self.GetBool('open',!!Engine.Properties.GetRaw(entity,'open',false)); },
                 sprite:function (entity) { var self=Engine.Entities.CreateFacade(entity,'object'); return self.GetBool('open',!!Engine.Properties.GetRaw(entity,'open',false)) ? Engine.Properties.GetRaw(entity,'openSprite',Engine.Properties.GetRaw(entity,'sprite',null)) : Engine.Properties.GetRaw(entity,'closedSprite',Engine.Properties.GetRaw(entity,'sprite',null)); },
@@ -1027,7 +1072,7 @@
         //   takeText:'Taken.'           narration after pickup
         //   onTake:'scriptName'         optional script after pickup
         pickup:{
-            properties:{ interactions:function () { return { lookAt:'template:pickup.lookAt', take:'template:pickup.take' }; }, zIndex:function (entity) { return Engine.Properties.GetRaw(entity,'zIndex',10); } },
+            properties:{ interactions:function () { return { lookAt:'template:pickup.lookAt', take:'template:pickup.take' }; }, callbackResults:function () { return { blocked:{status:'blocked',reason:'pickupBlocked',continueCutscene:false}, completed:{status:'completed',reason:'pickupReached'} }; }, zIndex:function (entity) { return Engine.Properties.GetRaw(entity,'zIndex',10); } },
             actions:{
                 lookAt:function (api,self,context) { api.Narrate(Engine.Properties.Get(context.target,'defaultText',context,context.target.defaultText || 'You see nothing special.')); },
                 take:function (api,self,context) { var target=context.target; var itemId=Engine.Properties.GetRaw(target,'itemId',target.id); if (itemId) { api.AddItem(itemId); } var flag=Engine.Properties.GetRaw(target,'hiddenFlag',Engine.Properties.GetRaw(target,'takenFlag',null)); if (flag) { api.SetFlag(flag,true); } self.SetBool('taken',true); api.Narrate(Engine.Properties.GetRaw(target,'takeText','Taken.')); Engine.Templates.RunOptionalScript(Engine.Properties.GetRaw(target,'onTake',null),self,context); }
@@ -1152,6 +1197,7 @@
             properties:{
                 interactions:function () { return { lookAt:'template:furniture.lookAt' }; },
                 refusals:function () { return { take:'That is not something you can carry.', open:'That does not open.', close:'That does not close.' }; },
+                callbackResults:function () { return { blocked:{status:'blocked',reason:'furnitureCollision',continueCutscene:false}, 'walkTo:blocked':{status:'blocked',reason:'furnitureCollision',continueCutscene:false} }; },
                 blocksMovement:function () { return true; },
                 walkBehind:function (entity) { var raw=Engine.Properties.GetRaw(entity,'walkBehind',undefined); if (typeof raw === 'boolean') { return raw; } var hasSprite=!!Engine.Properties.GetRaw(entity,'sprite',null); if (!hasSprite && !Engine.Properties.GetRaw(entity,'allowWalkBehindWithoutSprite',false)) { return false; } return true; },  
                 zIndex:function (entity) { return Engine.Properties.GetRaw(entity,'zIndex',0); },  
@@ -1170,6 +1216,7 @@
             properties:{
                 interactions:function () { return { lookAt:'template:barrier.lookAt' }; },
                 refusals:function () { return { take:'That is not something you can carry.', open:'That does not open.', close:'That does not close.' }; },
+                callbackResults:function () { return { blocked:{status:'blocked',reason:'barrierCollision',continueCutscene:false}, 'walkTo:blocked':{status:'blocked',reason:'barrierCollision',continueCutscene:false} }; },
                 blocksMovement:function () { return true; },
                 collisionShape:function (entity) { var shape=Engine.Properties.GetRaw(entity,'collisionShape',null); if (shape) { return shape; } var rect=Engine.Properties.GetRaw(entity,'rect',null); return rect ? {rect:rect} : null; }
             },
@@ -1531,7 +1578,7 @@
         DivideItemVariable: function (itemId, name, amount) { return Engine.ScopedVariables.Arithmetic('item', itemId, name, amount, 'divide'); },
         CompareItemVariable: function (itemId, name, operator, value) { return Engine.ScopedVariables.Compare('item', itemId, name, operator, value); },
         ChangeRoom: function (roomId, x, y, facing) { Engine.Rooms.EnterRoom(roomId, x, y, facing); }, MoveCharacter: function (characterId, x, y, options) { Engine.Rooms.MoveCharacter(characterId, x, y, options || {}); }, SetAnimation: function (actorId, animationName, options) { Engine.Animations.SetAnimation(actorId, animationName, options || {}); }, ClearAnimation: function (actorId) { Engine.Animations.ClearAnimation(actorId); }, SetObjectAnimation: function (objectId, animationName, options) { Engine.RoomObjects.SetAnimation(objectId, animationName, options || {}); }, ClearObjectAnimation: function (objectId) { Engine.RoomObjects.ClearAnimation(objectId); }, SetObjectState: function (objectId, values) { Engine.RoomObjects.SetState(objectId, values || {}); }, GetObjectState: function (objectId) { return Engine.RoomObjects.GetState(objectId); }, SetObjectVariable: function (objectId, name, value) { Engine.RoomObjects.SetVariable(objectId,name,value); }, GetObjectVariable: function (objectId, name, defaultValue) { return Engine.RoomObjects.GetVariable(objectId,name,defaultValue); }, AddObjectVariable: function (objectId, name, amount) { return Engine.RoomObjects.AddVariable(objectId,name,amount); }, ShowOverlay: function (overlaySpec) { Engine.Overlays.Show(overlaySpec); }, CloseOverlay: function () { Engine.Overlays.Close(); }, PlaySound: function (sources) { Engine.Assets.PlaySound(sources); },
-        StartCutscene: function (steps) { Engine.Cutscenes.Start(steps); }, EndGame: function (title, text, options) { Engine.EndGame.Show(title, text, options || {}); }, ShowEnding: function (endingId, options) { Engine.EndGame.ShowEnding(endingId, options || {}); },
+        StartCutscene: function (steps) { Engine.Cutscenes.Start(steps); }, MakeActionResult: function (status, values) { return Engine.ActionResults.Create(status, values||{}); }, EndGame: function (title, text, options) { Engine.EndGame.Show(title, text, options || {}); }, ShowEnding: function (endingId, options) { Engine.EndGame.ShowEnding(endingId, options || {}); },
         Save: function (slot) { Engine.SaveLoad.Save(slot || '1'); }, Load: function (slot) { Engine.SaveLoad.Load(slot || '1'); }
     };
 
@@ -1546,7 +1593,7 @@
         RegisterDefaultHandlers: function () { ['walkTo','lookAt','take','give','talkTo','open','close','use'].forEach(function (id) { Engine.Verbs.handlers[id] = function (command) { Engine.Interactions.Resolve(command); }; }); },
         GetByPoint: function (x, y) { for (var i=0;i<this.list.length;i++) { if (PointInRect(x,y,this.list[i].rect)) { return this.list[i]; } } return null; },
         GetLabel: function (id) { for (var i=0;i<this.list.length;i++) { if (this.list[i].id === id) { return this.list[i].label; } } return id; },
-        FinishCommand: function (command) { if (!command || command._afterCommandFired) { return; } if (command._lifecycleToken && !Engine.Lifecycle.IsCurrent(command._lifecycleToken)) { command._afterCommandFired=true; return; } command._afterCommandFired=true; Engine.Hooks.RunGameHook('afterCommand',command._hookContext||{ command:command }); },
+        FinishCommand: function (command, result) { if (!command || command._afterCommandFired) { return; } if (result) { command._lastActionResult=result; if (command._hookContext) { command._hookContext.result=result; } } if (command._lifecycleToken && !Engine.Lifecycle.IsCurrent(command._lifecycleToken)) { command._afterCommandFired=true; return; } command._afterCommandFired=true; Engine.Hooks.RunGameHook('afterCommand',command._hookContext||{ command:command, result:result||command._lastActionResult||null }); },
         Execute: function (command) { Engine.Lifecycle.BumpCommand(); command._lifecycleToken=Engine.Lifecycle.Capture({command:true}); var context={ command:command }; if (Engine.Hooks.RunGameHook('beforeCommand',context) === false) { return; } command._hookContext=context; command._afterCommandFired=false; var handler = this.handlers[command.verbId]; if (!handler) { Engine.Dialogue.ShowLine(null,'That verb is not implemented.',{}); this.FinishCommand(command); return; } handler(command); }
     };
     Engine.Verbs.RegisterDefaultHandlers();
@@ -1702,7 +1749,7 @@
         ClearAnimation: function (objectId) { var state=this.GetState(objectId); state.animation=null; state.animationStarted=0; state.animationReverse=false; state.animationHoldFinal=false; state.animationComplete=false; state.animationCompletionFired=false; state.lifecycleToken=null; },
         GetAnimationSpec: function (object) { var state=this.GetState(object.id); var name=state.animation || object.animation || 'idle'; if (object.animations && object.animations[name]) { return Object.assign({name:name},object.animations[name]); } return { frame:0, frames:1, fps:1, loop:false }; },
         GetFrame: function (object) { var state=this.GetState(object.id); var spec=this.GetAnimationSpec(object); var frames=Math.max(1,spec.frames||1); if (typeof spec.frame === 'number' && !state.animation) { return Clamp(spec.frame,0,frames-1); } var elapsed=Math.max(0,(Engine.Renderer ? Engine.Renderer.frameTime : 0)-(state.animationStarted||0)); var fps=spec.fps||1; if (spec.loop) { var loopFrame=Math.floor(elapsed*fps)%frames; return state.animationReverse ? frames-1-loopFrame : loopFrame; } var frame=Math.floor(elapsed*fps); if (frame>=frames) { frame=frames-1; if (state.animation && !state.animationComplete) { state.animationComplete=true; } } return state.animationReverse ? frames-1-frame : frame; },
-        Update: function (dt) { var room=Engine.Rooms.GetCurrentRoom(); if (!room) { return; } var self=this; (room.hotspots||[]).forEach(function (object) { if (!object.animations) { return; } var state=self.GetState(object.id); if (!state.animation || state.animationCompletionFired) { return; } self.GetFrame(object); if (state.animationComplete) { state.animationCompletionFired=true; if (Engine.Lifecycle.IsCurrent(state.lifecycleToken) && object.animationCompleteScripts && object.animationCompleteScripts[state.animation] && Engine.CurrentGame.scripts[object.animationCompleteScripts[state.animation]]) { Engine.CurrentGame.scripts[object.animationCompleteScripts[state.animation]](Engine.API); } } }); }
+        Update: function (dt) { var room=Engine.Rooms.GetCurrentRoom(); if (!room) { return; } var self=this; (room.hotspots||[]).forEach(function (object) { if (!object.animations) { return; } var state=self.GetState(object.id); if (!state.animation || state.animationCompletionFired) { return; } self.GetFrame(object); if (state.animationComplete) { state.animationCompletionFired=true; if (Engine.Lifecycle.IsCurrent(state.lifecycleToken) && object.animationCompleteScripts && object.animationCompleteScripts[state.animation] && Engine.CurrentGame.scripts[object.animationCompleteScripts[state.animation]]) { Engine.CurrentGame.scripts[object.animationCompleteScripts[state.animation]](Engine.API,Engine.ActionResults.Completed({action:'objectAnimation',targetId:object.id,animation:state.animation,roomId:Engine.State.currentRoomId})); } } }); }
     };
     Engine.Rooms = {
         GetCurrentRoom: function () { return Engine.CurrentGame.rooms[Engine.State.currentRoomId]; },
@@ -1724,7 +1771,8 @@
             Engine.State.geometry=Engine.State.geometry||{ activeTriggers:{} }; Engine.State.geometry.activeTriggers={};
             Engine.State.currentRoomId = roomId; Engine.State.player.roomId = roomId; Engine.ScopedVariables.Set('room',roomId,'visited',1);
             if (typeof x === 'number') { Engine.State.player.x = x; } if (typeof y === 'number') { Engine.State.player.y = y; } if (facing) { Engine.State.player.facing = facing; }
-            Engine.State.player.walkTarget = null; Engine.State.player.walkPath = []; Engine.State.player.walkCallback = null; Engine.State.player.walkToken = null; if (!options.preservePlayerTrail) { this.ResetPlayerTrail(); } this.PlaceFollowers(); this.ApplyActorAvoidance(); Engine.Assets.PlayMusic(room.music || []);
+            if (Engine.State.player.walkCallback && !options.transition) { var cancelCb=Engine.State.player.walkCallback; var cancelToken=Engine.State.player.walkToken; var cancelResult=Engine.ActionResults.Cancelled({action:'walk',reason:'roomChange',actorId:'player',roomId:fromRoomId,targetId:(Engine.State.player.walkContext&&Engine.State.player.walkContext.targetId)||null}); Engine.State.player.walkCallback=null; if (cancelCb && Engine.Lifecycle.IsCurrent(cancelToken)) { cancelCb(cancelResult); } }
+            Engine.State.player.walkTarget = null; Engine.State.player.walkPath = []; Engine.State.player.walkCallback = null; Engine.State.player.walkToken = null; Engine.State.player.walkContext = null; if (!options.preservePlayerTrail) { this.ResetPlayerTrail(); } this.PlaceFollowers(); this.ApplyActorAvoidance(); Engine.Assets.PlayMusic(room.music || []);
             if (!options.skipOnEnter && room.onEnter && Engine.CurrentGame.scripts[room.onEnter]) { Engine.CurrentGame.scripts[room.onEnter](Engine.API); }
             if (!skipHooks) {
                 if (fromRoom) { Engine.Hooks.RunRoomHook(fromRoom,['afterExit','onAfterExit'],context,'room.afterExit'); Engine.Hooks.RunGameHook('afterRoomExit',context); }
@@ -1735,14 +1783,14 @@
         },
         GetCharacter: function (characterId) { var room=this.GetCurrentRoom(); var chars=room.characters||[]; for (var i=0;i<chars.length;i++) { if (chars[i].id===characterId) { return chars[i]; } } return null; },
         UpdateCharacterRect: function (c) { var hitW=c.hitW||c.rectW||16; var hitH=c.hitH||c.rectH||16; c.rect={x:Math.round(c.x-hitW/2),y:Math.round(c.y-hitH),w:hitW,h:hitH}; },
-        MoveCharacter: function (characterId, x, y, options) { var c=this.GetCharacter(characterId); if (!c) { return; } var token=Engine.Lifecycle.Capture({room:true}); c.hidden=false; c.moveTarget={x:x,y:y,hideOnComplete:!!options.hideOnComplete,onComplete:options.onComplete||null,lifecycleToken:token}; c.speed=options.speed||c.speed||38; },
+        MoveCharacter: function (characterId, x, y, options) { options=options||{}; var c=this.GetCharacter(characterId); if (!c) { return; } var token=Engine.Lifecycle.Capture({room:true}); c.hidden=false; c.moveTarget={x:x,y:y,hideOnComplete:!!options.hideOnComplete,onComplete:options.onComplete||null,lifecycleToken:token}; c.speed=options.speed||c.speed||38; },
         ResetPlayerTrail: function () { var p=Engine.State.player; Engine.State.playerTrail=[{x:p.x,y:p.y,facing:p.facing||'down'}]; },
         RecordPlayerTrail: function () { var p=Engine.State.player; var trail=Engine.State.playerTrail||[]; var last=trail.length ? trail[trail.length-1] : null; if (!last || Distance(last.x,last.y,p.x,p.y)>=2 || last.facing!==p.facing) { trail.push({x:p.x,y:p.y,facing:p.facing||'down'}); } while (trail.length>80) { trail.shift(); } Engine.State.playerTrail=trail; },
         GetFacingOffsetPoint: function (distance) { var p=Engine.State.player; var x=p.x; var y=p.y; if (p.facing==='left') { x+=distance; } else if (p.facing==='right') { x-=distance; } else if (p.facing==='up') { y+=distance; } else { y-=distance; } var area=this.GetAvoidanceArea(); return {x:Clamp(x,area.x,area.x+area.w-1),y:Clamp(y,area.y,area.y+area.h-1),facing:p.facing}; },
         GetTrailPointAtDistance: function (distance) { var trail=Engine.State.playerTrail||[]; if (!trail.length) { return this.GetFacingOffsetPoint(distance); } var remaining=distance; for (var i=trail.length-1;i>0;i--) { var a=trail[i]; var b=trail[i-1]; var seg=Distance(a.x,a.y,b.x,b.y); if (seg>=remaining) { var t=seg>0 ? remaining/seg : 0; return {x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t,facing:b.facing||a.facing||Engine.State.player.facing}; } remaining-=seg; } return trail[0]; },
         GetFollowerDistance: function (c) { if (typeof c.followDistance === 'number') { return c.followDistance; } if (typeof c.followTrailDistance === 'number') { return c.followTrailDistance; } var ox=(typeof c.followOffsetX === 'number') ? c.followOffsetX : -18; var oy=(typeof c.followOffsetY === 'number') ? c.followOffsetY : 0; return Math.max(26, Math.ceil(Math.sqrt(ox*ox+oy*oy))+8); },
         GetFollowerTarget: function (c) { var distance=this.GetFollowerDistance(c); var target=this.GetTrailPointAtDistance(distance); var area=this.GetAvoidanceArea(); return {x:Clamp(target.x,area.x,area.x+area.w-1),y:Clamp(target.y,area.y,area.y+area.h-1),facing:target.facing||Engine.State.player.facing}; },
-        UpdateCharacterMovement: function (dt) { var room=this.GetCurrentRoom(); if (!room) { return; } (room.characters||[]).forEach(function (c) { if (c.followPlayer || !c.moveTarget || c.hidden) { return; } var dist=Distance(c.x,c.y,c.moveTarget.x,c.moveTarget.y); if (dist<1) { c.x=c.moveTarget.x; c.y=c.moveTarget.y; var mt=c.moveTarget; c.moveTarget=null; c.animation='idle'; if (mt.hideOnComplete) { c.hidden=true; } Engine.Rooms.UpdateCharacterRect(c); if (mt.onComplete && Engine.Lifecycle.IsCurrent(mt.lifecycleToken)) { mt.onComplete(); } return; } var step=(c.speed||38)*dt; var t=Math.min(1,step/dist); var nx=c.x+(c.moveTarget.x-c.x)*t; var ny=c.y+(c.moveTarget.y-c.y)*t; var dx=nx-c.x; var dy=ny-c.y; c.x=nx; c.y=ny; c.lastMoveX=dx; c.lastMoveY=dy; c.idleAnimationStarted=0; if (Math.abs(dx)>Math.abs(dy)) { c.facing=dx<0?'left':'right'; } else { c.facing=dy<0?'up':'down'; } c.animation='walk'; Engine.Rooms.UpdateCharacterRect(c); }); },
+        UpdateCharacterMovement: function (dt) { var room=this.GetCurrentRoom(); if (!room) { return; } (room.characters||[]).forEach(function (c) { if (c.followPlayer || !c.moveTarget || c.hidden) { return; } var dist=Distance(c.x,c.y,c.moveTarget.x,c.moveTarget.y); if (dist<1) { c.x=c.moveTarget.x; c.y=c.moveTarget.y; var mt=c.moveTarget; c.moveTarget=null; c.animation='idle'; if (mt.hideOnComplete) { c.hidden=true; } Engine.Rooms.UpdateCharacterRect(c); if (mt.onComplete && Engine.Lifecycle.IsCurrent(mt.lifecycleToken)) { mt.onComplete(Engine.ActionResults.Completed({action:'characterMove',actorId:c.id,targetId:c.id,roomId:Engine.State.currentRoomId,x:c.x,y:c.y})); } return; } var step=(c.speed||38)*dt; var t=Math.min(1,step/dist); var nx=c.x+(c.moveTarget.x-c.x)*t; var ny=c.y+(c.moveTarget.y-c.y)*t; var dx=nx-c.x; var dy=ny-c.y; c.x=nx; c.y=ny; c.lastMoveX=dx; c.lastMoveY=dy; c.idleAnimationStarted=0; if (Math.abs(dx)>Math.abs(dy)) { c.facing=dx<0?'left':'right'; } else { c.facing=dy<0?'up':'down'; } c.animation='walk'; Engine.Rooms.UpdateCharacterRect(c); }); },
         PlaceFollowers: function () { var room=this.GetCurrentRoom(); var area=this.GetAvoidanceArea(); (room.characters||[]).forEach(function (c) { if (!c.followPlayer) { return; } var target=Engine.Rooms.GetFollowerTarget(c); c.x=Clamp(target.x,area.x,area.x+area.w-1); c.y=Clamp(target.y,area.y,area.y+area.h-1); c.facing=target.facing||Engine.State.player.facing; c.followTarget={x:target.x,y:target.y}; c.animation='idle'; Engine.Rooms.UpdateCharacterRect(c); }); },
         UpdateFollowers: function (dt) { var room=this.GetCurrentRoom(); if (!room) { return; } var area=this.GetAvoidanceArea(); (room.characters||[]).forEach(function (c) { if (!c.followPlayer) { return; } var target=Engine.Rooms.GetFollowerTarget(c); c.followTarget={x:target.x,y:target.y}; var dist=Distance(c.x,c.y,target.x,target.y); var playerDist=Distance(c.x,c.y,Engine.State.player.x,Engine.State.player.y); var stop=c.followStopDistance||10; var start=c.followStartDistance||Engine.Rooms.GetFollowerDistance(c); if (dist<=stop && playerDist<=start) { c.animation='idle'; c.lastMoveX=0; c.lastMoveY=0; Engine.Rooms.UpdateCharacterRect(c); return; } var step=(c.speed||38)*dt; var t=Math.min(1,step/Math.max(0.001,dist)); var nx=c.x+(target.x-c.x)*t; var ny=c.y+(target.y-c.y)*t; var dx=nx-c.x; var dy=ny-c.y; c.x=Clamp(nx,area.x,area.x+area.w-1); c.y=Clamp(ny,area.y,area.y+area.h-1); c.lastMoveX=dx; c.lastMoveY=dy; c.idleAnimationStarted=0; if (Math.abs(dx)>Math.abs(dy)) { c.facing=dx<0?'left':'right'; } else if (Math.abs(dy)>0.001) { c.facing=dy<0?'up':'down'; } c.animation='walk'; Engine.Rooms.UpdateCharacterRect(c); }); },
         GetAvoidanceArea: function () { var room=this.GetCurrentRoom(); return Engine.Geometry ? Engine.Geometry.GetPrimaryWalkArea(room) : ((room && room.walkableArea) ? room.walkableArea : {x:0,y:80,w:320,h:56}); },
@@ -1756,18 +1804,12 @@
         CheckTransitions: function () { var room=this.GetCurrentRoom(); var zones=room.transitionZones||[]; var p=Engine.State.player; for (var i=0;i<zones.length;i++) { var z=zones[i]; if (z.enabledFlag && !Engine.State.flags[z.enabledFlag]) { continue; } if (z.disabledFlag && Engine.State.flags[z.disabledFlag]) { continue; } if (z.rect && PointInRect(p.x,p.y,z.rect)) { var context={ transition:z, fromRoomId:Engine.State.currentRoomId, toRoomId:z.targetRoomId||null, player:Engine.State.player }; if (Engine.Hooks.RunTransitionHook(z,'beforeTransition',context) === false) { return true; } if (z.script && Engine.CurrentGame.scripts[z.script]) { Engine.CurrentGame.scripts[z.script](Engine.API,context); Engine.Hooks.RunTransitionHook(z,'afterTransition',context); return true; } if (this.EnterRoom(z.targetRoomId,z.targetX,z.targetY,z.targetFacing,{ transition:z }) !== false) { Engine.Hooks.RunTransitionHook(z,'afterTransition',context); } return true; } } return false; }
     };
     Engine.Movement = {
-        RequestWalk: function (x, y, callback) {
-            Engine.Lifecycle.BumpMovement();
-            var token=Engine.Lifecycle.Capture({room:true,movement:true});
-            var target=this.GetReachablePoint(x,y); var p=Engine.State.player;
-            p.walkPath=this.BuildPath({x:p.x,y:p.y},target);
-            p.walkCallback=callback||null;
-            p.walkToken=token;
-            p.walkTarget=p.walkPath.length ? p.walkPath.shift() : target;
+        RequestWalk: function (x, y, callback, options) {
+            Engine.Lifecycle.BumpMovement(); options=options||{};
+            var token=Engine.Lifecycle.Capture({movement:true}); var target=this.GetReachablePoint(x,y); var p=Engine.State.player;
+            p.walkPath=this.BuildPath({x:p.x,y:p.y},target); p.walkCallback=callback||null; p.walkToken=token; p.walkContext=Object.assign({},options,{targetX:target.x,targetY:target.y,targetId:options.targetId||null}); p.walkTarget=p.walkPath.length ? p.walkPath.shift() : target;
         },
-        GetReachablePoint: function (x, y) {
-            var room = Engine.Rooms.GetCurrentRoom(); return Engine.Geometry.GetReachablePoint(x,y,room);
-        },
+        GetReachablePoint: function (x, y) { var room = Engine.Rooms.GetCurrentRoom(); return Engine.Geometry.GetReachablePoint(x,y,room); },
         GetGraphNodes: function (room) {
             var graph=room.walkGraph||{}; var nodes=[]; (graph.nodes||[]).forEach(function (n,i) { nodes.push({id:n.id||String(i),x:n.x,y:n.y}); }); if (!nodes.length && Engine.Geometry) { (Engine.Geometry.GetWalkBoxes(room)||[]).forEach(function (b,i) { var r=Engine.Geometry.RectFromShape(b.shape||b.rect||b); if (r) { nodes.push({id:b.id||String(i),x:Math.round(r.x+r.w/2),y:Math.round(r.y+r.h/2)}); } }); } return nodes;
         },
@@ -1775,40 +1817,35 @@
             var graph=room.walkGraph||{}; var edges=[]; var byId={}; nodes.forEach(function (n) { byId[n.id]=n; });
             if (graph.edges && graph.edges.length) { graph.edges.forEach(function (e) { var a=Array.isArray(e)?e[0]:e.from; var b=Array.isArray(e)?e[1]:e.to; if (byId[a] && byId[b]) { edges.push([a,b]); } }); }
             else if (room.walkBoxes && room.walkBoxes.length) { var links={}; (room.walkBoxes||[]).forEach(function (b) { links[b.id]=b.links||b.connects||[]; }); nodes.forEach(function (n) { (links[n.id]||[]).forEach(function (to) { if (byId[to]) { edges.push([n.id,to]); } }); }); }
-            else { for (var i=0;i<nodes.length;i++) { for (var j=i+1;j<nodes.length;j++) { edges.push([nodes[i].id,nodes[j].id]); } } }
-            return edges;
+            else { for (var i=0;i<nodes.length;i++) { for (var j=i+1;j<nodes.length;j++) { edges.push([nodes[i].id,nodes[j].id]); } } } return edges;
         },
         FindNearestGraphNode: function (nodes, point) { var best=null; var bestDist=Infinity; nodes.forEach(function (n) { var d=Distance(point.x,point.y,n.x,n.y); if (d<bestDist) { best=n; bestDist=d; } }); return best; },
         BuildPath: function (start, target) {
             var room=Engine.Rooms.GetCurrentRoom(); var nodes=this.GetGraphNodes(room); if (!nodes.length) { return [target]; }
             var allNodes=nodes.concat([{id:'__start',x:start.x,y:start.y},{id:'__target',x:target.x,y:target.y}]); var edges=[]; var byId={}; allNodes.forEach(function (n) { byId[n.id]=n; });
             this.GetGraphEdges(room,nodes).forEach(function (e) { var a=byId[e[0]], b=byId[e[1]]; if (a && b && !Engine.Geometry.SegmentBlocked(a,b,room)) { edges.push(e); } });
-            nodes.forEach(function (n) { if (!Engine.Geometry.SegmentBlocked(start,n,room)) { edges.push(['__start',n.id]); } if (!Engine.Geometry.SegmentBlocked(n,target,room)) { edges.push([n.id,'__target']); } });
-            if (!Engine.Geometry.SegmentBlocked(start,target,room)) { edges.push(['__start','__target']); }
-            var route=this.FindGraphRoute(allNodes,edges,'__start','__target'); if (!route.length) { return [target]; }
-            var path=[]; route.forEach(function (id) { if (id!=='__start') { var n=byId[id]; path.push({x:n.x,y:n.y}); } }); return path.length ? path : [target];
+            nodes.forEach(function (n) { if (!Engine.Geometry.SegmentBlocked(start,n,room)) { edges.push(['__start',n.id]); } if (!Engine.Geometry.SegmentBlocked(n,target,room)) { edges.push([n.id,'__target']); } }); if (!Engine.Geometry.SegmentBlocked(start,target,room)) { edges.push(['__start','__target']); }
+            var route=this.FindGraphRoute(allNodes,edges,'__start','__target'); if (!route.length) { return [target]; } var path=[]; route.forEach(function (id) { if (id!=='__start') { var n=byId[id]; path.push({x:n.x,y:n.y}); } }); return path.length ? path : [target];
         },
         FindGraphRoute: function (nodes, edges, startId, targetId) {
-            var byId={}; var adjacency={}; nodes.forEach(function (n) { byId[n.id]=n; adjacency[n.id]=[]; });
-            edges.forEach(function (e) { var a=e[0]; var b=e[1]; if (!byId[a] || !byId[b]) { return; } var cost=Distance(byId[a].x,byId[a].y,byId[b].x,byId[b].y); adjacency[a].push({id:b,cost:cost}); adjacency[b].push({id:a,cost:cost}); });
+            var byId={}; var adjacency={}; nodes.forEach(function (n) { byId[n.id]=n; adjacency[n.id]=[]; }); edges.forEach(function (e) { var a=e[0]; var b=e[1]; if (!byId[a] || !byId[b]) { return; } var cost=Distance(byId[a].x,byId[a].y,byId[b].x,byId[b].y); adjacency[a].push({id:b,cost:cost}); adjacency[b].push({id:a,cost:cost}); });
             var open=[startId]; var came={}; var g={}; var f={}; nodes.forEach(function (n) { g[n.id]=Infinity; f[n.id]=Infinity; }); g[startId]=0; f[startId]=Distance(byId[startId].x,byId[startId].y,byId[targetId].x,byId[targetId].y);
-            while (open.length) {
-                open.sort(function (a,b) { return f[a]-f[b]; }); var current=open.shift();
-                if (current===targetId) { var path=[current]; while (came[current]) { current=came[current]; path.unshift(current); } return path; }
-                adjacency[current].forEach(function (next) { var tentative=g[current]+next.cost; if (tentative<g[next.id]) { came[next.id]=current; g[next.id]=tentative; f[next.id]=tentative+Distance(byId[next.id].x,byId[next.id].y,byId[targetId].x,byId[targetId].y); if (open.indexOf(next.id)<0) { open.push(next.id); } } });
-            }
-            return [];
+            while (open.length) { open.sort(function (a,b) { return f[a]-f[b]; }); var current=open.shift(); if (current===targetId) { var path=[current]; while (came[current]) { current=came[current]; path.unshift(current); } return path; } adjacency[current].forEach(function (next) { var tentative=g[current]+next.cost; if (tentative<g[next.id]) { came[next.id]=current; g[next.id]=tentative; f[next.id]=tentative+Distance(byId[next.id].x,byId[next.id].y,byId[targetId].x,byId[targetId].y); if (open.indexOf(next.id)<0) { open.push(next.id); } } }); } return [];
         },
+        FinishWalk: function (result) { var p=Engine.State.player; var cb=p.walkCallback; var token=p.walkToken; p.walkTarget=null; p.walkPath=[]; p.walkCallback=null; p.walkToken=null; p.walkContext=null; if (cb && Engine.Lifecycle.IsCurrent(token)) { cb(result); } },
+        BuildWalkResult: function (status, values) { values=values||{}; values.action='walk'; values.actorId='player'; values.roomId=values.roomId||Engine.State.currentRoomId; if (status==='blocked') { return Engine.ActionResults.Blocked(values); } if (status==='transitioned') { return Engine.ActionResults.Transitioned(values); } if (status==='cancelled') { return Engine.ActionResults.Cancelled(values); } return Engine.ActionResults.Completed(values); },
+        FinishTransitionWalk: function (cb, token, context) { var result=this.BuildWalkResult('transitioned',{reason:'transition',reached:true,targetId:(context&&context.targetId)||null,x:Engine.State.player.x,y:Engine.State.player.y}); Engine.State.player.walkCallback=null; Engine.State.player.walkToken=null; Engine.State.player.walkContext=null; if (cb && Engine.Lifecycle.IsCurrent(token)) { cb(result); } },
         Update: function (dt) {
             var p=Engine.State.player; if (!p.walkTarget) { p.lastMoveX=0; p.lastMoveY=0; p.animation='idle'+p.facing.charAt(0).toUpperCase()+p.facing.slice(1); Engine.Geometry.UpdateTriggers(p); Engine.Rooms.UpdateCharacters(dt); return; }
-            var dist=Distance(p.x,p.y,p.walkTarget.x,p.walkTarget.y); if (dist < 1) { p.x=p.walkTarget.x; p.y=p.walkTarget.y; Engine.Geometry.UpdateTriggers(p); if (Engine.Rooms.CheckTransitions()) { return; } if (p.walkPath && p.walkPath.length) { p.walkTarget=p.walkPath.shift(); return; } p.walkTarget=null; p.walkPath=[]; var cb=p.walkCallback; var token=p.walkToken; p.walkCallback=null; p.walkToken=null; if (cb && Engine.Lifecycle.IsCurrent(token)) { cb(); } return; }
-            var step=p.speed*dt; var t=Math.min(1, step/dist); var nx=p.x+(p.walkTarget.x-p.x)*t; var ny=p.y+(p.walkTarget.y-p.y)*t; var blocker=Engine.Geometry.IsPointBlocked(nx,ny,Engine.Rooms.GetCurrentRoom(),p); if (blocker) { Engine.Geometry.HandleCollision(p,blocker); var cb=p.walkCallback; var token=p.walkToken; p.walkTarget=null; p.walkPath=[]; p.walkCallback=null; p.walkToken=null; p.lastMoveX=0; p.lastMoveY=0; if (cb && Engine.Lifecycle.IsCurrent(token)) { cb(); } return; } var dx=nx-p.x; var dy=ny-p.y; p.x=nx; p.y=ny; Engine.Geometry.UpdateTriggers(p); p.lastMoveX=dx; p.lastMoveY=dy; p.idleAnimationStarted=0;
-            if (Math.abs(dx)>Math.abs(dy)) { p.facing = dx < 0 ? 'left' : 'right'; } else { p.facing = dy < 0 ? 'up' : 'down'; }
-            Engine.Rooms.RecordPlayerTrail();
-            p.animation='walk'+p.facing.charAt(0).toUpperCase()+p.facing.slice(1);
-            if (!Engine.Rooms.CheckTransitions()) { Engine.Rooms.UpdateCharacters(dt); }
+            var dist=Distance(p.x,p.y,p.walkTarget.x,p.walkTarget.y);
+            if (dist < 1) { p.x=p.walkTarget.x; p.y=p.walkTarget.y; Engine.Geometry.UpdateTriggers(p); var cb=p.walkCallback; var token=p.walkToken; var context=p.walkContext||{}; if (Engine.Rooms.CheckTransitions()) { this.FinishTransitionWalk(cb,token,context); return; } if (p.walkPath && p.walkPath.length) { p.walkTarget=p.walkPath.shift(); return; } this.FinishWalk(this.BuildWalkResult('completed',{reason:'destinationReached',reached:true,targetId:context.targetId||null,x:p.x,y:p.y})); return; }
+            var step=p.speed*dt; var t=Math.min(1, step/dist); var nx=p.x+(p.walkTarget.x-p.x)*t; var ny=p.y+(p.walkTarget.y-p.y)*t; var blocker=Engine.Geometry.IsPointBlocked(nx,ny,Engine.Rooms.GetCurrentRoom(),p);
+            if (blocker) { Engine.Geometry.HandleCollision(p,blocker); var context=p.walkContext||{}; var blocked=this.BuildWalkResult('blocked',{reason:'collision',reached:false,targetId:context.targetId||null,blockerId:blocker.id||null,blocker:blocker,x:p.x,y:p.y}); if (blocker.object) { blocked=Engine.ActionResults.ApplyEntityProperties(blocker.object,blocked,{action:'walk',actor:p,blocker:blocker,command:context.command||null}); } this.FinishWalk(blocked); p.lastMoveX=0; p.lastMoveY=0; return; }
+            var dx=nx-p.x; var dy=ny-p.y; p.x=nx; p.y=ny; Engine.Geometry.UpdateTriggers(p); p.lastMoveX=dx; p.lastMoveY=dy; p.idleAnimationStarted=0; if (Math.abs(dx)>Math.abs(dy)) { p.facing = dx < 0 ? 'left' : 'right'; } else { p.facing = dy < 0 ? 'up' : 'down'; } Engine.Rooms.RecordPlayerTrail(); p.animation='walk'+p.facing.charAt(0).toUpperCase()+p.facing.slice(1);
+            var moveCb=p.walkCallback; var moveToken=p.walkToken; var moveContext=p.walkContext||{}; if (Engine.Rooms.CheckTransitions()) { this.FinishTransitionWalk(moveCb,moveToken,moveContext); } else { Engine.Rooms.UpdateCharacters(dt); }
         }
     };
+
 
     Engine.Interactions = {
         defaultRefusals: {
@@ -1824,13 +1861,13 @@
         BuildCommand: function (verbId, targetId, x, y) { return { verbId: verbId, targetId: targetId, inventoryItemId: Engine.State.selectedInventoryItemId, roomId: Engine.State.currentRoomId, x: x, y: y }; },
         Resolve: function (command) {
             var target=this.GetTarget(command.targetId);
-            if (command.verbId === 'walkTo' && !target) { Engine.Movement.RequestWalk(command.x, command.y, function () { Engine.Verbs.FinishCommand(command); }); return; }
-            if (!target) { Engine.Dialogue.ShowLine(null,'There is nothing useful there.',{}); Engine.Verbs.FinishCommand(command); return; }
-            var run=function () { Engine.Interactions.RunTargetInteraction(command,target); };
+            if (command.verbId === 'walkTo' && !target) { Engine.Movement.RequestWalk(command.x, command.y, function (result) { Engine.Verbs.FinishCommand(command,result); }, {command:command}); return; }
+            if (!target) { var missing=Engine.ActionResults.Cancelled({action:'interaction',reason:'missingTarget',targetId:command.targetId||null}); Engine.Dialogue.ShowLine(null,'There is nothing useful there.',{}); Engine.Verbs.FinishCommand(command,missing); return; }
+            var run=function (walkResult) { var result=Engine.ActionResults.ApplyEntityProperties(target,walkResult||Engine.ActionResults.Completed({action:'interaction',targetId:target.id,roomId:Engine.State.currentRoomId}),{command:command,target:target}); command._lastActionResult=result; if (result.action==='walk' && result.status !== 'completed') { if (result.message) { Engine.Dialogue.ShowLine(null,result.message,{}); } Engine.Verbs.FinishCommand(command,result); return; } Engine.Interactions.RunTargetInteraction(command,target); };
             var walkThrough=Engine.Properties.Get(target,'walkThrough',{command:command,target:target},false);
-            if (command.verbId === 'walkTo' && walkThrough) { var through=Engine.Properties.Get(target,'walkThroughTo',{command:command,target:target},target.walkThroughPoint || {x:command.x,y:command.y}); Engine.Movement.RequestWalk(through.x,through.y,run); return; }
+            if (command.verbId === 'walkTo' && walkThrough) { var through=Engine.Properties.Get(target,'walkThroughTo',{command:command,target:target},target.walkThroughPoint || {x:command.x,y:command.y}); Engine.Movement.RequestWalk(through.x,through.y,run,{command:command,targetId:target.id}); return; }
             var walkTo=Engine.Properties.Get(target,'walkTo',{command:command,target:target},target.walkTo||null);
-            if (walkTo) { Engine.Movement.RequestWalk(walkTo.x,walkTo.y,run); } else { run(); }
+            if (walkTo) { Engine.Movement.RequestWalk(walkTo.x,walkTo.y,run,{command:command,targetId:target.id}); } else { run(Engine.ActionResults.Completed({action:'interaction',targetId:target.id,roomId:Engine.State.currentRoomId})); }
         },
         GetTarget: function (targetId) { if (!targetId) { return null; } var room=Engine.Rooms.GetCurrentRoom(); var all=(room.hotspots||[]).concat(room.characters||[]); for (var i=0;i<all.length;i++) { if (all[i].id===targetId) { return all[i]; } } return null; },
         GetInventoryTarget: function (itemId) { var item=Engine.CurrentGame.items[itemId]; if (!item) { return null; } var target=Object.assign({},item); target.id=target.id||itemId; target.name=target.name||itemId; if (!target.defaultText && target.description) { target.defaultText=target.description; } target.icon=target.icon||null; target.worldSprite=target.worldSprite||null; target.isInventoryItem=true; target._entityType='item'; return target; },
@@ -1932,7 +1969,7 @@
         Advance: function () { var d=Engine.State.dialogue; if (!d.active) { return; } if (d.options && d.options.length) { return; } this.AdvanceBlockOrClear(); },
         Choose: function (index) { var d=Engine.State.dialogue; if (!d.active || !d.options || !d.options[index]) { return; } var choice=d.options[index]; var run=function () { if (choice.onSelect) { choice.onSelect(choice); return; } if (choice.script && Engine.CurrentGame.scripts[choice.script]) { Engine.CurrentGame.scripts[choice.script](Engine.API); } }; this.Clear(); var playerLine=(typeof choice.playerText === 'string') ? choice.playerText : choice.text; playerLine=Engine.Text.Format(playerLine); if (choice.skipPlayerLine || !playerLine) { run(); } else { Engine.Dialogue.ShowLine('player', playerLine, { onComplete: run }); } },
         Cancel: function () { if (Engine.State.dialogue.voiceAudio) { Engine.State.dialogue.voiceAudio.pause(); } Engine.Animations.ClearDialogueAnimation(); Engine.State.dialogue.active=false; Engine.State.dialogue.speakerId=null; Engine.State.dialogue.speakerName=''; Engine.State.dialogue.text=''; Engine.State.dialogue.displayText=''; Engine.State.dialogue.timer=0; Engine.State.dialogue.duration=0; Engine.State.dialogue.explicitDuration=null; Engine.State.dialogue.options=[]; Engine.State.dialogue.voiceAudio=null; Engine.State.dialogue.onComplete=null; Engine.State.dialogue.lifecycleToken=null; Engine.State.dialogue.color=null; Engine.State.dialogue.textBlocks=[]; Engine.State.dialogue.textBlockIndex=0; },
-        Clear: function () { var cb=Engine.State.dialogue.onComplete; var token=Engine.State.dialogue.lifecycleToken; if (Engine.State.dialogue.voiceAudio) { Engine.State.dialogue.voiceAudio.pause(); } Engine.Animations.ClearDialogueAnimation(); Engine.State.dialogue.active=false; Engine.State.dialogue.speakerId=null; Engine.State.dialogue.speakerName=''; Engine.State.dialogue.text=''; Engine.State.dialogue.displayText=''; Engine.State.dialogue.timer=0; Engine.State.dialogue.duration=0; Engine.State.dialogue.explicitDuration=null; Engine.State.dialogue.options=[]; Engine.State.dialogue.voiceAudio=null; Engine.State.dialogue.onComplete=null; Engine.State.dialogue.lifecycleToken=null; Engine.State.dialogue.color=null; Engine.State.dialogue.textBlocks=[]; Engine.State.dialogue.textBlockIndex=0; if (cb && Engine.Lifecycle.IsCurrent(token)) { cb(); } },
+        Clear: function () { var cb=Engine.State.dialogue.onComplete; var token=Engine.State.dialogue.lifecycleToken; if (Engine.State.dialogue.voiceAudio) { Engine.State.dialogue.voiceAudio.pause(); } Engine.Animations.ClearDialogueAnimation(); Engine.State.dialogue.active=false; Engine.State.dialogue.speakerId=null; Engine.State.dialogue.speakerName=''; Engine.State.dialogue.text=''; Engine.State.dialogue.displayText=''; Engine.State.dialogue.timer=0; Engine.State.dialogue.duration=0; Engine.State.dialogue.explicitDuration=null; Engine.State.dialogue.options=[]; Engine.State.dialogue.voiceAudio=null; Engine.State.dialogue.onComplete=null; Engine.State.dialogue.lifecycleToken=null; Engine.State.dialogue.color=null; Engine.State.dialogue.textBlocks=[]; Engine.State.dialogue.textBlockIndex=0; if (cb && Engine.Lifecycle.IsCurrent(token)) { cb(Engine.ActionResults.Completed({action:'dialogue',speakerId:Engine.State.dialogue.speakerId,roomId:Engine.State.currentRoomId})); } },
         Update: function (dt) { var d=Engine.State.dialogue; if (!d.active || (d.options && d.options.length)) { return; } d.timer += dt; if (d.timer >= d.duration) { this.AdvanceBlockOrClear(); } }
     };
 
@@ -2093,21 +2130,22 @@
         Start: function (prompt, target, options) {
             options=options||{};
             Engine.State.previousMode=Engine.State.mode;
-            Engine.State.inputPrompt={ prompt:Engine.Text.Format(prompt), value:'', target:target, numeric:!!options.numeric, maxLength:options.maxLength||32, onComplete:options.onComplete||null, script:options.script||null, allowBlank:!!options.allowBlank };
+            Engine.State.inputPrompt={ prompt:Engine.Text.Format(prompt), value:'', target:target, numeric:!!options.numeric, maxLength:options.maxLength||32, onComplete:options.onComplete||null, script:options.script||null, allowBlank:!!options.allowBlank, lifecycleToken:Engine.Lifecycle.Capture({room:true}) };
             Engine.State.mode='textInput';
         },
         Accept: function () {
             var p=Engine.State.inputPrompt; if (!p) { return; }
-            var token=Engine.Lifecycle.Capture({room:true});
+            var token=p.lifecycleToken;
             var value=p.numeric ? Number(p.value) : p.value;
             if (p.numeric && (p.value==='' || !isFinite(value))) { Engine.Debug.Warn('Numeric input rejected because "'+p.value+'" is not a finite number.'); return; }
             if (!p.allowBlank && !p.numeric && !String(value).length) { return; }
             this.StoreValue(p.target,value);
-            if (p.script && Engine.CurrentGame.scripts && Engine.CurrentGame.scripts[p.script] && Engine.Lifecycle.IsCurrent(token)) { Engine.CurrentGame.scripts[p.script](Engine.API,{ value:value, target:p.target }); }
-            if (p.onComplete && Engine.Lifecycle.IsCurrent(token)) { p.onComplete(value); }
+            var previousMode=Engine.State.previousMode || 'play'; var scriptName=p.script; var cb=p.onComplete; var target=p.target; var result=Engine.ActionResults.Completed({action:'input',value:value,target:target,roomId:Engine.State.currentRoomId});
             Engine.State.inputPrompt=null;
-            Engine.State.mode=Engine.State.previousMode || 'play';
+            Engine.State.mode=previousMode;
             Engine.State.previousMode=null;
+            if (scriptName && Engine.CurrentGame.scripts && Engine.CurrentGame.scripts[scriptName] && Engine.Lifecycle.IsCurrent(token)) { Engine.CurrentGame.scripts[scriptName](Engine.API,{ value:value, target:target, result:result }); }
+            if (cb && Engine.Lifecycle.IsCurrent(token)) { cb(value,result); }
         },
         Cancel: function () { Engine.State.inputPrompt=null; Engine.State.mode=Engine.State.previousMode || 'play'; Engine.State.previousMode=null; },
         StoreValue: function (target, value) {
@@ -2131,10 +2169,11 @@
         }
     };
     Engine.Cutscenes = {
-        Start: function (steps) { var context={ steps:steps||[] }; if (Engine.Hooks.RunGameHook('beforeCutscene',context) === false) { return; } Engine.Lifecycle.BumpCutscene(); var token=Engine.Lifecycle.Capture({cutscene:true}); Engine.State.activeCutscene={steps:steps||[],index:0,waiting:false,lifecycleToken:token}; Engine.State.mode='cutscene'; this.RunNext(token); },
-        RunNext: function (token) { var cs=Engine.State.activeCutscene; token=token||(cs?cs.lifecycleToken:null); if (!cs || !Engine.Lifecycle.IsCurrent(token)) { return; } if (cs.index >= cs.steps.length) { var finished=cs; Engine.State.activeCutscene=null; Engine.State.mode='play'; if (finished && Engine.Lifecycle.IsCurrent(token)) { Engine.Hooks.RunGameHook('afterCutscene',{ steps:finished.steps }); } return; } var step=cs.steps[cs.index++]; if (step.type==='say') { Engine.Dialogue.ShowLine(step.speakerId||null, step.text||'', {duration:step.duration, voice:step.voice, onComplete:function () { Engine.Cutscenes.RunNext(token); }}); } else if (step.type==='walk') { Engine.Movement.RequestWalk(step.x,step.y,function () { Engine.Cutscenes.RunNext(token); }); } else if (step.type==='script' && Engine.CurrentGame.scripts[step.script]) { Engine.CurrentGame.scripts[step.script](Engine.API); Engine.Cutscenes.RunNext(token); } else { Engine.Cutscenes.RunNext(token); } }
+        Start: function (steps) { var context={ steps:steps||[] }; if (Engine.Hooks.RunGameHook('beforeCutscene',context) === false) { return; } Engine.Lifecycle.BumpCutscene(); var token=Engine.Lifecycle.Capture({cutscene:true}); Engine.State.activeCutscene={steps:steps||[],index:0,waiting:false,lifecycleToken:token,lastResult:null}; Engine.State.mode='cutscene'; this.RunNext(token); },
+        Finish: function (token, result) { var cs=Engine.State.activeCutscene; if (!cs || !Engine.Lifecycle.IsCurrent(token)) { return; } Engine.State.activeCutscene=null; Engine.State.mode='play'; Engine.Hooks.RunGameHook('afterCutscene',{ steps:cs.steps, result:result||cs.lastResult||Engine.ActionResults.Completed({action:'cutscene'}) }); },
+        Stop: function (token, result) { var cs=Engine.State.activeCutscene; if (!cs || !Engine.Lifecycle.IsCurrent(token)) { return; } Engine.State.activeCutscene=null; Engine.State.mode='play'; Engine.Hooks.RunGameHook('afterCutscene',{ steps:cs.steps, result:result, stopped:true }); },
+        RunNext: function (token, previousResult) { var cs=Engine.State.activeCutscene; token=token||(cs?cs.lifecycleToken:null); if (!cs || !Engine.Lifecycle.IsCurrent(token)) { return; } if (previousResult) { cs.lastResult=previousResult; } if (previousResult && !Engine.ActionResults.ShouldContinueCutscene(previousResult)) { this.Stop(token,previousResult); return; } if (cs.index >= cs.steps.length) { this.Finish(token,previousResult||Engine.ActionResults.Completed({action:'cutscene'})); return; } var step=cs.steps[cs.index++]; if (step.type==='say') { Engine.Dialogue.ShowLine(step.speakerId||null, step.text||'', {duration:step.duration, voice:step.voice, onComplete:function (result) { Engine.Cutscenes.RunNext(token,result); }}); } else if (step.type==='walk') { Engine.Movement.RequestWalk(step.x,step.y,function (result) { Engine.Cutscenes.RunNext(token,result); },{targetId:step.targetId||null}); } else if (step.type==='script' && Engine.CurrentGame.scripts[step.script]) { var result=Engine.CurrentGame.scripts[step.script](Engine.API,step,previousResult); Engine.Cutscenes.RunNext(token,Engine.ActionResults.Normalise(result,Engine.ActionResults.Completed({action:'script',script:step.script}))); } else { Engine.Cutscenes.RunNext(token,Engine.ActionResults.Completed({action:'cutsceneStep',reason:'skipped'})); } }
     };
-
     Engine.EndGame = {
         // Multiple-ending support.
         // ------------------------
