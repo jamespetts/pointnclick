@@ -349,7 +349,7 @@
     Engine.State = {
         mode: 'boot', gameId: null, currentRoomId: null, selectedVerbId: 'walkTo', selectedInventoryItemId: null,
         hoveredTargetId: null, hoveredInventoryItemId: null, pointerX: 0, pointerY: 0, pendingCommand: null,
-        activeCutscene: null, cutsceneQueue: [], flags: {}, variables: {}, dialogueMemory: {}, inputPrompt: null, scopedVariables: { rooms:{}, characters:{}, items:{} }, roomStates: {}, objectStates: {}, characterStates: {}, inventory: [], inventoryScroll: 0,
+        activeCutscene: null, cutsceneQueue: [], activeOverlay: null, flags: {}, variables: {}, dialogueMemory: {}, inputPrompt: null, scopedVariables: { rooms:{}, characters:{}, items:{} }, roomStates: {}, objectStates: {}, characterStates: {}, inventory: [], inventoryScroll: 0,
         endGame: { title: '', text: '', endingId: null, background: null, animation: null, animationStarted: 0 },
         gameStarted: false,
         previousMode: null,
@@ -644,6 +644,442 @@
         }
     };
 
+
+    // ENTITY PROPERTY, TEMPLATE AND OVERLAY SYSTEMS
+    // --------------------------------------------
+    // This section is the object-oriented public behaviour layer for AI-authored
+    // adventure content. It exists so game scripts can describe common objects in
+    // compact data, while the engine still keeps exactly one interaction path,
+    // one renderer path and one canonical save/load state.
+    //
+    // IMPORTANT CONCEPT: EFFECTIVE PROPERTIES
+    // ---------------------------------------
+    // A room object, inventory item, character or room may expose any behaviour as
+    // a property. The property can be a plain data value, or it can be computed by
+    // a named getter script. This deliberately resembles a C# property: normally
+    // the public value is just the stored field, but a getter may override it.
+    //
+    // Example:
+    //   {
+    //       id:'cabinet',
+    //       template:'container',
+    //       closedSprite:'objects/cabinet_closed.png',
+    //       openSprite:'objects/cabinet_open.png',
+    //       propertyGetters:{ defaultText:'cabinetText' }
+    //   }
+    //
+    // Getter script shape:
+    //   cabinetText:function (query,self,context) {
+    //       return self.GetBool('open') ? 'The cabinet is open.' : 'It is closed.';
+    //   }
+    //
+    // Getter scripts receive:
+    //   query   read-only API. It has HasItem, GetFlag, GetVariable,
+    //           GetRoomVariable, GetCharacterVariable, GetItemVariable,
+    //           GetObjectVariable and GetProperty. It deliberately has no
+    //           mutation, movement, dialogue, sound or timer methods.
+    //   self    entity facade. It has Id, Type, RoomId, Entity, Context,
+    //           Get/Set, GetBool/SetBool, GetNumber/SetNumber,
+    //           GetString/SetString, Add, GetBaseProperty and GetProperty.
+    //   context context object supplied by the caller. For interactions this
+    //           normally contains {command,target}. For rendering/hit testing it
+    //           contains a purpose string such as {purpose:'render'}.
+    //
+    // Getter rules for future AIs:
+    //   - Getters must be query-only. Do not call api.Narrate, api.Say,
+    //     api.AddItem, api.RemoveItem, api.ChangeRoom, api.MoveCharacter,
+    //     api.SetObjectAnimation or browser timers from a getter.
+    //   - Store mutable puzzle state in self variables or scoped variables, not in
+    //     ad-hoc JavaScript objects. Object variables are saved in objectStates.
+    //   - Prefer local state: object getters should normally read self variables;
+    //     item getters should normally read item variables; room getters should
+    //     normally read room variables. Global flags are allowed but couple the
+    //     object to wider plot state.
+    //   - If a getter returns an invalid value, the property resolver warns and
+    //     falls back to the base value where possible.
+    //
+    // Properties commonly consumed by the engine:
+    //   name, displayName, defaultText, description, sprite, worldSprite, x, y,
+    //   frameW, frameH, animation, hidden, renderHidden, hitDisabled,
+    //   interactionDisabled, hitRect, rect, hitPriority, priority, zIndex,
+    //   walkTo, walkThrough, walkThroughTo, interactions and refusals.
+    //
+    // Resolution order:
+    //   1. Runtime object state override in Engine.State.objectStates, where
+    //      applicable.
+    //   2. entity.properties[propertyName].
+    //   3. legacy entity[propertyName].
+    //   4. entity.propertyGetters[propertyName] script, if defined. The getter is
+    //      passed the base value as fallback and may replace it.
+    //   5. template default property, if the entity has template:'...'.
+    //   6. supplied caller default.
+    // For interactions and refusals, template maps are merged with entity maps so
+    // content can override or add individual verbs without copying the whole
+    // template interaction table.
+    //
+    // TEMPLATE SUMMARY
+    // ----------------
+    // Templates capture common early-1990s adventure-game object patterns:
+    // doors and keys, pickupable items, containers, switches/levers, readable
+    // documents/maps, and simple machines/devices. These correspond to common
+    // object-interaction, inventory, switch/combo, exploration and machine-fixing
+    // puzzle categories, and reduce repeated AI-authored boilerplate.
+    //
+    // Available templates in this engine:
+    //   door       A lockable open/closed passage object.
+    //   key        An inventory item listing the door/container/device ids it fits.
+    //   map        Inventory map overlay with visited-location hotspots.
+    //   pickup     A world object that adds itemId to inventory and hides itself.
+    //   container  Openable/closable optional locked holder; may reveal or give
+    //              contents when opened.
+    //   switch     Toggle, lever or button with on/off state and optional scripts.
+    //   readable   Book, note, sign, plaque or document; can narrate text or open
+    //              a close-up overlay.
+    //   device     Simple machine/contraption requiring optional power and/or a
+    //              required inventory item before use.
+    //
+    // Template action names are internal strings such as template:door.open. Game
+    // scripts should not call Engine.Templates directly; define template:'door'
+    // and let the normal interaction dispatcher route verbs to template actions.
+    //
+    // Engine.Overlays owns full-scene modal overlays for inventory close-ups and
+    // maps. The lower verb UI remains available; scene clicks are resolved against
+    // overlay hotspots while an overlay is active. Press Escape to close an overlay.
+    Engine.Entities = {
+        DetectType: function (entity, fallback) {
+            if (!entity) { return fallback || 'object'; }
+            if (entity._entityType) { return entity._entityType; }
+            if (entity.isInventoryItem) { return 'item'; }
+            if (entity._overlayTarget) { return 'overlay'; }
+            if (Engine.CurrentGame && Engine.CurrentGame.rooms && Engine.CurrentGame.rooms[entity.id]) { return 'room'; }
+            if (entity.id === 'player' || (Engine.CurrentGame && Engine.CurrentGame.characters && Engine.CurrentGame.characters[entity.id])) { return 'character'; }
+            return fallback || 'object';
+        },
+        ScopeForType: function (type) { if (type==='room') { return 'room'; } if (type==='character') { return 'character'; } if (type==='item') { return 'item'; } return 'object'; },
+        CreateFacade: function (entity, type, extra) {
+            type=this.DetectType(entity,type); extra=extra||{};
+            var id=entity && entity.id ? entity.id : (extra.id||'');
+            var scope=this.ScopeForType(type);
+            return {
+                Id:id, Type:type, RoomId:extra.roomId || Engine.State.currentRoomId || null, Entity:entity, Context:extra.context || {},
+                Get:function (name, defaultValue) { if (scope==='object' || scope==='overlay') { return Engine.RoomObjects.GetVariable(id,name,defaultValue); } return Engine.ScopedVariables.Get(scope,id,name,defaultValue); },
+                Set:function (name, value) { if (scope==='object' || scope==='overlay') { return Engine.RoomObjects.SetVariable(id,name,value); } return Engine.ScopedVariables.Set(scope,id,name,value); },
+                GetNumber:function (name, defaultValue) { var v=this.Get(name,defaultValue); return typeof v==='number' && isFinite(v) ? v : defaultValue; },
+                SetNumber:function (name, value) { return this.Set(name,Number(value)); },
+                Add:function (name, amount) { if (scope==='object' || scope==='overlay') { return Engine.RoomObjects.AddVariable(id,name,amount); } return Engine.ScopedVariables.Arithmetic(scope,id,name,amount,'add'); },
+                GetBool:function (name, defaultValue) { return !!this.Get(name,defaultValue ? 1 : 0); },
+                SetBool:function (name, value) { return this.Set(name,value ? 1 : 0); },
+                GetString:function (name, defaultValue) { var v=this.Get(name,defaultValue); return v === undefined || v === null ? defaultValue : String(v); },
+                SetString:function (name, value) { return this.Set(name,String(value)); },
+                GetBaseProperty:function (name, defaultValue) { return Engine.Properties.GetRaw(entity,name,defaultValue); },
+                GetProperty:function (name, context, defaultValue) { return Engine.Properties.Get(entity,name,context||this.Context,defaultValue); }
+            };
+        }
+    };
+    Engine.Properties = {
+        ReadAPI:null,
+        GetReadAPI:function () {
+            if (this.ReadAPI) { return this.ReadAPI; }
+            this.ReadAPI={
+                HasItem:function (itemId) { return Engine.Inventory.HasItem(itemId); },
+                GetFlag:function (name) { return !!Engine.State.flags[name]; },
+                GetVariable:function (name) { return Engine.State.variables[name]; },
+                GetRoomVariable:function (roomId,name,defaultValue) { return Engine.ScopedVariables.Get('room',roomId,name,defaultValue); },
+                GetCharacterVariable:function (characterId,name,defaultValue) { return Engine.ScopedVariables.Get('character',characterId,name,defaultValue); },
+                GetItemVariable:function (itemId,name,defaultValue) { return Engine.ScopedVariables.Get('item',itemId,name,defaultValue); },
+                GetObjectVariable:function (objectId,name,defaultValue) { return Engine.RoomObjects.GetVariable(objectId,name,defaultValue); },
+                GetProperty:function (entity,propertyName,context,defaultValue) { return Engine.Properties.Get(entity,propertyName,context,defaultValue); }
+            };
+            return this.ReadAPI;
+        },
+        GetGetterName:function (entity, propertyName) { var getters=(entity && (entity.propertyGetters || entity.getters)) || {}; return getters[propertyName] || getters['get'+CapitaliseFirst(propertyName)] || null; },
+        GetRaw:function (entity, propertyName, defaultValue) {
+            if (!entity) { return defaultValue; }
+            var state=(entity.id && entity._entityType !== 'item' && entity._entityType !== 'overlay') ? Engine.RoomObjects.PeekState(entity.id) : {};
+            if (state && Object.prototype.hasOwnProperty.call(state,propertyName)) { return state[propertyName]; }
+            if (entity.properties && Object.prototype.hasOwnProperty.call(entity.properties,propertyName)) { return entity.properties[propertyName]; }
+            if (Object.prototype.hasOwnProperty.call(entity,propertyName)) { return entity[propertyName]; }
+            return defaultValue;
+        },
+        GetTemplate:function (entity) { var name=entity && (entity.template || entity.templateId || entity.kind); return name && Engine.Templates[name] ? Engine.Templates[name] : null; },
+        Validate:function (propertyName, value, fallback) {
+            if (value === undefined) { return fallback; }
+            if (propertyName==='visible' || propertyName==='hidden' || propertyName==='hitDisabled' || propertyName==='walkThrough' || propertyName==='renderHidden' || propertyName==='interactionDisabled') { return !!value; }
+            if (propertyName==='hitRect' || propertyName==='rect') { if (value && typeof value.x==='number' && typeof value.y==='number' && typeof value.w==='number' && typeof value.h==='number') { return value; } Engine.Debug.Warn('Property '+propertyName+' returned an invalid rectangle.'); return fallback; }
+            if (propertyName==='walkTo' || propertyName==='walkThroughTo') { if (!value || (typeof value.x==='number' && typeof value.y==='number')) { return value; } Engine.Debug.Warn('Property '+propertyName+' returned an invalid point.'); return fallback; }
+            if (propertyName==='interactions' || propertyName==='refusals') { if (!value || typeof value==='object') { return value; } Engine.Debug.Warn('Property '+propertyName+' returned a non-object value.'); return fallback; }
+            return value;
+        },
+        RunGetter:function (entity, propertyName, context, fallback) {
+            var getterName=this.GetGetterName(entity,propertyName);
+            if (!getterName) { return fallback; }
+            if (!Engine.CurrentGame || !Engine.CurrentGame.scripts || !Engine.CurrentGame.scripts[getterName]) { Engine.Debug.Warn('Property getter '+getterName+' for '+(entity && entity.id || 'unknown')+'.'+propertyName+' is missing.'); return fallback; }
+            try { var self=Engine.Entities.CreateFacade(entity,Engine.Entities.DetectType(entity),{context:context||{}}); return this.Validate(propertyName,Engine.CurrentGame.scripts[getterName](this.GetReadAPI(),self,context||{}),fallback); }
+            catch (err) { Engine.Debug.Error('Property getter '+getterName+' for '+(entity && entity.id || 'unknown')+'.'+propertyName+' failed: '+(err && err.message ? err.message : err)); return fallback; }
+        },
+        Get:function (entity, propertyName, context, defaultValue) {
+            var raw=this.GetRaw(entity,propertyName,undefined);
+            var gotRaw=(raw !== undefined);
+            var value=this.RunGetter(entity,propertyName,context,gotRaw ? raw : undefined);
+            if (value !== undefined && !(propertyName==='interactions' || propertyName==='refusals')) { return value; }
+            var template=this.GetTemplate(entity);
+            var tvalue=undefined;
+            if (template && template.properties && template.properties[propertyName]) { tvalue=template.properties[propertyName](entity,context||{},defaultValue); }
+            if ((propertyName==='interactions' || propertyName==='refusals') && tvalue && typeof tvalue==='object') { return Object.assign({},tvalue,value||raw||{}); }
+            if (value !== undefined) { return this.Validate(propertyName,value,defaultValue); }
+            if (tvalue !== undefined) { return this.Validate(propertyName,tvalue,defaultValue); }
+            if (gotRaw) { return this.Validate(propertyName,raw,defaultValue); }
+            return defaultValue;
+        }
+    };
+    Engine.Templates = {
+        // TEMPLATE ACTION DISPATCH
+        // ------------------------
+        // The interaction resolver accepts script names beginning with
+        // "template:". For example, template:door.open dispatches here to
+        // Engine.Templates.door.actions.open(api,self,context). This keeps
+        // template behaviours on the same single command path as ordinary game
+        // scripts, so beforeCommand/afterCommand hooks, lifecycle guards and
+        // refusal fallbacks still work normally.
+        RunAction:function (actionName, command, target) {
+            var parts=String(actionName||'').split('.');
+            if (parts.length!==2 || !this[parts[0]] || !this[parts[0]].actions || !this[parts[0]].actions[parts[1]]) { Engine.Debug.Warn('Template action '+actionName+' is missing.'); return false; }
+            var self=Engine.Entities.CreateFacade(target,Engine.Entities.DetectType(target),{context:{command:command,target:target}});
+            this[parts[0]].actions[parts[1]](Engine.API,self,{command:command,target:target}); return true;
+        },
+        RunOptionalScript:function (scriptName, self, context) {
+            if (scriptName && Engine.CurrentGame && Engine.CurrentGame.scripts && Engine.CurrentGame.scripts[scriptName]) { return Engine.CurrentGame.scripts[scriptName](Engine.API,self,context||{}); }
+            if (scriptName) { Engine.Debug.Warn('Template optional script '+scriptName+' is missing.'); }
+            return null;
+        },
+        ListFromProperty:function (entity) {
+            var list=entity.unlocks || entity.unlockDoors || entity.opens || entity.targets || entity.doorIds || entity.objectIds || [];
+            if (typeof list === 'string') { list=[list]; }
+            return Array.isArray(list) ? list : [];
+        },
+        ItemTargetsObject:function (itemId, objectId) {
+            var item=Engine.CurrentGame && Engine.CurrentGame.items ? Engine.CurrentGame.items[itemId] : null;
+            if (!item) { return false; }
+            var list=this.ListFromProperty(item);
+            return list.indexOf(objectId) >= 0 || list.indexOf('*') >= 0;
+        },
+        AddContentsToInventory:function (api, target, self, context) {
+            var contents=Engine.Properties.GetRaw(target,'contents',Engine.Properties.GetRaw(target,'contains',[]));
+            if (typeof contents === 'string') { contents=[contents]; }
+            if (!Array.isArray(contents) || self.GetBool('emptied',false)) { return false; }
+            for (var i=0;i<contents.length;i++) { if (contents[i]) { api.AddItem(contents[i]); } }
+            if (contents.length) { self.SetBool('emptied',true); }
+            return contents.length>0;
+        },
+
+        // TEMPLATE: door
+        // --------------
+        // Use for: ordinary doors, gates, hatches, trapdoors and any object that
+        // has an open/closed state and may be locked. The template owns object
+        // variables named open and locked. Static defaults can also be supplied
+        // with open:true/false and locked:true/false.
+        //
+        // Core fields:
+        //   template:'door'
+        //   locked:true                 optional initial locked state
+        //   open:false                  optional initial open state
+        //   closedSprite/openSprite     optional graphics resolved by sprite
+        //   transitionAnimation         optional animation played forward on open
+        //                               and reverse on close
+        //   unlockAnimation/lockAnimation optional key-turn animations
+        //   walkThroughTo:{x,y}         destination point for Walk To when open
+        //   onOpen/onClose/onUnlock/onLock optional script names
+        //
+        // Text fields:
+        //   lockedText, unlockedText, openText, lockedOpenText, openActionText,
+        //   closeActionText, alreadyOpenText, alreadyClosedText, unlockText,
+        //   lockText, wrongKeyText, closedWalkText.
+        //
+        // Key use:
+        //   Inventory items with template:'key' and unlocks:['doorId'] toggle the
+        //   locked variable when used on the door. unlocks:['*'] is a skeleton key.
+        door:{
+            properties:{
+                interactions:function () { return { lookAt:'template:door.lookAt', open:'template:door.open', close:'template:door.close', use:'template:door.useKey', walkTo:'template:door.walkTo' }; },
+                defaultText:function (entity) { var self=Engine.Entities.CreateFacade(entity,'object'); if (self.GetBool('open',!!Engine.Properties.GetRaw(entity,'open',false))) { return Engine.Properties.GetRaw(entity,'openText','The door is open.'); } if (self.GetBool('locked',!!Engine.Properties.GetRaw(entity,'locked',false))) { return Engine.Properties.GetRaw(entity,'lockedText','The door is closed and locked.'); } return Engine.Properties.GetRaw(entity,'unlockedText',Engine.Properties.GetRaw(entity,'closedText','The door is closed.')); },
+                walkThrough:function (entity) { var self=Engine.Entities.CreateFacade(entity,'object'); return self.GetBool('open',!!Engine.Properties.GetRaw(entity,'open',false)); },
+                sprite:function (entity) { var self=Engine.Entities.CreateFacade(entity,'object'); return self.GetBool('open',!!Engine.Properties.GetRaw(entity,'open',false)) ? Engine.Properties.GetRaw(entity,'openSprite',Engine.Properties.GetRaw(entity,'sprite',null)) : Engine.Properties.GetRaw(entity,'closedSprite',Engine.Properties.GetRaw(entity,'sprite',null)); }
+            },
+            helpers:{
+                GetTransitionAnimation:function (target) { return Engine.Properties.GetRaw(target,'transitionAnimation',Engine.Properties.GetRaw(target,'openAnimation',null)); },
+                KeyUnlocksDoor:function (itemId, doorId) { var item=Engine.CurrentGame && Engine.CurrentGame.items ? Engine.CurrentGame.items[itemId] : null; if (!item) { return false; } return item.template==='key' && Engine.Templates.ItemTargetsObject(itemId,doorId); },
+                RunOptionalScript:function (scriptName, self, context) { return Engine.Templates.RunOptionalScript(scriptName,self,context); }
+            },
+            actions:{
+                lookAt:function (api,self,context) { api.Narrate(Engine.Properties.Get(context.target,'defaultText',context,'The door is unremarkable.')); },
+                open:function (api,self,context) { var target=context.target; if (self.GetBool('open',!!Engine.Properties.GetRaw(target,'open',false))) { api.Narrate(Engine.Properties.GetRaw(target,'alreadyOpenText','It is already open.')); return; } if (self.GetBool('locked',!!Engine.Properties.GetRaw(target,'locked',false))) { api.Narrate(Engine.Properties.GetRaw(target,'lockedOpenText','It is locked.')); return; } self.SetBool('open',true); var anim=Engine.Templates.door.helpers.GetTransitionAnimation(target); if (anim) { api.SetObjectAnimation(self.Id,anim,{holdFinal:true}); } api.Narrate(Engine.Properties.GetRaw(target,'openActionText','Opened.')); Engine.Templates.door.helpers.RunOptionalScript(Engine.Properties.GetRaw(target,'onOpen',null),self,context); },
+                close:function (api,self,context) { var target=context.target; if (!self.GetBool('open',!!Engine.Properties.GetRaw(target,'open',false))) { api.Narrate(Engine.Properties.GetRaw(target,'alreadyClosedText','It is already closed.')); return; } self.SetBool('open',false); var anim=Engine.Templates.door.helpers.GetTransitionAnimation(target); if (anim) { api.SetObjectAnimation(self.Id,anim,{holdFinal:true,reverse:true}); } api.Narrate(Engine.Properties.GetRaw(target,'closeActionText','Closed.')); Engine.Templates.door.helpers.RunOptionalScript(Engine.Properties.GetRaw(target,'onClose',null),self,context); },
+                useKey:function (api,self,context) { var command=context.command||{}; var target=context.target; var keyId=command.inventoryItemId; if (!keyId || !Engine.Templates.door.helpers.KeyUnlocksDoor(keyId,self.Id)) { api.Narrate(Engine.Properties.GetRaw(target,'wrongKeyText','That does not fit the lock.')); return; } var locked=self.GetBool('locked',!!Engine.Properties.GetRaw(target,'locked',false)); self.SetBool('locked',!locked); var anim=locked ? Engine.Properties.GetRaw(target,'unlockAnimation',null) : Engine.Properties.GetRaw(target,'lockAnimation',null); if (anim) { api.SetObjectAnimation(self.Id,anim,{holdFinal:true}); } api.Narrate(locked ? Engine.Properties.GetRaw(target,'unlockText','Unlocked.') : Engine.Properties.GetRaw(target,'lockText','Locked.')); Engine.Templates.door.helpers.RunOptionalScript(locked ? Engine.Properties.GetRaw(target,'onUnlock',null) : Engine.Properties.GetRaw(target,'onLock',null),self,{command:command,target:target,keyId:keyId}); },
+                walkTo:function (api,self,context) { if (self.GetBool('open',!!Engine.Properties.GetRaw(context.target,'open',false))) { var dest=Engine.Properties.Get(context.target,'walkThroughTo',context,null); if (dest && dest.roomId) { api.ChangeRoom(dest.roomId,dest.x,dest.y,dest.facing); return; } } api.Narrate(Engine.Properties.GetRaw(context.target,'closedWalkText','The door is closed.')); }
+            }
+        },
+
+        // TEMPLATE: key
+        // -------------
+        // Use for: keys, keycards, passes, tokens or any inventory item that
+        // authorises a lock. It has no actions of its own. Its purpose is to carry
+        // an unlock target list used by door/container/device templates.
+        //
+        // Fields:
+        //   template:'key'
+        //   unlocks:['doorId','boxId']  ids this key unlocks
+        //   unlocks:['*']              skeleton key for all template locks
+        key:{ properties:{} },
+
+        // TEMPLATE: map
+        // -------------
+        // Use for: world maps, town maps, travel screens and fast-travel diagrams.
+        // Looking at the inventory item opens a scene overlay. Its places become
+        // active only after their target rooms have room variable visited=1, unless
+        // a place sets alwaysVisible:true.
+        //
+        // Fields:
+        //   template:'map'
+        //   map:{ image:'ui/map.png', places:[...] }
+        //   propertyGetters:{ travelBlocked:'scriptName' } optional global block
+        //   travelBlockedText:'...' optional default blocked text
+        //
+        // Place fields:
+        //   id, name, rect:{x,y,w,h}, targetRoomId, targetX, targetY,
+        //   targetFacing, description, alwaysVisible, visibleFlag, hiddenFlag,
+        //   blockedFlag, blockedScript, blockedText, script.
+        map:{
+            properties:{ interactions:function () { return { lookAt:'template:map.show' }; } },
+            actions:{
+                show:function (api,self,context) { Engine.Overlays.ShowMap(self.Entity); },
+                lookPlace:function (api,self,context) { api.Narrate(context.target.description || context.target.defaultText || 'There is nothing special marked there.'); },
+                travelPlace:function (api,self,context) { var place=context.target; var mapItem=Engine.Overlays.GetItem(); var itemFacade=Engine.Entities.CreateFacade(mapItem,'item',{context:context}); var blocked=!!Engine.Properties.Get(mapItem,'travelBlocked',Object.assign({},context,{place:place}),false); if (place.blockedFlag && Engine.State.flags[place.blockedFlag]) { blocked=true; } if (place.blockedScript && Engine.CurrentGame.scripts && Engine.CurrentGame.scripts[place.blockedScript]) { blocked=!!Engine.CurrentGame.scripts[place.blockedScript](Engine.Properties.GetReadAPI(),itemFacade,Object.assign({},context,{place:place})); } if (blocked) { api.Narrate(place.blockedText || Engine.Properties.Get(mapItem,'travelBlockedText',context,'You cannot go there just now.')); return; } Engine.Overlays.Close(); if (place.script && Engine.CurrentGame.scripts && Engine.CurrentGame.scripts[place.script]) { Engine.CurrentGame.scripts[place.script](api,itemFacade,Object.assign({},context,{place:place})); return; } if (place.targetRoomId) { api.ChangeRoom(place.targetRoomId,place.targetX,place.targetY,place.targetFacing); } }
+            }
+        },
+
+        // TEMPLATE: pickup
+        // ----------------
+        // Use for: coins, tools, papers, loose inventory items and other room
+        // objects that should be taken into inventory. Prefer this over bespoke
+        // take scripts unless the pickup has unusual story logic.
+        //
+        // Fields:
+        //   template:'pickup'
+        //   itemId:'inventoryItemId'    item to add; defaults to object id
+        //   hiddenFlag:'flagName'       optional flag set on take
+        //   takeText:'Taken.'           narration after pickup
+        //   onTake:'scriptName'         optional script after pickup
+        pickup:{
+            properties:{ interactions:function () { return { lookAt:'template:pickup.lookAt', take:'template:pickup.take' }; } },
+            actions:{
+                lookAt:function (api,self,context) { api.Narrate(Engine.Properties.Get(context.target,'defaultText',context,context.target.defaultText || 'You see nothing special.')); },
+                take:function (api,self,context) { var target=context.target; var itemId=Engine.Properties.GetRaw(target,'itemId',target.id); if (itemId) { api.AddItem(itemId); } var flag=Engine.Properties.GetRaw(target,'hiddenFlag',Engine.Properties.GetRaw(target,'takenFlag',null)); if (flag) { api.SetFlag(flag,true); } self.SetBool('taken',true); api.Narrate(Engine.Properties.GetRaw(target,'takeText','Taken.')); Engine.Templates.RunOptionalScript(Engine.Properties.GetRaw(target,'onTake',null),self,context); }
+            }
+        },
+
+        // TEMPLATE: container
+        // -------------------
+        // Use for: boxes, drawers, cabinets, cupboards, chests, lockers and safes.
+        // It owns object variables open, locked and emptied. It may reveal/give
+        // contents when opened. For purely visible contents, use onOpen to unhide a
+        // room hotspot; for inventory contents, set contents:['itemId'].
+        //
+        // Fields:
+        //   template:'container'
+        //   locked:true/false, open:true/false
+        //   contents:'itemId' or contents:['itemA','itemB']
+        //   closedSprite/openSprite/emptySprite
+        //   transitionAnimation, unlockAnimation, lockAnimation
+        //   onOpen/onClose/onUnlock/onLock/onEmpty optional scripts
+        //   lockedText, closedText, openText, emptyText, openActionText, etc.
+        container:{
+            properties:{
+                interactions:function () { return { lookAt:'template:container.lookAt', open:'template:container.open', close:'template:container.close', use:'template:container.useKey' }; },
+                defaultText:function (entity) { var self=Engine.Entities.CreateFacade(entity,'object'); if (self.GetBool('open',!!Engine.Properties.GetRaw(entity,'open',false))) { if (self.GetBool('emptied',false)) { return Engine.Properties.GetRaw(entity,'emptyText',Engine.Properties.GetRaw(entity,'openText','It is open and empty.')); } return Engine.Properties.GetRaw(entity,'openText','It is open.'); } if (self.GetBool('locked',!!Engine.Properties.GetRaw(entity,'locked',false))) { return Engine.Properties.GetRaw(entity,'lockedText','It is closed and locked.'); } return Engine.Properties.GetRaw(entity,'closedText','It is closed.'); },
+                sprite:function (entity) { var self=Engine.Entities.CreateFacade(entity,'object'); if (self.GetBool('open',!!Engine.Properties.GetRaw(entity,'open',false))) { if (self.GetBool('emptied',false)) { return Engine.Properties.GetRaw(entity,'emptySprite',Engine.Properties.GetRaw(entity,'openSprite',Engine.Properties.GetRaw(entity,'sprite',null))); } return Engine.Properties.GetRaw(entity,'openSprite',Engine.Properties.GetRaw(entity,'sprite',null)); } return Engine.Properties.GetRaw(entity,'closedSprite',Engine.Properties.GetRaw(entity,'sprite',null)); }
+            },
+            actions:{
+                lookAt:function (api,self,context) { api.Narrate(Engine.Properties.Get(context.target,'defaultText',context,'It is unremarkable.')); },
+                open:function (api,self,context) { var target=context.target; if (self.GetBool('open',!!Engine.Properties.GetRaw(target,'open',false))) { api.Narrate(Engine.Properties.GetRaw(target,'alreadyOpenText','It is already open.')); return; } if (self.GetBool('locked',!!Engine.Properties.GetRaw(target,'locked',false))) { api.Narrate(Engine.Properties.GetRaw(target,'lockedOpenText','It is locked.')); return; } self.SetBool('open',true); var anim=Engine.Properties.GetRaw(target,'transitionAnimation',Engine.Properties.GetRaw(target,'openAnimation',null)); if (anim) { api.SetObjectAnimation(self.Id,anim,{holdFinal:true}); } var gave=Engine.Templates.AddContentsToInventory(api,target,self,context); api.Narrate(gave ? Engine.Properties.GetRaw(target,'takeContentsText',Engine.Properties.GetRaw(target,'openActionText','Opened.')) : Engine.Properties.GetRaw(target,'openActionText','Opened.')); Engine.Templates.RunOptionalScript(Engine.Properties.GetRaw(target,'onOpen',null),self,context); if (gave) { Engine.Templates.RunOptionalScript(Engine.Properties.GetRaw(target,'onEmpty',null),self,context); } },
+                close:function (api,self,context) { var target=context.target; if (!self.GetBool('open',!!Engine.Properties.GetRaw(target,'open',false))) { api.Narrate(Engine.Properties.GetRaw(target,'alreadyClosedText','It is already closed.')); return; } self.SetBool('open',false); var anim=Engine.Properties.GetRaw(target,'transitionAnimation',Engine.Properties.GetRaw(target,'openAnimation',null)); if (anim) { api.SetObjectAnimation(self.Id,anim,{holdFinal:true,reverse:true}); } api.Narrate(Engine.Properties.GetRaw(target,'closeActionText','Closed.')); Engine.Templates.RunOptionalScript(Engine.Properties.GetRaw(target,'onClose',null),self,context); },
+                useKey:function (api,self,context) { var command=context.command||{}; var target=context.target; var keyId=command.inventoryItemId; if (!keyId || !Engine.Templates.ItemTargetsObject(keyId,self.Id)) { api.Narrate(Engine.Properties.GetRaw(target,'wrongKeyText','That does not fit the lock.')); return; } var locked=self.GetBool('locked',!!Engine.Properties.GetRaw(target,'locked',false)); self.SetBool('locked',!locked); var anim=locked ? Engine.Properties.GetRaw(target,'unlockAnimation',null) : Engine.Properties.GetRaw(target,'lockAnimation',null); if (anim) { api.SetObjectAnimation(self.Id,anim,{holdFinal:true}); } api.Narrate(locked ? Engine.Properties.GetRaw(target,'unlockText','Unlocked.') : Engine.Properties.GetRaw(target,'lockText','Locked.')); Engine.Templates.RunOptionalScript(locked ? Engine.Properties.GetRaw(target,'onUnlock',null) : Engine.Properties.GetRaw(target,'onLock',null),self,{command:command,target:target,keyId:keyId}); }
+            }
+        },
+
+        // TEMPLATE: switch
+        // ----------------
+        // Use for: switches, levers, buttons, valves and pull-cords. It owns an on
+        // variable. Use actionText/onText/offText for feedback. onToggle, onOn and
+        // onOff optional scripts can change the world, reveal items or power
+        // devices.
+        //
+        // Fields:
+        //   template:'switch'
+        //   on:true/false
+        //   onSprite/offSprite
+        //   onToggle/onOn/onOff optional scripts
+        //   onText/offText/actionOnText/actionOffText/alreadyOnText/alreadyOffText
+        switch:{
+            properties:{
+                interactions:function () { return { lookAt:'template:switch.lookAt', use:'template:switch.toggle', open:'template:switch.turnOn', close:'template:switch.turnOff' }; },
+                defaultText:function (entity) { var self=Engine.Entities.CreateFacade(entity,'object'); return self.GetBool('on',!!Engine.Properties.GetRaw(entity,'on',false)) ? Engine.Properties.GetRaw(entity,'onText','It is on.') : Engine.Properties.GetRaw(entity,'offText','It is off.'); },
+                sprite:function (entity) { var self=Engine.Entities.CreateFacade(entity,'object'); return self.GetBool('on',!!Engine.Properties.GetRaw(entity,'on',false)) ? Engine.Properties.GetRaw(entity,'onSprite',Engine.Properties.GetRaw(entity,'sprite',null)) : Engine.Properties.GetRaw(entity,'offSprite',Engine.Properties.GetRaw(entity,'sprite',null)); }
+            },
+            actions:{
+                lookAt:function (api,self,context) { api.Narrate(Engine.Properties.Get(context.target,'defaultText',context,'It is unremarkable.')); },
+                toggle:function (api,self,context) { var target=context.target; var now=!self.GetBool('on',!!Engine.Properties.GetRaw(target,'on',false)); self.SetBool('on',now); api.Narrate(now ? Engine.Properties.GetRaw(target,'actionOnText','It is now on.') : Engine.Properties.GetRaw(target,'actionOffText','It is now off.')); Engine.Templates.RunOptionalScript(Engine.Properties.GetRaw(target,'onToggle',null),self,Object.assign({},context,{on:now})); Engine.Templates.RunOptionalScript(now ? Engine.Properties.GetRaw(target,'onOn',null) : Engine.Properties.GetRaw(target,'onOff',null),self,Object.assign({},context,{on:now})); },
+                turnOn:function (api,self,context) { if (self.GetBool('on',!!Engine.Properties.GetRaw(context.target,'on',false))) { api.Narrate(Engine.Properties.GetRaw(context.target,'alreadyOnText','It is already on.')); return; } Engine.Templates.switch.actions.toggle(api,self,context); },
+                turnOff:function (api,self,context) { if (!self.GetBool('on',!!Engine.Properties.GetRaw(context.target,'on',false))) { api.Narrate(Engine.Properties.GetRaw(context.target,'alreadyOffText','It is already off.')); return; } Engine.Templates.switch.actions.toggle(api,self,context); }
+            }
+        },
+
+        // TEMPLATE: readable
+        // ------------------
+        // Use for: books, letters, signs, plaques, labels, newspapers and any
+        // object whose main behaviour is being read. If closeupOverlay/lookOverlay
+        // is present, Look At opens the overlay. Otherwise it narrates readText or
+        // defaultText. Inventory items and room hotspots can both use it.
+        readable:{
+            properties:{ interactions:function () { return { lookAt:'template:readable.read', use:'template:readable.read' }; } },
+            actions:{ read:function (api,self,context) { var target=context.target; var overlay=Engine.Properties.Get(target,'lookOverlay',context,Engine.Properties.Get(target,'closeupOverlay',context,null)); if (overlay) { api.ShowOverlay(overlay); return; } api.Narrate(Engine.Properties.GetRaw(target,'readText',Engine.Properties.Get(target,'defaultText',context,'There is nothing useful written there.'))); Engine.Templates.RunOptionalScript(Engine.Properties.GetRaw(target,'onRead',null),self,context); } }
+        },
+
+        // TEMPLATE: device
+        // ----------------
+        // Use for: machines, panels, pumps, radios, generators, lifts and other
+        // simple contraptions. It checks optional power and optional requiredItem.
+        // If requiredItem is set, the Use verb must be used with that item selected.
+        // A successful use sets used=1 and optionally fixed=1.
+        //
+        // Fields:
+        //   template:'device'
+        //   powered:true/false or powerFlag:'flagName'
+        //   requiredItem:'itemId'
+        //   consumeRequiredItem:true/false
+        //   setsFlag:'flagName'
+        //   fixedOnUse:true/false
+        //   onUse:'scriptName'
+        //   noPowerText, wrongItemText, successText, alreadyUsedText
+        device:{
+            properties:{ interactions:function () { return { lookAt:'template:device.lookAt', use:'template:device.use' }; } },
+            actions:{
+                lookAt:function (api,self,context) { api.Narrate(Engine.Properties.Get(context.target,'defaultText',context,'It is a machine of some kind.')); },
+                use:function (api,self,context) { var target=context.target; if (self.GetBool('used',false) && Engine.Properties.GetRaw(target,'singleUse',false)) { api.Narrate(Engine.Properties.GetRaw(target,'alreadyUsedText','It has already done what it can.')); return; } var powerFlag=Engine.Properties.GetRaw(target,'powerFlag',null); var powered=powerFlag ? api.GetFlag(powerFlag) : Engine.Properties.GetRaw(target,'powered',true); if (!powered) { api.Narrate(Engine.Properties.GetRaw(target,'noPowerText','Nothing happens. It has no power.')); return; } var required=Engine.Properties.GetRaw(target,'requiredItem',null); if (required && context.command.inventoryItemId !== required) { api.Narrate(Engine.Properties.GetRaw(target,'wrongItemText','That does not seem to work with it.')); return; } if (required && Engine.Properties.GetRaw(target,'consumeRequiredItem',false)) { api.RemoveItem(required); } if (Engine.Properties.GetRaw(target,'fixedOnUse',false)) { self.SetBool('fixed',true); } self.SetBool('used',true); var flag=Engine.Properties.GetRaw(target,'setsFlag',null); if (flag) { api.SetFlag(flag,true); } api.Narrate(Engine.Properties.GetRaw(target,'successText','It works.')); Engine.Templates.RunOptionalScript(Engine.Properties.GetRaw(target,'onUse',null),self,context); }
+            }
+        }
+    };
+    Engine.Overlays = {
+        Show:function (overlaySpec) { if (typeof overlaySpec==='string') { overlaySpec={image:overlaySpec}; } Engine.State.activeOverlay=overlaySpec||null; if (Engine.State.activeOverlay) { Engine.State.activeOverlay.openedAt=Engine.Renderer ? Engine.Renderer.frameTime : 0; } },
+        Close:function () { Engine.State.activeOverlay=null; Engine.State.hoveredTargetId=null; },
+        IsActive:function () { return !!Engine.State.activeOverlay; },
+        GetItem:function () { var ov=Engine.State.activeOverlay; if (!ov || !ov.itemId || !Engine.CurrentGame || !Engine.CurrentGame.items) { return null; } var item=Engine.CurrentGame.items[ov.itemId]; if (item) { item.id=item.id||ov.itemId; item._entityType='item'; } return item; },
+        GetPlaces:function (item) { if (!item) { return []; } var places=Engine.Properties.Get(item,'places',{item:item},undefined); if (places===undefined) { places=Engine.Properties.Get(item,'mapPlaces',{item:item},undefined); } if (places===undefined && item.map) { places=item.map.places || item.map.hotspots; } return Array.isArray(places) ? places : []; },
+        IsPlaceVisible:function (place) { if (!place) { return false; } if (place.visibleFlag && !Engine.State.flags[place.visibleFlag]) { return false; } if (place.hiddenFlag && Engine.State.flags[place.hiddenFlag]) { return false; } if (place.alwaysVisible) { return true; } var roomId=place.roomId || place.targetRoomId; if (!roomId) { return true; } return !!Engine.ScopedVariables.Get('room',roomId,'visited',0); },
+        ShowMap:function (item) { if (!item) { return; } Engine.State.activeOverlay={type:'map',itemId:item.id,image:(item.map&&item.map.image)||item.mapImage||item.image||item.closeupImage||null}; },
+        GetTargets:function () { var ov=Engine.State.activeOverlay; if (!ov) { return []; } if (ov.type==='map') { var item=this.GetItem(); var places=this.GetPlaces(item); var targets=[]; for (var i=0;i<places.length;i++) { var p=places[i]; if (!this.IsPlaceVisible(p) || !p.rect) { continue; } targets.push(Object.assign({},p,{id:p.id||p.targetRoomId||('place'+i),name:p.name||p.label||p.targetRoomId||'place',_overlayTarget:true,_entityType:'overlay',interactions:{lookAt:'template:map.lookPlace',walkTo:'template:map.travelPlace'}})); } return targets; } var raw=ov.hotspots||[]; return raw.map(function (h,i) { return Object.assign({id:h.id||('overlay'+i),_overlayTarget:true,_entityType:'overlay'},h); }); },
+        HitTest:function (x,y) { var targets=this.GetTargets(); var best=null; var bestPriority=-Infinity; for (var i=0;i<targets.length;i++) { var t=targets[i]; if (t.rect && PointInRect(x,y,t.rect)) { var p=typeof t.hitPriority==='number'?t.hitPriority:0; if (p>=bestPriority) { best=t; bestPriority=p; } } } return best; },
+        Render:function () { var ov=Engine.State.activeOverlay; if (!ov) { return; } var image=ov.image; if (!image && ov.type==='map') { var item=this.GetItem(); image=item ? ((item.map&&item.map.image)||item.mapImage||item.closeupImage||item.image) : null; } var img=image ? Engine.Assets.GetImage(image) : null; if (img) { Engine.Renderer.DrawImage(img,0,0,LOGICAL_WIDTH,SCENE_HEIGHT); } else { Engine.Renderer.Rect(0,0,LOGICAL_WIDTH,SCENE_HEIGHT,'#101018'); } }
+    };
     Engine.Validator = {
         Warn: function (message) { Engine.Debug.Warn('Game validation: '+message); },
         AddId: function (seen, kind, id, where) {
@@ -798,8 +1234,8 @@
         var images = [];
         Object.keys(game.rooms).forEach(function (roomId) { images.push(game.rooms[roomId].background); });
         Object.keys(game.sprites || {}).forEach(function (spriteId) { images.push(game.sprites[spriteId].image); });
-        Object.keys(game.items || {}).forEach(function (itemId) { if (game.items[itemId].icon) { images.push(game.items[itemId].icon); } if (game.items[itemId].worldSprite) { images.push(game.items[itemId].worldSprite); } });
-        Object.keys(game.rooms || {}).forEach(function (roomId) { (game.rooms[roomId].hotspots||[]).forEach(function (h) { if (h.sprite) { images.push(h.sprite); } else if (h.itemId && game.items && game.items[h.itemId]) { if (game.items[h.itemId].worldSprite) { images.push(game.items[h.itemId].worldSprite); } else if (game.items[h.itemId].icon) { images.push(game.items[h.itemId].icon); } } }); });
+        Object.keys(game.items || {}).forEach(function (itemId) { var item=game.items[itemId]; if (item.icon) { images.push(item.icon); } if (item.worldSprite) { images.push(item.worldSprite); } if (item.closeupImage) { images.push(item.closeupImage); } if (item.mapImage) { images.push(item.mapImage); } if (item.map && item.map.image) { images.push(item.map.image); } if (item.lookOverlay && item.lookOverlay.image) { images.push(item.lookOverlay.image); } if (item.closeupOverlay && item.closeupOverlay.image) { images.push(item.closeupOverlay.image); } });
+        Object.keys(game.rooms || {}).forEach(function (roomId) { (game.rooms[roomId].hotspots||[]).forEach(function (h) { if (h.sprite) { images.push(h.sprite); } if (h.closedSprite) { images.push(h.closedSprite); } if (h.openSprite) { images.push(h.openSprite); } if (h.emptySprite) { images.push(h.emptySprite); } if (h.fullSprite) { images.push(h.fullSprite); } if (h.onSprite) { images.push(h.onSprite); } if (h.offSprite) { images.push(h.offSprite); } if (h.itemId && game.items && game.items[h.itemId]) { if (game.items[h.itemId].worldSprite) { images.push(game.items[h.itemId].worldSprite); } else if (game.items[h.itemId].icon) { images.push(game.items[h.itemId].icon); } } }); });
         if (game.ui && game.ui.verbInventoryBackground) { images.push(game.ui.verbInventoryBackground); }
         if (game.titleBackground) { images.push(game.titleBackground); }
         if (game.endBackground) { images.push(game.endBackground); }
@@ -829,6 +1265,7 @@
             Engine.State.variables = {};
             Engine.State.dialogueMemory = {};
             Engine.State.inputPrompt = null;
+            Engine.State.activeOverlay = null;
             Engine.State.scopedVariables = { rooms:{}, characters:{}, items:{} };
             Engine.State.roomStates = {};
             Engine.State.objectStates = {};
@@ -868,6 +1305,7 @@
         Engine.State.pendingCommand = null;
         Engine.State.activeCutscene = null;
         Engine.State.cutsceneQueue = [];
+        Engine.State.activeOverlay = null;
         Engine.State.flags = {};
         Engine.State.variables = {};
         Engine.State.dialogueMemory = {};
@@ -967,7 +1405,7 @@
         MultiplyItemVariable: function (itemId, name, amount) { return Engine.ScopedVariables.Arithmetic('item', itemId, name, amount, 'multiply'); },
         DivideItemVariable: function (itemId, name, amount) { return Engine.ScopedVariables.Arithmetic('item', itemId, name, amount, 'divide'); },
         CompareItemVariable: function (itemId, name, operator, value) { return Engine.ScopedVariables.Compare('item', itemId, name, operator, value); },
-        ChangeRoom: function (roomId, x, y, facing) { Engine.Rooms.EnterRoom(roomId, x, y, facing); }, MoveCharacter: function (characterId, x, y, options) { Engine.Rooms.MoveCharacter(characterId, x, y, options || {}); }, SetAnimation: function (actorId, animationName, options) { Engine.Animations.SetAnimation(actorId, animationName, options || {}); }, ClearAnimation: function (actorId) { Engine.Animations.ClearAnimation(actorId); }, SetObjectAnimation: function (objectId, animationName, options) { Engine.RoomObjects.SetAnimation(objectId, animationName, options || {}); }, ClearObjectAnimation: function (objectId) { Engine.RoomObjects.ClearAnimation(objectId); }, SetObjectState: function (objectId, values) { Engine.RoomObjects.SetState(objectId, values || {}); }, GetObjectState: function (objectId) { return Engine.RoomObjects.GetState(objectId); }, PlaySound: function (sources) { Engine.Assets.PlaySound(sources); },
+        ChangeRoom: function (roomId, x, y, facing) { Engine.Rooms.EnterRoom(roomId, x, y, facing); }, MoveCharacter: function (characterId, x, y, options) { Engine.Rooms.MoveCharacter(characterId, x, y, options || {}); }, SetAnimation: function (actorId, animationName, options) { Engine.Animations.SetAnimation(actorId, animationName, options || {}); }, ClearAnimation: function (actorId) { Engine.Animations.ClearAnimation(actorId); }, SetObjectAnimation: function (objectId, animationName, options) { Engine.RoomObjects.SetAnimation(objectId, animationName, options || {}); }, ClearObjectAnimation: function (objectId) { Engine.RoomObjects.ClearAnimation(objectId); }, SetObjectState: function (objectId, values) { Engine.RoomObjects.SetState(objectId, values || {}); }, GetObjectState: function (objectId) { return Engine.RoomObjects.GetState(objectId); }, SetObjectVariable: function (objectId, name, value) { Engine.RoomObjects.SetVariable(objectId,name,value); }, GetObjectVariable: function (objectId, name, defaultValue) { return Engine.RoomObjects.GetVariable(objectId,name,defaultValue); }, AddObjectVariable: function (objectId, name, amount) { return Engine.RoomObjects.AddVariable(objectId,name,amount); }, ShowOverlay: function (overlaySpec) { Engine.Overlays.Show(overlaySpec); }, CloseOverlay: function () { Engine.Overlays.Close(); }, PlaySound: function (sources) { Engine.Assets.PlaySound(sources); },
         StartCutscene: function (steps) { Engine.Cutscenes.Start(steps); }, EndGame: function (title, text, options) { Engine.EndGame.Show(title, text, options || {}); }, ShowEnding: function (endingId, options) { Engine.EndGame.ShowEnding(endingId, options || {}); },
         Save: function (slot) { Engine.SaveLoad.Save(slot || '1'); }, Load: function (slot) { Engine.SaveLoad.Load(slot || '1'); }
     };
@@ -1018,13 +1456,16 @@
         GetState: function (objectId) { if (!objectId) { return {}; } if (!Engine.State.objectStates[objectId]) { Engine.State.objectStates[objectId]={}; } return Engine.State.objectStates[objectId]; },
         PeekState: function (objectId) { if (!objectId || !Engine.State.objectStates) { return {}; } return Engine.State.objectStates[objectId]||{}; },
         SetState: function (objectId, values) { var state=this.GetState(objectId); Object.keys(values||{}).forEach(function (key) { state[key]=values[key]; }); },
-        IsHidden: function (object) { var state=this.PeekState(object && object.id); return !!(state.hidden || state.renderHidden); },
-        IsHitDisabled: function (object) { var state=this.PeekState(object && object.id); return !!(state.hitDisabled || state.disableHit || state.interactionDisabled); },
-        GetHitRect: function (object) { var state=this.PeekState(object && object.id); return state.hitRect || state.rect || (object ? object.rect : null); },
-        SetAnimation: function (objectId, animationName, options) { options=options||{}; var state=this.GetState(objectId); state.animation=animationName||null; state.animationStarted=Engine.Renderer ? Engine.Renderer.frameTime : 0; state.animationComplete=false; state.animationCompletionFired=false; state.lifecycleToken=Engine.Lifecycle.Capture({room:true}); },
-        ClearAnimation: function (objectId) { var state=this.GetState(objectId); state.animation=null; state.animationStarted=0; state.animationComplete=false; state.animationCompletionFired=false; state.lifecycleToken=null; },
+        GetVariable: function (objectId, name, defaultValue) { var state=this.PeekState(objectId); var vars=state.variables||{}; return Object.prototype.hasOwnProperty.call(vars,name) ? vars[name] : defaultValue; },
+        SetVariable: function (objectId, name, value) { if (!objectId || !name) { return false; } if (!(typeof value === 'string' || (typeof value === 'number' && isFinite(value)))) { Engine.Debug.Warn('Object variable '+objectId+'.'+name+' rejected value of type '+(typeof value)+'. Use finite numbers or strings.'); return false; } var state=this.GetState(objectId); if (!state.variables) { state.variables={}; } state.variables[name]=value; return true; },
+        AddVariable: function (objectId, name, amount) { if (typeof amount !== 'number' || !isFinite(amount)) { Engine.Debug.Warn('Object variable arithmetic on '+objectId+'.'+name+' received a non-numeric amount.'); return null; } var current=this.GetVariable(objectId,name,0); if (typeof current !== 'number' || !isFinite(current)) { Engine.Debug.Warn('Object variable arithmetic on '+objectId+'.'+name+' failed because the current value is not numeric.'); return null; } current+=amount; this.SetVariable(objectId,name,current); return current; },
+        IsHidden: function (object) { if (!object) { return false; } return !!(Engine.Properties.Get(object,'hidden',{purpose:'hitTest'},false) || Engine.Properties.Get(object,'renderHidden',{purpose:'hitTest'},false)); },
+        IsHitDisabled: function (object) { if (!object) { return false; } return !!(Engine.Properties.Get(object,'hitDisabled',{purpose:'hitTest'},false) || Engine.Properties.Get(object,'disableHit',{purpose:'hitTest'},false) || Engine.Properties.Get(object,'interactionDisabled',{purpose:'hitTest'},false)); },
+        GetHitRect: function (object) { if (!object) { return null; } return Engine.Properties.Get(object,'hitRect',{purpose:'hitTest'},Engine.Properties.Get(object,'rect',{purpose:'hitTest'},object.rect||null)); },
+        SetAnimation: function (objectId, animationName, options) { options=options||{}; var state=this.GetState(objectId); state.animation=animationName||null; state.animationStarted=Engine.Renderer ? Engine.Renderer.frameTime : 0; state.animationReverse=!!options.reverse; state.animationHoldFinal=!!options.holdFinal; state.animationComplete=false; state.animationCompletionFired=false; state.lifecycleToken=Engine.Lifecycle.Capture({room:true}); },
+        ClearAnimation: function (objectId) { var state=this.GetState(objectId); state.animation=null; state.animationStarted=0; state.animationReverse=false; state.animationHoldFinal=false; state.animationComplete=false; state.animationCompletionFired=false; state.lifecycleToken=null; },
         GetAnimationSpec: function (object) { var state=this.GetState(object.id); var name=state.animation || object.animation || 'idle'; if (object.animations && object.animations[name]) { return Object.assign({name:name},object.animations[name]); } return { frame:0, frames:1, fps:1, loop:false }; },
-        GetFrame: function (object) { var state=this.GetState(object.id); var spec=this.GetAnimationSpec(object); var frames=Math.max(1,spec.frames||1); if (typeof spec.frame === 'number') { return Clamp(spec.frame,0,frames-1); } var elapsed=Math.max(0,(Engine.Renderer ? Engine.Renderer.frameTime : 0)-(state.animationStarted||0)); var fps=spec.fps||1; if (spec.loop) { return Math.floor(elapsed*fps)%frames; } var frame=Math.floor(elapsed*fps); if (frame>=frames) { frame=frames-1; if (state.animation && !state.animationComplete) { state.animationComplete=true; } } return frame; },
+        GetFrame: function (object) { var state=this.GetState(object.id); var spec=this.GetAnimationSpec(object); var frames=Math.max(1,spec.frames||1); if (typeof spec.frame === 'number' && !state.animation) { return Clamp(spec.frame,0,frames-1); } var elapsed=Math.max(0,(Engine.Renderer ? Engine.Renderer.frameTime : 0)-(state.animationStarted||0)); var fps=spec.fps||1; if (spec.loop) { var loopFrame=Math.floor(elapsed*fps)%frames; return state.animationReverse ? frames-1-loopFrame : loopFrame; } var frame=Math.floor(elapsed*fps); if (frame>=frames) { frame=frames-1; if (state.animation && !state.animationComplete) { state.animationComplete=true; } } return state.animationReverse ? frames-1-frame : frame; },
         Update: function (dt) { var room=Engine.Rooms.GetCurrentRoom(); if (!room) { return; } var self=this; (room.hotspots||[]).forEach(function (object) { if (!object.animations) { return; } var state=self.GetState(object.id); if (!state.animation || state.animationCompletionFired) { return; } self.GetFrame(object); if (state.animationComplete) { state.animationCompletionFired=true; if (Engine.Lifecycle.IsCurrent(state.lifecycleToken) && object.animationCompleteScripts && object.animationCompleteScripts[state.animation] && Engine.CurrentGame.scripts[object.animationCompleteScripts[state.animation]]) { Engine.CurrentGame.scripts[object.animationCompleteScripts[state.animation]](Engine.API); } } }); }
     };
     Engine.Rooms = {
@@ -1044,7 +1485,7 @@
             }
             if (Engine.Dialogue && Engine.State.dialogue && Engine.State.dialogue.active) { Engine.Dialogue.Cancel(); }
             Engine.Lifecycle.BumpRoom();
-            Engine.State.currentRoomId = roomId; Engine.State.player.roomId = roomId;
+            Engine.State.currentRoomId = roomId; Engine.State.player.roomId = roomId; Engine.ScopedVariables.Set('room',roomId,'visited',1);
             if (typeof x === 'number') { Engine.State.player.x = x; } if (typeof y === 'number') { Engine.State.player.y = y; } if (facing) { Engine.State.player.facing = facing; }
             Engine.State.player.walkTarget = null; Engine.State.player.walkPath = []; Engine.State.player.walkCallback = null; Engine.State.player.walkToken = null; if (!options.preservePlayerTrail) { this.ResetPlayerTrail(); } this.PlaceFollowers(); this.ApplyActorAvoidance(); Engine.Assets.PlayMusic(room.music || []);
             if (!options.skipOnEnter && room.onEnter && Engine.CurrentGame.scripts[room.onEnter]) { Engine.CurrentGame.scripts[room.onEnter](Engine.API); }
@@ -1153,11 +1594,13 @@
             if (command.verbId === 'walkTo' && !target) { Engine.Movement.RequestWalk(command.x, command.y, function () { Engine.Verbs.FinishCommand(command); }); return; }
             if (!target) { Engine.Dialogue.ShowLine(null,'There is nothing useful there.',{}); Engine.Verbs.FinishCommand(command); return; }
             var run=function () { Engine.Interactions.RunTargetInteraction(command,target); };
-            if (command.verbId === 'walkTo' && target.walkThrough) { var through=target.walkThroughTo || target.walkThroughPoint || {x:command.x,y:command.y}; Engine.Movement.RequestWalk(through.x,through.y,run); return; }
-            if (target.walkTo) { Engine.Movement.RequestWalk(target.walkTo.x,target.walkTo.y,run); } else { run(); }
+            var walkThrough=Engine.Properties.Get(target,'walkThrough',{command:command,target:target},false);
+            if (command.verbId === 'walkTo' && walkThrough) { var through=Engine.Properties.Get(target,'walkThroughTo',{command:command,target:target},target.walkThroughPoint || {x:command.x,y:command.y}); Engine.Movement.RequestWalk(through.x,through.y,run); return; }
+            var walkTo=Engine.Properties.Get(target,'walkTo',{command:command,target:target},target.walkTo||null);
+            if (walkTo) { Engine.Movement.RequestWalk(walkTo.x,walkTo.y,run); } else { run(); }
         },
         GetTarget: function (targetId) { if (!targetId) { return null; } var room=Engine.Rooms.GetCurrentRoom(); var all=(room.hotspots||[]).concat(room.characters||[]); for (var i=0;i<all.length;i++) { if (all[i].id===targetId) { return all[i]; } } return null; },
-        GetInventoryTarget: function (itemId) { var item=Engine.CurrentGame.items[itemId]; if (!item) { return null; } return { id: item.id || itemId, name: item.name || itemId, defaultText: item.defaultText || item.description || 'You see nothing special.', interactions: item.interactions || {}, refusals: item.refusals || {}, icon: item.icon || null, worldSprite: item.worldSprite || null, isInventoryItem: true }; },
+        GetInventoryTarget: function (itemId) { var item=Engine.CurrentGame.items[itemId]; if (!item) { return null; } var target=Object.assign({},item); target.id=target.id||itemId; target.name=target.name||itemId; if (!target.defaultText && target.description) { target.defaultText=target.description; } target.icon=target.icon||null; target.worldSprite=target.worldSprite||null; target.isInventoryItem=true; target._entityType='item'; return target; },
         // CONTENT AUTHORING NOTE FOR FUTURE AIS:
         // If a room hotspot/object represents the same physical thing as an
         // inventory item, set itemId on the room target. The room target remains
@@ -1168,26 +1611,31 @@
         GetLinkedInventoryTarget: function (target) { if (!target || !target.itemId || target.isInventoryItem) { return null; } return this.GetInventoryTarget(target.itemId); },
         ResolveInventoryCommand: function (verbId, itemId, inventoryItemId) { var target=this.GetInventoryTarget(itemId); if (!target) { Engine.Dialogue.ShowLine(null,'That inventory item is missing.',{}); return; } var command=this.BuildCommand(verbId,itemId,0,0); command.inventoryItemId=inventoryItemId||null; command.targetType='inventory'; this.RunTargetInteraction(command,target); },
         RunTargetInteraction: function (command, target) {
-            var interactions=target.interactions||{}; var linked=this.GetLinkedInventoryTarget(target); var linkedInteractions=linked ? (linked.interactions||{}) : {}; var key=command.verbId; if (command.inventoryItemId) { key=command.verbId+':'+command.inventoryItemId; }
+            var context={ command:command, target:target };
+            var interactions=Engine.Properties.Get(target,'interactions',context,undefined) || target.interactions || {}; var linked=this.GetLinkedInventoryTarget(target); var linkedInteractions=linked ? (Engine.Properties.Get(linked,'interactions',context,undefined) || linked.interactions || {}) : {}; var key=command.verbId; if (command.inventoryItemId) { key=command.verbId+':'+command.inventoryItemId; }
             var scriptName=interactions[key] || interactions[command.verbId] || linkedInteractions[key] || linkedInteractions[command.verbId];
-            if (scriptName && Engine.CurrentGame.scripts[scriptName]) { Engine.CurrentGame.scripts[scriptName](Engine.API, command, target); Engine.Verbs.FinishCommand(command); return; }
-            if (target.isInventoryItem && command.verbId === 'take') { Engine.Dialogue.ShowLine(null, 'You already have the '+(target.name || target.id || 'item')+'.', {}); Engine.Verbs.FinishCommand(command); return; }
-            if (command.verbId === 'lookAt' && (target.defaultText || (linked && linked.defaultText))) { Engine.Dialogue.ShowLine(null, target.defaultText || linked.defaultText, {}); Engine.Verbs.FinishCommand(command); return; }
+            if (scriptName && typeof scriptName === 'string' && scriptName.indexOf('template:')===0) { Engine.Templates.RunAction(scriptName.slice(9),command,target); Engine.Verbs.FinishCommand(command); return; }
+            if (scriptName && Engine.CurrentGame.scripts[scriptName]) { var self=Engine.Entities.CreateFacade(target,Engine.Entities.DetectType(target),{context:context}); Engine.CurrentGame.scripts[scriptName](Engine.API, command, target, self); Engine.Verbs.FinishCommand(command); return; }
+            if (target.isInventoryItem && command.verbId === 'take') { Engine.Dialogue.ShowLine(null, 'You already have the '+(Engine.Properties.Get(target,'name',context,target.name || target.id || 'item'))+'.', {}); Engine.Verbs.FinishCommand(command); return; }
+            var lookOverlay=command.verbId === 'lookAt' ? Engine.Properties.Get(target,'lookOverlay',context,Engine.Properties.Get(target,'closeupOverlay',context,null)) : null;
+            if (lookOverlay) { Engine.Overlays.Show(lookOverlay); Engine.Verbs.FinishCommand(command); return; }
+            var defaultText=Engine.Properties.Get(target,'defaultText',context,target.defaultText||null); var linkedText=linked ? Engine.Properties.Get(linked,'defaultText',context,linked.defaultText||null) : null;
+            if (command.verbId === 'lookAt' && (defaultText || linkedText)) { Engine.Dialogue.ShowLine(null, defaultText || linkedText, {}); Engine.Verbs.FinishCommand(command); return; }
             Engine.Dialogue.ShowLine(null, this.GetRefusalText(command, target, key), {}); Engine.Verbs.FinishCommand(command);
         },
         GetRefusalText: function (command, target, key) {
-            var objectRefusals=target.refusals||{}; var linked=this.GetLinkedInventoryTarget(target); var linkedRefusals=linked ? (linked.refusals||{}) : {};
+            var context={ command:command, target:target }; var objectRefusals=Engine.Properties.Get(target,'refusals',context,undefined) || target.refusals || {}; var linked=this.GetLinkedInventoryTarget(target); var linkedRefusals=linked ? (Engine.Properties.Get(linked,'refusals',context,undefined) || linked.refusals || {}) : {};
             var gameRefusals=(Engine.CurrentGame && Engine.CurrentGame.defaultRefusals) ? Engine.CurrentGame.defaultRefusals : {};
             return objectRefusals[key] || objectRefusals[command.verbId] || linkedRefusals[key] || linkedRefusals[command.verbId] || gameRefusals[key] || gameRefusals[command.verbId] || this.defaultRefusals[key] || this.defaultRefusals[command.verbId] || 'Nothing happens.';
         },
-        GetHitPriority: function (target) { if (!target) { return 0; } if (typeof target.hitPriority === 'number') { return target.hitPriority; } if (typeof target.priority === 'number') { return target.priority; } if (typeof target.zIndex === 'number') { return target.zIndex; } return 0; },
+        GetHitPriority: function (target) { if (!target) { return 0; } var value=Engine.Properties.Get(target,'hitPriority',{purpose:'hitTest'},undefined); if (typeof value === 'number') { return value; } value=Engine.Properties.Get(target,'priority',{purpose:'hitTest'},undefined); if (typeof value === 'number') { return value; } value=Engine.Properties.Get(target,'zIndex',{purpose:'hitTest'},undefined); if (typeof value === 'number') { return value; } return 0; },
         // CONTENT AUTHORING NOTE FOR FUTURE AIS:
         // HitTest deliberately supports hitPriority/priority/zIndex for overlapping
         // targets. Use a higher value for a small thing that visually sits on top of
         // a larger hotspot, for example a coin on a table. Equal priorities preserve
         // the historic last-defined-wins behaviour, so existing games are not
         // changed unless they opt into explicit priority values.
-        HitTest: function (x, y) { var room=Engine.Rooms.GetCurrentRoom(); var candidates=(room.hotspots||[]).concat(room.characters||[]); var best=null; var bestPriority=-Infinity; var bestIndex=-1; for (var i=0;i<candidates.length;i++) { var c=candidates[i]; if (c.hidden || (c.hiddenFlag && Engine.State.flags[c.hiddenFlag]) || Engine.RoomObjects.IsHidden(c) || Engine.RoomObjects.IsHitDisabled(c)) { continue; } var rect=Engine.RoomObjects.GetHitRect(c); if (rect && PointInRect(x,y,rect)) { var priority=this.GetHitPriority(c); if (priority>bestPriority || (priority===bestPriority && i>bestIndex)) { best=c; bestPriority=priority; bestIndex=i; } } } return best ? best.id : null; }
+        HitTest: function (x, y) { var room=Engine.Rooms.GetCurrentRoom(); var candidates=(room.hotspots||[]).concat(room.characters||[]); var best=null; var bestPriority=-Infinity; var bestIndex=-1; for (var i=0;i<candidates.length;i++) { var c=candidates[i]; if (Engine.Properties.Get(c,'hidden',{purpose:'hitTest'},!!c.hidden) || (c.hiddenFlag && Engine.State.flags[c.hiddenFlag]) || Engine.RoomObjects.IsHidden(c) || Engine.RoomObjects.IsHitDisabled(c)) { continue; } var rect=Engine.RoomObjects.GetHitRect(c); if (rect && PointInRect(x,y,rect)) { var priority=this.GetHitPriority(c); if (priority>bestPriority || (priority===bestPriority && i>bestIndex)) { best=c; bestPriority=priority; bestIndex=i; } } } return best ? best.id : null; }
     };
 
     Engine.Dialogue = {
@@ -1574,12 +2022,12 @@
         // SAVE-STATE WARNING: Load() must be kept in lockstep with BuildData().
         // Whenever a field is added to the saved data above, restore it here and
         // perform any normalisation needed before gameplay resumes.
-        Load: function (slot) { var data=this.ReadSlot(slot||'1'); if (!data) { Engine.State.saveLoadMessage='No saved game was found in that slot.'; return; } data=this.MigrateSaveData(data); if (!this.IsCompatibleSave(data)) { Engine.State.saveLoadMessage='This saved game is not compatible.'; return; } Engine.Lifecycle.BumpSession(); Engine.State.currentRoomId=data.currentRoomId; Engine.State.selectedVerbId=data.selectedVerbId||'walkTo'; Engine.State.selectedInventoryItemId=data.selectedInventoryItemId||null; Engine.State.player=data.player; Engine.State.playerTrail=data.playerTrail&&data.playerTrail.length?data.playerTrail:[{x:Engine.State.player.x,y:Engine.State.player.y,facing:Engine.State.player.facing||'down'}]; Engine.State.inventory=data.inventory||[]; Engine.State.inventoryScroll=data.inventoryScroll||0; Engine.State.flags=data.flags||{}; Engine.State.variables=data.variables||{}; Engine.State.dialogueMemory=data.dialogueMemory||{}; Engine.State.inputPrompt=null; Engine.State.scopedVariables=data.scopedVariables||{ rooms:{}, characters:{}, items:{} }; Engine.State.roomStates=data.roomStates||{}; Engine.State.objectStates=data.objectStates||{}; Engine.State.characterStates=data.characterStates||{}; Engine.State.endGame=data.endGame||{ title:'', text:'', endingId:null, background:null, animation:null, animationStarted:0 }; if (!Engine.State.endGame.animationStarted) { Engine.State.endGame.animationStarted=0; } Engine.State.audio=data.audio||Engine.State.audio; Engine.State.dialogue.active=false; Engine.State.dialogue.speakerId=null; Engine.State.dialogue.speakerName=''; Engine.State.dialogue.text=''; Engine.State.dialogue.displayText=''; Engine.State.dialogue.timer=0; Engine.State.dialogue.duration=0; Engine.State.dialogue.explicitDuration=null; Engine.State.dialogue.options=[]; Engine.State.dialogue.onComplete=null; Engine.State.dialogue.voiceAudio=null; Engine.State.dialogue.color=null; Engine.State.dialogue.textBlocks=[]; Engine.State.dialogue.textBlockIndex=0; Engine.State.activeCutscene=null; Engine.State.gameStarted=true; this.RestoreRoomCharacters(data.runtimeCharacters); Engine.Inventory.NormalizeScroll(); Engine.Rooms.EnterRoom(data.currentRoomId,data.player.x,data.player.y,data.player.facing,{ skipOnEnter:true, preservePlayerTrail:true }); Engine.State.player=Object.assign(Engine.State.player,data.player); Engine.State.player.walkTarget=null; Engine.State.player.walkPath=[]; Engine.State.player.walkCallback=null; Engine.State.mode='play'; Engine.Dialogue.ShowLine(null,'Game loaded.',{}); }
+        Load: function (slot) { var data=this.ReadSlot(slot||'1'); if (!data) { Engine.State.saveLoadMessage='No saved game was found in that slot.'; return; } data=this.MigrateSaveData(data); if (!this.IsCompatibleSave(data)) { Engine.State.saveLoadMessage='This saved game is not compatible.'; return; } Engine.Lifecycle.BumpSession(); Engine.State.currentRoomId=data.currentRoomId; Engine.State.selectedVerbId=data.selectedVerbId||'walkTo'; Engine.State.selectedInventoryItemId=data.selectedInventoryItemId||null; Engine.State.player=data.player; Engine.State.playerTrail=data.playerTrail&&data.playerTrail.length?data.playerTrail:[{x:Engine.State.player.x,y:Engine.State.player.y,facing:Engine.State.player.facing||'down'}]; Engine.State.inventory=data.inventory||[]; Engine.State.inventoryScroll=data.inventoryScroll||0; Engine.State.flags=data.flags||{}; Engine.State.variables=data.variables||{}; Engine.State.dialogueMemory=data.dialogueMemory||{}; Engine.State.inputPrompt=null; Engine.State.scopedVariables=data.scopedVariables||{ rooms:{}, characters:{}, items:{} }; Engine.State.roomStates=data.roomStates||{}; Engine.State.objectStates=data.objectStates||{}; Engine.State.characterStates=data.characterStates||{}; Engine.State.endGame=data.endGame||{ title:'', text:'', endingId:null, background:null, animation:null, animationStarted:0 }; if (!Engine.State.endGame.animationStarted) { Engine.State.endGame.animationStarted=0; } Engine.State.audio=data.audio||Engine.State.audio; Engine.State.dialogue.active=false; Engine.State.dialogue.speakerId=null; Engine.State.dialogue.speakerName=''; Engine.State.dialogue.text=''; Engine.State.dialogue.displayText=''; Engine.State.dialogue.timer=0; Engine.State.dialogue.duration=0; Engine.State.dialogue.explicitDuration=null; Engine.State.dialogue.options=[]; Engine.State.dialogue.onComplete=null; Engine.State.dialogue.voiceAudio=null; Engine.State.dialogue.color=null; Engine.State.dialogue.textBlocks=[]; Engine.State.dialogue.textBlockIndex=0; Engine.State.activeCutscene=null; Engine.State.activeOverlay=null; Engine.State.gameStarted=true; this.RestoreRoomCharacters(data.runtimeCharacters); Engine.Inventory.NormalizeScroll(); Engine.Rooms.EnterRoom(data.currentRoomId,data.player.x,data.player.y,data.player.facing,{ skipOnEnter:true, preservePlayerTrail:true }); Engine.State.player=Object.assign(Engine.State.player,data.player); Engine.State.player.walkTarget=null; Engine.State.player.walkPath=[]; Engine.State.player.walkCallback=null; Engine.State.mode='play'; Engine.Dialogue.ShowLine(null,'Game loaded.',{}); }
     };
 
     Engine.Input = {
         PointerToGame: function (event) { var rect=Engine.Canvas.getBoundingClientRect(); return { x: Math.floor((event.clientX - rect.left) * LOGICAL_WIDTH / rect.width), y: Math.floor((event.clientY - rect.top) * LOGICAL_HEIGHT / rect.height) }; },
-        OnPointerMove: function (event) { var p=this.PointerToGame(event); Engine.State.pointerX=p.x; Engine.State.pointerY=p.y; if (Engine.State.mode==='play' || Engine.State.mode==='cutscene') { Engine.State.hoveredTargetId = p.y < SCENE_HEIGHT ? Engine.Interactions.HitTest(p.x,p.y) : null; Engine.State.hoveredInventoryItemId = Engine.Inventory.GetItemAtPoint(p.x,p.y); } },
+        OnPointerMove: function (event) { var p=this.PointerToGame(event); Engine.State.pointerX=p.x; Engine.State.pointerY=p.y; if (Engine.State.mode==='play' || Engine.State.mode==='cutscene') { var overlayTarget=(Engine.Overlays && Engine.Overlays.IsActive() && p.y < SCENE_HEIGHT) ? Engine.Overlays.HitTest(p.x,p.y) : null; Engine.State.hoveredTargetId = overlayTarget ? overlayTarget.id : (p.y < SCENE_HEIGHT ? Engine.Interactions.HitTest(p.x,p.y) : null); Engine.State.hoveredInventoryItemId = Engine.Inventory.GetItemAtPoint(p.x,p.y); } },
         OnPointerDown: function (event) {
             event.preventDefault(); var p=this.PointerToGame(event); Engine.State.pointerX=p.x; Engine.State.pointerY=p.y;
             if (Engine.State.mode==='ended') { Engine.State.gameStarted=false; Engine.State.endGame={ title:'', text:'', endingId:null, background:null, animation:null, animationStarted:0 }; Engine.State.mode='menu'; Engine.Assets.PlayMusic(Engine.CurrentGame.titleMusic || Engine.CurrentGame.menuMusic || []); return; }
@@ -1591,6 +2039,7 @@
             if (Engine.State.mode==='selectGame') { var games=Engine.State.availableGames||[]; var idx=Math.floor((p.y-62)/18); if (idx>=0 && idx<games.length) { Engine.Private.LoadGameFromManifest(games[idx]); } return; }
             if (Engine.State.mode !== 'play') { if (Engine.State.mode==='cutscene' && Engine.State.dialogue.active) { Engine.Dialogue.Advance(); } return; }
             if (Engine.State.dialogue.active) { if (Engine.State.dialogue.options && Engine.State.dialogue.options.length) { var opt=Engine.Renderer.GetChoiceIndexAtPoint(p.x,p.y); if (opt >= 0) { Engine.Dialogue.Choose(opt); } } else { Engine.Dialogue.Advance(); } return; }
+            if (Engine.Overlays.IsActive() && p.y < UI_TOP) { var overlayTarget=Engine.Overlays.HitTest(p.x,p.y); if (overlayTarget) { var overlayVerb=(event.button === 2 || event.altKey) ? 'walkTo' : Engine.State.selectedVerbId; var overlayCommand=Engine.Interactions.BuildCommand(overlayVerb,overlayTarget.id,p.x,p.y); overlayCommand.targetType='overlay'; Engine.Interactions.RunTargetInteraction(overlayCommand,overlayTarget); } return; }
             if (p.y >= UI_TOP) { var arrow=Engine.Inventory.GetScrollArrowAtPoint(p.x,p.y); if (arrow === 'up' && Engine.Inventory.CanScrollUp()) { Engine.Inventory.ScrollByRows(-1); return; } if (arrow === 'down' && Engine.Inventory.CanScrollDown()) { Engine.Inventory.ScrollByRows(1); return; } var verb=Engine.Verbs.GetByPoint(p.x,p.y); if (verb) { Engine.State.selectedVerbId=verb.id; Engine.State.selectedInventoryItemId=null; return; } var itemId=Engine.Inventory.GetItemAtPoint(p.x,p.y); if (itemId) { if (Engine.State.selectedVerbId === 'use' || Engine.State.selectedVerbId === 'give') { if (Engine.State.selectedInventoryItemId) { Engine.Interactions.ResolveInventoryCommand(Engine.State.selectedVerbId,itemId,Engine.State.selectedInventoryItemId); Engine.State.selectedInventoryItemId=null; } else { Engine.State.selectedInventoryItemId=itemId; } } else { Engine.Interactions.ResolveInventoryCommand(Engine.State.selectedVerbId,itemId,null); } return; } return; }
             var targetId=Engine.Interactions.HitTest(p.x,p.y); var verbId=(event.button === 2 || event.altKey) ? 'walkTo' : Engine.State.selectedVerbId; var command=Engine.Interactions.BuildCommand(verbId,targetId,p.x,p.y); Engine.Verbs.Execute(command); if (command.inventoryItemId && (verbId === 'use' || verbId === 'give')) { Engine.State.selectedInventoryItemId=null; }
         },
@@ -1620,7 +2069,7 @@
     Engine.Canvas.addEventListener('pointermove', function (e) { Engine.Input.OnPointerMove(e); });
     Engine.Canvas.addEventListener('pointerdown', function (e) { Engine.Input.OnPointerDown(e); });
     Engine.Canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
-    document.addEventListener('keydown', function (e) { if (Engine.State.mode === 'textInput') { Engine.InputPrompt.KeyDown(e); return; } if (e.key === 'Escape' && (Engine.State.mode === 'play' || Engine.State.mode === 'cutscene')) { e.preventDefault(); Engine.Private.ShowMainMenu(); return; } if (e.key === 'Escape' && (Engine.State.mode === 'saveGame' || Engine.State.mode === 'loadGame' || Engine.State.mode === 'options')) { e.preventDefault(); Engine.State.mode='menu'; } });
+    document.addEventListener('keydown', function (e) { if (Engine.State.mode === 'textInput') { Engine.InputPrompt.KeyDown(e); return; } if (e.key === 'Escape' && Engine.Overlays && Engine.Overlays.IsActive()) { e.preventDefault(); Engine.Overlays.Close(); return; } if (e.key === 'Escape' && (Engine.State.mode === 'play' || Engine.State.mode === 'cutscene')) { e.preventDefault(); Engine.Private.ShowMainMenu(); return; } if (e.key === 'Escape' && (Engine.State.mode === 'saveGame' || Engine.State.mode === 'loadGame' || Engine.State.mode === 'options')) { e.preventDefault(); Engine.State.mode='menu'; } });
 
     Engine.Renderer = {
         frameTime: 0,
@@ -1676,11 +2125,11 @@
         RenderRoom: function () {
             var room=Engine.Rooms.GetCurrentRoom(); var bg=Engine.Assets.GetImage(room.background); if (bg) { this.DrawImage(bg,0,0); } else { this.Rect(0,0,320,136,'#303050'); }
             var drawables=[];
-            (room.hotspots||[]).forEach(function (h) { if (!(h.hiddenFlag && Engine.State.flags[h.hiddenFlag]) && !Engine.RoomObjects.IsHidden(h) && Engine.Renderer.GetHotspotSpritePath(h)) { drawables.push({type:'hotspot',data:h,y:h.y || (h.rect ? h.rect.y+h.rect.h : 0)}); } });
+            (room.hotspots||[]).forEach(function (h) { if (!(h.hiddenFlag && Engine.State.flags[h.hiddenFlag]) && !Engine.RoomObjects.IsHidden(h) && Engine.Renderer.GetHotspotSpritePath(h)) { var hy=Engine.Properties.Get(h,'y',{purpose:'render'},h.y || (h.rect ? h.rect.y+h.rect.h : 0)); drawables.push({type:'hotspot',data:h,y:hy}); } });
             (room.characters||[]).forEach(function (c) { if (!c.hidden) { drawables.push({type:'character',data:c,y:c.y}); } }); if (Engine.State.player.visible) { drawables.push({type:'player',data:Engine.State.player,y:Engine.State.player.y}); }
             drawables.sort(function (a,b) { return a.y-b.y; });
             for (var i=0;i<drawables.length;i++) { if (drawables[i].type==='player') { this.DrawActor(drawables[i].data); } else if (drawables[i].type==='character') { this.DrawCharacter(drawables[i].data); } else { this.DrawHotspotSprite(drawables[i].data); } }
-            this.RenderSpeechAboveCharacter(); this.RenderHoverLabel();
+            if (Engine.Overlays && Engine.Overlays.IsActive()) { Engine.Overlays.Render(); } this.RenderSpeechAboveCharacter(); this.RenderHoverLabel();
         },
         ApplyImageSmoothing: function () { var game=Engine.CurrentGame||{}; var rendering=game.rendering||{}; var enabled=(typeof rendering.imageSmoothing === 'boolean') ? rendering.imageSmoothing : ((typeof game.imageSmoothing === 'boolean') ? game.imageSmoothing : false); Engine.Ctx.imageSmoothingEnabled=!!enabled; Engine.Ctx.mozImageSmoothingEnabled=!!enabled; Engine.Ctx.webkitImageSmoothingEnabled=!!enabled; Engine.Ctx.msImageSmoothingEnabled=!!enabled; Engine.Canvas.style.imageRendering='pixelated'; Engine.Canvas.style.msInterpolationMode='nearest-neighbor'; return !!enabled; },
         ApplyContextImageSmoothing: function (ctx, enabled) { ctx.imageSmoothingEnabled=!!enabled; ctx.mozImageSmoothingEnabled=!!enabled; ctx.webkitImageSmoothingEnabled=!!enabled; ctx.msImageSmoothingEnabled=!!enabled; },
@@ -1698,8 +2147,8 @@
         DrawSpriteActor: function (actor, isPlayer) { var sprite=Engine.CurrentGame.sprites[actor.spriteId]; var img=sprite ? Engine.Assets.GetImage(sprite.image) : null; if (!img) { return; } var spec=this.GetAnimationSpec(sprite,actor,isPlayer); var directional=(spec.directional === false) ? false : (sprite.directional || sprite.rows>=4); var directionRow=directional ? ({down:0,left:1,right:2,up:3}[actor.facing]||0) : 0; var row=(spec.rowOffset||0)+directionRow; var frames=Math.max(1,spec.frames||1); var fps=spec.fps||1; var frame=spec.frame||0; if (frames>1) { frame=Math.floor(Math.max(0,this.frameTime-this.GetAnimationStart(actor,spec))*fps)%frames; } var scale=this.GetActorVisualScale(actor); var dw=Math.max(1,Math.round(sprite.frameW*scale)); var dh=Math.max(1,Math.round(sprite.frameH*scale)); this.DrawImage(img,frame*sprite.frameW,row*sprite.frameH,sprite.frameW,sprite.frameH,Math.round(actor.x-dw/2),Math.round(actor.y-dh),dw,dh); },
         DrawActor: function (actor) { this.DrawSpriteActor(actor,true); },
         DrawCharacter: function (c) { this.DrawSpriteActor(c,false); },
-        GetHotspotSpritePath: function (h) { if (!h) { return null; } if (h.sprite) { return h.sprite; } if (h.itemId && Engine.CurrentGame && Engine.CurrentGame.items && Engine.CurrentGame.items[h.itemId]) { var item=Engine.CurrentGame.items[h.itemId]; return item.worldSprite || item.icon || null; } return null; },
-        DrawHotspotSprite: function (h) { var spritePath=this.GetHotspotSpritePath(h); if (!spritePath) { return; } var img=Engine.Assets.GetImage(spritePath); if (!img) { return; } if (h.frameW && h.frameH) { var frame=Engine.RoomObjects.GetFrame(h); this.DrawImage(img,frame*h.frameW,0,h.frameW,h.frameH,h.x,h.y,h.frameW,h.frameH); return; } this.DrawImage(img,h.x,h.y); },
+        GetHotspotSpritePath: function (h) { if (!h) { return null; } var sprite=Engine.Properties.Get(h,'sprite',{purpose:'render'},h.sprite||null); if (sprite) { return sprite; } if (h.itemId && Engine.CurrentGame && Engine.CurrentGame.items && Engine.CurrentGame.items[h.itemId]) { var item=Engine.CurrentGame.items[h.itemId]; return Engine.Properties.Get(item,'worldSprite',{purpose:'render'},item.worldSprite || item.icon || null); } return null; },
+        DrawHotspotSprite: function (h) { var spritePath=this.GetHotspotSpritePath(h); if (!spritePath) { return; } var img=Engine.Assets.GetImage(spritePath); if (!img) { return; } var x=Engine.Properties.Get(h,'x',{purpose:'render'},h.x||0); var y=Engine.Properties.Get(h,'y',{purpose:'render'},h.y||0); var frameW=Engine.Properties.Get(h,'frameW',{purpose:'render'},h.frameW||null); var frameH=Engine.Properties.Get(h,'frameH',{purpose:'render'},h.frameH||null); if (frameW && frameH) { var frame=Engine.RoomObjects.GetFrame(h); this.DrawImage(img,frame*frameW,0,frameW,frameH,x,y,frameW,frameH); return; } this.DrawImage(img,x,y); },
         GetDialogueTextColor: function (speakerId) { var d=Engine.State.dialogue; if (d.color) { return d.color; } var ui=this.GetUIConfig(); if (speakerId && Engine.CurrentGame && Engine.CurrentGame.characters && Engine.CurrentGame.characters[speakerId] && Engine.CurrentGame.characters[speakerId].dialogueColor) { return Engine.CurrentGame.characters[speakerId].dialogueColor; } if (speakerId==='player' && ui.playerDialogueColor) { return ui.playerDialogueColor; } return ui.dialogueTextColor || ui.textColor || '#ffffff'; },
         RenderSpeechAboveCharacter: function () {
             var d=Engine.State.dialogue; if (!d.active || !d.speakerId || (d.options && d.options.length)) { return; }
@@ -1710,7 +2159,7 @@
             var lines=(d.textBlocks && d.textBlocks.length) ? d.textBlocks[d.textBlockIndex] : this.BuildWrappedLines(d.displayText || (d.speakerName ? d.speakerName+': '+d.text : d.text),168); var blockHeight=lines.length*this.GetLineHeight(); var y=Clamp(Math.round(speakerTop-blockHeight-6),2,112-blockHeight); var speechColor=this.GetDialogueTextColor(d.speakerId);
             for (var i=0;i<lines.length;i++) { var w=this.MeasureText(lines[i]); var x=Clamp(Math.round(speakerX-w/2),2,318-w); this.TextWithShadow(lines[i],x,y+i*this.GetLineHeight(),speechColor); }
         },
-        RenderHoverLabel: function () { if (Engine.State.mode!=='play' || Engine.State.dialogue.active || !Engine.State.hoveredTargetId || Engine.State.pointerY>=UI_TOP) { return; } var target=Engine.Interactions.GetTarget(Engine.State.hoveredTargetId); if (!target || !target.name) { return; } var label=CapitaliseFirst(target.name); var w=this.MeasureText(label); var x=Clamp(Engine.State.pointerX+6,2,318-w); var y=Clamp(Engine.State.pointerY-12,2,UI_TOP-9); this.TextWithShadow(label,x,y,this.GetTextColor('hoverTextColor','#ffff55')); },
+        RenderHoverLabel: function () { if (Engine.State.mode!=='play' || Engine.State.dialogue.active || !Engine.State.hoveredTargetId || Engine.State.pointerY>=UI_TOP) { return; } var target=(Engine.Overlays && Engine.Overlays.IsActive()) ? Engine.Overlays.HitTest(Engine.State.pointerX,Engine.State.pointerY) : Engine.Interactions.GetTarget(Engine.State.hoveredTargetId); if (!target) { return; } var name=Engine.Properties.Get(target,'name',{purpose:'hover'},target.name||''); if (!name) { return; } var label=CapitaliseFirst(name); var w=this.MeasureText(label); var x=Clamp(Engine.State.pointerX+6,2,318-w); var y=Clamp(Engine.State.pointerY-12,2,UI_TOP-9); this.TextWithShadow(label,x,y,this.GetTextColor('hoverTextColor','#ffff55')); },
         RenderNarrationPanel: function () { var d=Engine.State.dialogue; this.RenderUIPanelBackground(true); this.RenderWrappedLinesInBox(d.text,8,142,304,54,this.GetTextColor('narrationTextColor','#ffffff'),false); },
         GetChoiceLayout: function () { var d=Engine.State.dialogue; var options=d.options||[]; var layout=[]; var y=142; var lineHeight=this.GetLineHeight(); var maxWidth=304; for (var i=0;i<options.length;i++) { var label=String(i+1)+'. '+String(options[i].text||''); var lines=this.BuildWrappedLines(label,maxWidth); layout.push({ index:i, x:8, y:y, h:lines.length*lineHeight, lines:lines }); y += lines.length*lineHeight + 2; } return layout; },
         GetChoiceIndexAtPoint: function (x,y) { if (x < 0 || x >= 320) { return -1; } var layout=this.GetChoiceLayout(); for (var i=0;i<layout.length;i++) { if (y >= layout[i].y-1 && y < layout[i].y + layout[i].h + 2) { return layout[i].index; } } return -1; },
@@ -1738,7 +2187,7 @@
             for (var v=0;v<Engine.Verbs.list.length;v++) { var verb=Engine.Verbs.list[v]; var selected=verb.id===Engine.State.selectedVerbId; this.RenderVerbLabel(verb,selected); }
             Engine.Inventory.NormalizeScroll(); this.RenderInventoryArrows();
             var visibleSlots=Engine.Inventory.VisibleSlots(); for (var j=0;j<visibleSlots;j++) { var invIndex=(Engine.State.inventoryScroll||0)+j; var itemId=Engine.State.inventory[invIndex]; if (!itemId) { continue; } var item=Engine.CurrentGame.items[itemId]; var x=Engine.Inventory.originX+(j%Engine.Inventory.visibleCols)*Engine.Inventory.cell; var y=Engine.Inventory.originY+Math.floor(j/Engine.Inventory.visibleCols)*Engine.Inventory.cell; if (Engine.State.selectedInventoryItemId===itemId) { this.Rect(x-1,y-1,20,18,this.GetTextColor('inventorySelectedBackColor','#606020')); } this.DrawInventoryIcon(item,x,y); }
-            var command=Engine.Verbs.GetLabel(Engine.State.selectedVerbId); if (Engine.State.selectedInventoryItemId) { command += ' ' + Engine.CurrentGame.items[Engine.State.selectedInventoryItemId].name + (Engine.State.selectedVerbId === 'give' ? ' to' : ' with'); } if (Engine.State.hoveredTargetId) { var t=Engine.Interactions.GetTarget(Engine.State.hoveredTargetId); if (t) { command += ' ' + t.name; } } else if (Engine.State.hoveredInventoryItemId && Engine.State.selectedInventoryItemId && Engine.CurrentGame.items[Engine.State.hoveredInventoryItemId]) { command += ' ' + Engine.CurrentGame.items[Engine.State.hoveredInventoryItemId].name; } this.Text(command,4,190,this.GetTextColor('commandTextColor','#55ff55')); this.RenderInventoryHoverLabel();
+            var command=Engine.Verbs.GetLabel(Engine.State.selectedVerbId); if (Engine.State.selectedInventoryItemId) { command += ' ' + Engine.CurrentGame.items[Engine.State.selectedInventoryItemId].name + (Engine.State.selectedVerbId === 'give' ? ' to' : ' with'); } if (Engine.State.hoveredTargetId) { var t=(Engine.Overlays && Engine.Overlays.IsActive()) ? Engine.Overlays.HitTest(Engine.State.pointerX,Engine.State.pointerY) : Engine.Interactions.GetTarget(Engine.State.hoveredTargetId); if (t) { command += ' ' + Engine.Properties.Get(t,'name',{purpose:'command'},t.name||''); } } else if (Engine.State.hoveredInventoryItemId && Engine.State.selectedInventoryItemId && Engine.CurrentGame.items[Engine.State.hoveredInventoryItemId]) { command += ' ' + Engine.CurrentGame.items[Engine.State.hoveredInventoryItemId].name; } this.Text(command,4,190,this.GetTextColor('commandTextColor','#55ff55')); this.RenderInventoryHoverLabel();
         },
         RenderDebug: function () { this.Rect(0,0,140,34,'rgba(0,0,0,0.75)'); this.Text('Room: '+Engine.State.currentRoomId,2,2,'#00ff00'); this.Text('Player: '+Math.round(Engine.State.player.x)+','+Math.round(Engine.State.player.y),2,12,'#00ff00'); this.Text('Verb: '+Engine.State.selectedVerbId,2,22,'#00ff00'); },
         WrapText: function (text,x,y,maxWidth,color) { var lines=this.BuildWrappedLines(text,maxWidth); for (var i=0;i<lines.length;i++) { this.Text(lines[i],x,y+i*this.GetLineHeight(),color); } }
