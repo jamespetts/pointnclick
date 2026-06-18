@@ -10,6 +10,7 @@
 PointClickEngine.RegisterGame({
     id: 'testgame', title: 'Test Game: The Locked Door', author: 'James E. Petts', titleBackground: 'intro_testgame_recursive_90s_v1.png', titleMusic: ['intro.mp3'], endBackground: 'end_screen_v1.png', endMusic: ['outtro.mp3'], engineApi: 1, startRoomId: 'testRoom', rendering: { imageSmoothing: false },
     ui: { verbInventoryBackground: 'ui_verb_inventory_mundane_v2.png', panelColor: '#101018', panelTopLineColor: '#9b8b61', verbColor: '#eadfb8', verbSelectedColor: '#fff2a0', verbShadowColor: '#150d06', verbSelectedBackColor: 'rgba(72,56,22,0.72)', verbSelectedUnderlineColor: 'rgba(210,168,75,0.70)', dynamicLineHeight: 9, textColor: '#f3ead0', textShadowColor: '#000000', narrationTextColor: '#f3ead0', dialogueTextColor: '#f3ead0', playerDialogueColor: '#f4f0cf', choiceTextColor: '#f3ead0', commandTextColor: '#b6ff9a', hoverTextColor: '#ffe377', inventorySelectedBackColor: '#5e5022' },
+    hooks: { afterRoomEnter: 'startIntroCutscene' },
     player: { id: 'player', roomId: 'testRoom', x: 70, y: 118, facing: 'down', animation: 'idleDown', visible: true, controllable: true, speed: 48, walkTarget: null, walkPath: [], walkCallback: null, spriteId: 'player', scale: 1 },
     sprites: { player: { image: 'player_animations_bespoke_blink_idle_v2_20260617.png', frameW: 16, frameH: 32, frames: 4, rows: 12, directional: true, animations: { idle: { rowOffset: 0, frames: 4, fps: 2 }, walk: { rowOffset: 4, frames: 4, fps: 12 }, talk: { rowOffset: 8, frames: 4, fps: 6 } } }, caretaker: { image: 'npc_animations_cartoon90s_v2.png', frameW: 16, frameH: 32, frames: 2, rows: 8, directional: true, walkFps: 4, idleFps: 1, animations: { idle: { rowOffset: 0, frames: 1, fps: 1 }, walk: { rowOffset: 0, frames: 2, fps: 4 }, talk: { rowOffset: 4, frames: 2, fps: 6 } } }, woofer: { image: 'woofer_animations_bespoke_idle_v2_20260617.png', frameW: 24, frameH: 16, frames: 2, rows: 12, directional: true, walkFps: 5, idleFps: 2, animations: { idle: { rowOffset: 0, frames: 2, fps: 2 }, walk: { rowOffset: 4, frames: 2, fps: 5 }, tailWag: { rowOffset: 8, frames: 2, fps: 8 } } } },
     characters: { player: { name: '', dialogueColor: '#f4f0cf' }, caretaker: { name: 'Caretaker', dialogueColor: '#b8e8ff' }, woofer: { name: 'Woofer', dialogueColor: '#ffd58a' } },
@@ -45,10 +46,11 @@ PointClickEngine.RegisterGame({
             ],
             hotspots: [
                 { id: 'door', name: 'door', template: 'door', locked: true, propertyGetters: { callbackResult: 'doorCallbackResult' }, rect: { x: 250, y: 31, w: 45, h: 56 }, x: 248, y: 30, closedSprite: 'door_opening_animation_v1.png', openSprite: 'door_opening_animation_v1.png', frameW: 48, frameH: 58, animation: 'closed', transitionAnimation: 'open', animations: { closed: { frame: 0, frames: 1 }, open: { frames: 4, fps: 5, loop: false } }, walkTo: { x: 270, y: 114 }, walkThroughTo: { x: 270, y: 86 }, lockedText: 'The door is locked. A small keyhole glints in the dim light.', unlockedText: 'The door is unlocked. It now awaits the rare and specialised operation known as opening.', openText: 'The door is open. Beyond it lies the end of the test, which is unusually literal.', lockedOpenText: 'It will not open. The lock is making a persuasive argument.', openActionText: 'The door creaks open.', closeActionText: 'The door closes with a modest wooden thunk.', alreadyOpenText: 'The door is already open. The corridor is available for walking through.', alreadyClosedText: 'The door is already closed.', unlockText: 'The key turns with a satisfying click. The door is now unlocked.', lockText: 'The key turns back with a small, unnecessary click. The door is locked again.', wrongKeyText: 'You do not have the right key.', closedWalkText: 'The door is closed. Walking through it would be poor form, and probably sore.', onOpen: 'doorTemplateOpened', onClose: 'doorTemplateClosed' },
+                { id: 'introDust', name: 'dust', sprite: 'intro_dust_puff_20260618.png', rect: { x: 260, y: 82, w: 16, h: 16 }, x: 260, y: 82, frameW: 16, frameH: 16, animation: 'idle', hidden: true, renderHidden: false, hitDisabled: true, zIndex: 20, animations: { idle: { frame: 0, frames: 1 }, puff: { frames: 4, fps: 8, loop: false } }, animationCompleteScripts: { puff: 'introDustComplete' } },
                 { id: 'chair', name: 'chair', template: 'furniture', sprite: 'chair_furniture_sprite_20260618_2230.png', rect: { x: 106, y: 82, w: 24, h: 30 }, x: 106, y: 82, frameW: 24, frameH: 30, walkTo: { x: 118, y: 118 }, collisionShape: { rect: { x: 109, y: 106, w: 18, h: 8 } }, baseline: 114, defaultText: 'A small wooden chair. It looks serviceable, if not urgently relevant.', refusals: { use: 'There is no time to sit down now.' } }
             ],
             characters: [
-                { id: 'caretaker', name: 'caretaker', spriteId: 'caretaker', x: 190, y: 116, facing: 'down', scaleWithPerspective: false, rect: { x: 182, y: 84, w: 16, h: 32 }, hitW: 16, hitH: 32, walkTo: { x: 174, y: 116 }, defaultText: 'The caretaker waits patiently.', refusals: { open: "I'm not qualified to perform surgery" }, interactions: { lookAt: 'lookCaretaker', talkTo: 'talkCaretaker', 'give:coin': 'giveCoinToCaretaker' } },
+                { id: 'caretaker', name: 'caretaker', spriteId: 'caretaker', x: 270, y: 90, facing: 'down', hidden: true, scaleWithPerspective: false, rect: { x: 182, y: 84, w: 16, h: 32 }, hitW: 16, hitH: 32, walkTo: { x: 174, y: 116 }, defaultText: 'The caretaker waits patiently.', refusals: { open: "I'm not qualified to perform surgery" }, interactions: { lookAt: 'lookCaretaker', talkTo: 'talkCaretaker', 'give:coin': 'giveCoinToCaretaker' } },
                 { id: 'woofer', name: 'Woofer', spriteId: 'woofer', x: 52, y: 118, facing: 'right', rect: { x: 40, y: 103, w: 24, h: 15 }, hitW: 24, hitH: 15, followPlayer: true, followOffsetX: -20, followOffsetY: 0, followStopDistance: 12, speed: 42, walkTo: { x: 64, y: 116 }, defaultText: 'Woofer is a small light grey dog who looks like a mop without a handle.', interactions: { lookAt: 'lookWoofer', talkTo: 'talkWoofer' } }
             ]
         },
@@ -140,7 +142,53 @@ PointClickEngine.RegisterGame({
             }
         }
     },
-    scripts: {
+    scripts: {  
+        startIntroCutscene: function (api, context) {
+            if (!context || context.toRoomId !== 'testRoom' || api.GetFlag('introCutsceneSeen')) { return; }
+            api.SetFlag('introCutsceneSeen', true);
+            api.StartCutscene([
+                { type:'setFlag', name:'introCutsceneStarted', value:true },
+                { type:'setObjectState', objectId:'door', values:{ locked:false, open:true, animation:'open' } },
+                { type:'setObjectState', objectId:'introDust', values:{ hidden:false, animation:'idle' } },
+                { type:'setCharacter', actorId:'caretaker', x:270, y:90, facing:'down', hidden:false },
+                { type:'moveCharacter', actorId:'caretaker', x:190, y:116, speed:38 },
+                { type:'script', script:'assertCaretakerArrival' },
+                { type:'animateObject', objectId:'introDust', animation:'puff', holdFinal:false },
+                { type:'script', script:'assertDustAnimationResult' },
+                { type:'setFlag', name:'introDustPuffed', value:true },
+                { type:'setObjectState', objectId:'introDust', values:{ hidden:true, animation:'idle' } },
+                { type:'setAnimation', actorId:'woofer', animation:'tailWag' },
+                { type:'sound', sources:['woof.mp3'] },
+                { type:'wait', duration:0.45 },
+                { type:'clearAnimation', actorId:'woofer' },
+                { type:'say', speakerId:'caretaker', text:'Morning. Mind the door; it has opinions.', duration:1.8 },
+                { type:'parallel', steps:[
+                    { steps:[ { type:'animateObject', objectId:'door', animation:'open', reverse:true, holdFinal:true } ] },
+                    { steps:[ { type:'wait', duration:0.18 }, { type:'sound', sources:['door_close.mp3'] } ] }
+                ] },
+                { type:'setObjectState', objectId:'door', values:{ open:false, locked:true, animation:'closed' } },
+                { type:'setFlag', name:'doorOpen', value:false },
+                { type:'setObjectVariable', objectId:'door', name:'introClosedCount', value:1 },
+                { type:'if', condition:{ flag:'introDustPuffed' }, then:[ { type:'script', script:'assertIntroCutsceneState' } ], else:[ { type:'script', script:'introDustMissingFailure' } ] },
+                { type:'say', speakerId:'player', text:'That was unnecessarily theatrical.', duration:1.6 },
+                { type:'setFlag', name:'introCutsceneComplete', value:true }
+            ], { id:'introCaretakerEntrance', replace:true });
+        },
+        introDustComplete: function (api) { api.SetFlag('introDustLegacyCallbackFired', true); },
+        assertDustAnimationResult: function (api, step, previousResult) {
+            if (!previousResult || previousResult.status !== 'completed' || previousResult.action !== 'objectAnimation' || previousResult.targetId !== 'introDust' || previousResult.animation !== 'puff') { return api.MakeActionResult('blocked', { action:'script', reason:'dustAnimationResultMissing', continueCutscene:false }); }
+            api.SetFlag('introDustPuffed', true);
+            return api.MakeActionResult('completed', { action:'script', reason:'dustAnimationResultVerified' });
+        },
+        assertCaretakerArrival: function (api, step, previousResult) {
+            if (!previousResult || previousResult.status !== 'completed' || previousResult.action !== 'characterMove' || previousResult.actorId !== 'caretaker') { return api.MakeActionResult('blocked', { action:'script', reason:'caretakerMoveResultMissing', continueCutscene:false }); }
+            return api.MakeActionResult('completed', { action:'script', reason:'caretakerMoveResultVerified' });
+        },
+        assertIntroCutsceneState: function (api) {
+            if (!api.GetFlag('introDustPuffed')) { return api.MakeActionResult('blocked', { action:'script', reason:'dustCallbackMissing', continueCutscene:false }); }
+            return api.MakeActionResult('completed', { action:'script', reason:'introStateVerified' });
+        },
+        introDustMissingFailure: function (api) { return api.MakeActionResult('blocked', { action:'script', reason:'introDustDidNotComplete', continueCutscene:false }); },
         lookCoin: function (api) { api.Narrate('It is a small brass coin. Adventure game law says you should probably take it, now that you have won the preliminary contest of noticing it.'); },
         doorTemplateOpened: function (api) { api.SetFlag('doorOpen', true); },  
         doorTemplateClosed: function (api) { api.SetFlag('doorOpen', false); },

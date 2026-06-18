@@ -256,6 +256,12 @@
           newer session or room. If a story action needs delayed sequencing,
           express it through the engine systems instead of setTimeout or custom
           loops.
+        - Rich cutscenes are data-defined step queues. They may sequence and
+          nest say, narrate, wait, player walks, NPC movement, object animation,
+          state changes, scripts, sound, conditionals and parallel groups. Every
+          asynchronous cutscene step must report a standard action result and the
+          sequencer must continue only from explicitly successful terminal states.
+          Do not implement cutscene timing with browser timers or private loops.
         - Deferred callbacks receive a standard action result object with fields
           such as status, action, reason, reached, actorId, targetId, blockerId,
           roomId and continueCutscene. Status values include completed, blocked,
@@ -2413,7 +2419,8 @@
         }, CloseOverlay: function () { Engine.Overlays.Close();
         }, PlaySound: function (sources) { Engine.Assets.PlaySound(sources);
         },
-        StartCutscene: function (steps) { Engine.Cutscenes.Start(steps);
+        StartCutscene: function (steps, options) { Engine.Cutscenes.Start(steps, options||{});
+        }, QueueCutscene: function (steps, options) { Engine.Cutscenes.Queue(steps, options||{});
         }, MakeActionResult: function (status, values) { return Engine.ActionResults.Create(status, values||{});
         }, EndGame: function (title, text, options) { Engine.EndGame.Show(title, text, options || {});
         }, ShowEnding: function (endingId, options) { Engine.EndGame.ShowEnding(endingId, options || {});
@@ -2808,21 +2815,29 @@
         },
         SetAnimation: function (objectId, animationName, options) { options=options||{};
             var state=this.GetState(objectId);
+            if (state.animationOnComplete && state.lifecycleToken && Engine.Lifecycle.IsCurrent(state.lifecycleToken)) {
+                state.animationOnComplete(Engine.ActionResults.Superseded({action:'objectAnimation',reason:'animationReplaced',targetId:objectId,animation:state.animation,roomId:Engine.State.currentRoomId}));
+            }
             state.animation=animationName||null;
             state.animationStarted=Engine.Renderer ? Engine.Renderer.frameTime : 0;
             state.animationReverse=!!options.reverse;
             state.animationHoldFinal=!!options.holdFinal;
             state.animationComplete=false;
             state.animationCompletionFired=false;
-            state.lifecycleToken=Engine.Lifecycle.Capture({room:true});
+            state.animationOnComplete=options.onComplete||null;
+            state.lifecycleToken=Engine.Lifecycle.Capture({room:true,objectAnimation:true});
         },
         ClearAnimation: function (objectId) { var state=this.GetState(objectId);
+            if (state.animationOnComplete && state.lifecycleToken && Engine.Lifecycle.IsCurrent(state.lifecycleToken)) {
+                state.animationOnComplete(Engine.ActionResults.Cancelled({action:'objectAnimation',reason:'animationCleared',targetId:objectId,animation:state.animation,roomId:Engine.State.currentRoomId}));
+            }
             state.animation=null;
             state.animationStarted=0;
             state.animationReverse=false;
             state.animationHoldFinal=false;
             state.animationComplete=false;
             state.animationCompletionFired=false;
+            state.animationOnComplete=null;
             state.lifecycleToken=null;
         },
         GetAnimationSpec: function (object) { var state=this.GetState(object.id);
@@ -2851,7 +2866,13 @@
                 if (!state.animation || state.animationCompletionFired) { return;
                 } self.GetFrame(object);
                 if (state.animationComplete) { state.animationCompletionFired=true;
-                    if (Engine.Lifecycle.IsCurrent(state.lifecycleToken) && object.animationCompleteScripts && object.animationCompleteScripts[state.animation] && Engine.CurrentGame.scripts[object.animationCompleteScripts[state.animation]]) { Engine.CurrentGame.scripts[object.animationCompleteScripts[state.animation]](Engine.API,Engine.ActionResults.Completed({action:'objectAnimation',targetId:object.id,animation:state.animation,roomId:Engine.State.currentRoomId}));
+                    var completedAnimation=state.animation;
+                    var result=Engine.ActionResults.Completed({action:'objectAnimation',targetId:object.id,animation:completedAnimation,roomId:Engine.State.currentRoomId});
+                    var cb=state.animationOnComplete;
+                    state.animationOnComplete=null;
+                    if (cb && Engine.Lifecycle.IsCurrent(state.lifecycleToken)) { cb(result);
+                    }
+                    if (Engine.Lifecycle.IsCurrent(state.lifecycleToken) && object.animationCompleteScripts && object.animationCompleteScripts[completedAnimation] && Engine.CurrentGame.scripts[object.animationCompleteScripts[completedAnimation]]) { Engine.CurrentGame.scripts[object.animationCompleteScripts[completedAnimation]](Engine.API,result);
                     } } });
         }
     };
@@ -2927,8 +2948,15 @@
         },
         MoveCharacter: function (characterId, x, y, options) { options=options||{};
             var c=this.GetCharacter(characterId);
-            if (!c) { return;
-            } var token=Engine.Lifecycle.Capture({room:true});
+            if (!c) {
+                if (options.onComplete) { options.onComplete(Engine.ActionResults.Cancelled({action:'characterMove',reason:'missingCharacter',actorId:characterId,targetId:characterId,roomId:Engine.State.currentRoomId}));
+                }
+                return;
+            }
+            if (c.moveTarget && c.moveTarget.onComplete && Engine.Lifecycle.IsCurrent(c.moveTarget.lifecycleToken)) {
+                c.moveTarget.onComplete(Engine.ActionResults.Superseded({action:'characterMove',reason:'moveReplaced',actorId:c.id,targetId:c.id,roomId:Engine.State.currentRoomId,x:c.x,y:c.y}));
+            }
+            var token=Engine.Lifecycle.Capture({room:true,characterMove:true});
             c.hidden=false;
             c.moveTarget={x:x,y:y,hideOnComplete:!!options.hideOnComplete,onComplete:options.onComplete||null,lifecycleToken:token};
             c.speed=options.speed||c.speed||38;
@@ -3957,44 +3985,225 @@ Engine.InputPrompt = {
         }
     }
 };
+
 Engine.Cutscenes = {
-    Start: function (steps) { var context={ steps:steps||[] };
+    NormaliseSteps: function (steps) { if (!steps) { return [];
+        } if (Array.isArray(steps)) { return steps.slice(0);
+        } return [steps];
+    },
+    Start: function (steps, options) { options=options||{};
+        if (Engine.State.activeCutscene && !options.replace) { this.Queue(steps,options);
+            return;
+        }
+        if (Engine.State.activeCutscene && options.replace) { this.Stop(Engine.State.activeCutscene.lifecycleToken,Engine.ActionResults.Superseded({action:'cutscene',reason:'replaced'}));
+        }
+        var context={ steps:steps||[], options:options };
         if (Engine.Hooks.RunGameHook('beforeCutscene',context) === false) { return;
-        } Engine.Lifecycle.BumpCutscene();
+        }
+        Engine.Lifecycle.BumpCutscene();
         var token=Engine.Lifecycle.Capture({cutscene:true});
-        Engine.State.activeCutscene={steps:steps||[],index:0,waiting:false,lifecycleToken:token,lastResult:null};
+        Engine.State.activeCutscene={steps:this.NormaliseSteps(steps),index:0,waiting:null,lifecycleToken:token,lastResult:null,options:options,startedAt:Engine.Renderer ? Engine.Renderer.frameTime : 0,currentStep:null};
         Engine.State.mode='cutscene';
         this.RunNext(token);
     },
+    Queue: function (steps, options) { Engine.State.cutsceneQueue=Engine.State.cutsceneQueue||[];
+        Engine.State.cutsceneQueue.push({steps:this.NormaliseSteps(steps),options:options||{}});
+    },
+    StartNextQueued: function () { var queue=Engine.State.cutsceneQueue||[];
+        if (!queue.length) { return false;
+        }
+        var next=queue.shift();
+        this.Start(next.steps,next.options||{});
+        return true;
+    },
     Finish: function (token, result) { var cs=Engine.State.activeCutscene;
         if (!cs || !Engine.Lifecycle.IsCurrent(token)) { return;
-        } Engine.State.activeCutscene=null;
+        }
+        Engine.State.activeCutscene=null;
         Engine.State.mode='play';
-        Engine.Hooks.RunGameHook('afterCutscene',{ steps:cs.steps, result:result||cs.lastResult||Engine.ActionResults.Completed({action:'cutscene'}) });
+        Engine.Hooks.RunGameHook('afterCutscene',{ steps:cs.steps, result:result||cs.lastResult||Engine.ActionResults.Completed({action:'cutscene'}), stopped:false });
+        this.StartNextQueued();
     },
     Stop: function (token, result) { var cs=Engine.State.activeCutscene;
         if (!cs || !Engine.Lifecycle.IsCurrent(token)) { return;
-        } Engine.State.activeCutscene=null;
+        }
+        Engine.State.activeCutscene=null;
         Engine.State.mode='play';
         Engine.Hooks.RunGameHook('afterCutscene',{ steps:cs.steps, result:result, stopped:true });
+    },
+    ShouldContinueAfterStep: function (step, result) { result=Engine.ActionResults.Normalise(result,Engine.ActionResults.Completed({action:'cutsceneStep'}));
+        if (step && step.continueOn) { var list=Array.isArray(step.continueOn) ? step.continueOn : [step.continueOn];
+            return list.indexOf(result.status)>=0;
+        }
+        return Engine.ActionResults.ShouldContinueCutscene(result);
+    },
+    Continue: function (token, result) { var cs=Engine.State.activeCutscene;
+        if (!cs || !Engine.Lifecycle.IsCurrent(token)) { return;
+        }
+        cs.waiting=null;
+        this.RunNext(token,result);
+    },
+    Update: function (dt) { var cs=Engine.State.activeCutscene;
+        if (!cs || !cs.waiting || !Engine.Lifecycle.IsCurrent(cs.lifecycleToken)) { return;
+        }
+        if (cs.waiting.type==='time') { cs.waiting.remaining-=dt;
+            if (cs.waiting.remaining<=0) { this.Continue(cs.lifecycleToken,Engine.ActionResults.Completed({action:'wait',reason:'timerElapsed'}));
+            }
+        }
+    },
+    RunChildSequence: function (steps, parentToken, onComplete, previousResult) { var local={steps:this.NormaliseSteps(steps),index:0,lastResult:previousResult||null,currentStep:null};
+        var self=this;
+        var next=function (result) {
+            if (!Engine.Lifecycle.IsCurrent(parentToken)) { return;
+            }
+            if (result) { local.lastResult=result;
+            }
+            if (result && !self.ShouldContinueAfterStep(local.currentStep,result)) { onComplete(result);
+                return;
+            }
+            if (local.index>=local.steps.length) { onComplete(local.lastResult||Engine.ActionResults.Completed({action:'sequence'}));
+                return;
+            }
+            var step=local.steps[local.index++];
+            local.currentStep=step;
+            self.RunStep(step,parentToken,next,local.lastResult);
+        };
+        next(previousResult||Engine.ActionResults.Completed({action:'sequenceStart'}));
+    },
+    RunParallel: function (steps, token, done, previousResult) { steps=this.NormaliseSteps(steps);
+        if (!steps.length) { done(Engine.ActionResults.Completed({action:'parallel',reason:'empty'}));
+            return;
+        }
+        var remaining=steps.length;
+        var finished=false;
+        var results=[];
+        var self=this;
+        steps.forEach(function (child,index) {
+            self.RunChildSequence(child.steps||child.sequence||child,token,function (result) {
+                if (finished || !Engine.Lifecycle.IsCurrent(token)) { return;
+                }
+                results[index]=result;
+                if (!Engine.ActionResults.ShouldContinueCutscene(result)) { finished=true;
+                    done(result);
+                    return;
+                }
+                remaining--;
+                if (remaining<=0) { done(Engine.ActionResults.Completed({action:'parallel',results:results}));
+                }
+            },previousResult);
+        });
+    },
+    CheckCondition: function (condition) { if (!condition) { return true;
+        }
+        if (Array.isArray(condition)) { for (var i=0;i<condition.length;i++) { if (!this.CheckCondition(condition[i])) { return false;
+                } } return true;
+        }
+        if (condition.flag) { return !!Engine.State.flags[condition.flag] === (condition.value!==false);
+        }
+        if (condition.notFlag) { return !Engine.State.flags[condition.notFlag];
+        }
+        if (condition.hasItem) { return Engine.Inventory.HasItem(condition.hasItem);
+        }
+        if (condition.missingItem) { return !Engine.Inventory.HasItem(condition.missingItem);
+        }
+        return true;
+    },
+    ApplyCharacterState: function (step) { var actor=step.actorId==='player' ? Engine.State.player : Engine.Rooms.GetCharacter(step.actorId||step.characterId);
+        if (!actor) { return Engine.ActionResults.Cancelled({action:'setCharacter',reason:'missingCharacter',actorId:step.actorId||step.characterId});
+        }
+        ['x','y','facing','hidden','visible','controllable','animation','customAnimation','scale'].forEach(function (key) { if (Object.prototype.hasOwnProperty.call(step,key)) { actor[key]=step[key];
+            } });
+        if (actor.id!=='player') { Engine.Rooms.UpdateCharacterRect(actor);
+        }
+        return Engine.ActionResults.Completed({action:'setCharacter',actorId:actor.id,roomId:Engine.State.currentRoomId});
+    },
+    RunStep: function (step, token, done, previousResult) { step=step||{};
+        var type=step.type||'script';
+        if (type==='sequence') { this.RunChildSequence(step.steps||[],token,done,previousResult);
+            return;
+        }
+        if (type==='parallel') { this.RunParallel(step.steps||[],token,done,previousResult);
+            return;
+        }
+        if (type==='if') { this.RunChildSequence(this.CheckCondition(step.condition||step.conditions) ? (step.then||step.steps||[]) : (step.else||[]),token,done,previousResult);
+            return;
+        }
+        if (type==='wait') { var cs=Engine.State.activeCutscene;
+            cs.waiting={type:'time',remaining:Math.max(0,Number(step.duration||step.seconds||0))};
+            if (cs.waiting.remaining<=0) { this.Continue(token,Engine.ActionResults.Completed({action:'wait',reason:'zeroDuration'}));
+            }
+            return;
+        }
+        if (type==='say' || type==='narrate') { Engine.Dialogue.ShowLine(type==='narrate' ? null : (step.speakerId||step.actorId||null), Engine.Text.Format(step.text||''), {duration:step.duration, voice:step.voice, onComplete:function (result) { done(result);
+                }});
+            return;
+        }
+        if (type==='walk') { Engine.Movement.RequestWalk(step.x,step.y,function (result) { done(result);
+            },{targetId:step.targetId||null});
+            return;
+        }
+        if (type==='moveCharacter') { Engine.Rooms.MoveCharacter(step.actorId||step.characterId,step.x,step.y,{speed:step.speed,hideOnComplete:!!step.hideOnComplete,onComplete:function (result) { done(result);
+                }});
+            return;
+        }
+        if (type==='animateObject') { var wait=step.wait!==false;
+            Engine.RoomObjects.SetAnimation(step.objectId,step.animation||step.animationName,{reverse:!!step.reverse,holdFinal:step.holdFinal!==false,onComplete:wait ? function (result) { done(result);
+                } : null});
+            if (!wait) { done(Engine.ActionResults.Completed({action:'objectAnimation',targetId:step.objectId,animation:step.animation||step.animationName,reason:'started'}));
+            }
+            return;
+        }
+        done(this.RunImmediateStep(step,type,previousResult));
+    },
+    RunImmediateStep: function (step, type, previousResult) {
+        if (type==='script') { if (step.script && Engine.CurrentGame.scripts && Engine.CurrentGame.scripts[step.script]) { return Engine.ActionResults.Normalise(Engine.CurrentGame.scripts[step.script](Engine.API,step,previousResult),Engine.ActionResults.Completed({action:'script',script:step.script}));
+            } return Engine.ActionResults.Cancelled({action:'script',reason:'missingScript',script:step.script});
+        }
+        if (type==='setFlag') { Engine.State.flags[step.name||step.flag]=!!step.value;
+            return Engine.ActionResults.Completed({action:'setFlag',targetId:step.name||step.flag});
+        }
+        if (type==='setVariable') { Engine.State.variables[step.name||step.variable]=step.value;
+            return Engine.ActionResults.Completed({action:'setVariable',targetId:step.name||step.variable});
+        }
+        if (type==='setObjectState') { Engine.RoomObjects.SetState(step.objectId,step.values||{});
+            return Engine.ActionResults.Completed({action:'setObjectState',targetId:step.objectId});
+        }
+        if (type==='setObjectVariable') { Engine.RoomObjects.SetVariable(step.objectId,step.name,step.value);
+            return Engine.ActionResults.Completed({action:'setObjectVariable',targetId:step.objectId});
+        }
+        if (type==='setCharacter') { return this.ApplyCharacterState(step);
+        }
+        if (type==='setAnimation') { Engine.Animations.SetAnimation(step.actorId,step.animation||step.animationName,step.options||{});
+            return Engine.ActionResults.Completed({action:'setAnimation',actorId:step.actorId});
+        }
+        if (type==='clearAnimation') { Engine.Animations.ClearAnimation(step.actorId);
+            return Engine.ActionResults.Completed({action:'clearAnimation',actorId:step.actorId});
+        }
+        if (type==='clearObjectAnimation') { Engine.RoomObjects.ClearAnimation(step.objectId);
+            return Engine.ActionResults.Completed({action:'clearObjectAnimation',targetId:step.objectId});
+        }
+        if (type==='sound') { Engine.Assets.PlaySound(step.sources||step.sound||step.sfx||[]);
+            return Engine.ActionResults.Completed({action:'sound'});
+        }
+        return Engine.ActionResults.Completed({action:'cutsceneStep',reason:'skipped',stepType:type});
     },
     RunNext: function (token, previousResult) { var cs=Engine.State.activeCutscene;
         token=token||(cs?cs.lifecycleToken:null);
         if (!cs || !Engine.Lifecycle.IsCurrent(token)) { return;
-        } if (previousResult) { cs.lastResult=previousResult;
-        } if (previousResult && !Engine.ActionResults.ShouldContinueCutscene(previousResult)) { this.Stop(token,previousResult);
+        }
+        if (previousResult) { cs.lastResult=previousResult;
+        }
+        if (previousResult && !this.ShouldContinueAfterStep(cs.currentStep,previousResult)) { this.Stop(token,previousResult);
             return;
-        } if (cs.index >= cs.steps.length) { this.Finish(token,previousResult||Engine.ActionResults.Completed({action:'cutscene'}));
+        }
+        if (cs.index >= cs.steps.length) { this.Finish(token,previousResult||Engine.ActionResults.Completed({action:'cutscene'}));
             return;
-        } var step=cs.steps[cs.index++];
-        if (step.type==='say') { Engine.Dialogue.ShowLine(step.speakerId||null, step.text||'', {duration:step.duration, voice:step.voice, onComplete:function (result) { Engine.Cutscenes.RunNext(token,result);
-                }});
-        } else if (step.type==='walk') { Engine.Movement.RequestWalk(step.x,step.y,function (result) { Engine.Cutscenes.RunNext(token,result);
-            },{targetId:step.targetId||null});
-        } else if (step.type==='script' && Engine.CurrentGame.scripts[step.script]) { var result=Engine.CurrentGame.scripts[step.script](Engine.API,step,previousResult);
-            Engine.Cutscenes.RunNext(token,Engine.ActionResults.Normalise(result,Engine.ActionResults.Completed({action:'script',script:step.script})));
-        } else { Engine.Cutscenes.RunNext(token,Engine.ActionResults.Completed({action:'cutsceneStep',reason:'skipped'}));
-        } }
+        }
+        var step=cs.steps[cs.index++];
+        cs.currentStep=step;
+        this.RunStep(step,token,function (result) { Engine.Cutscenes.Continue(token,result);
+        },previousResult);
+    }
 };
 Engine.EndGame = {
     // Multiple-ending support.
@@ -5022,6 +5231,7 @@ Engine.Private.Accumulator=0;
 Engine.Private.Update = function (dt) { if (Engine.State.mode==='play' || Engine.State.mode==='cutscene') { Engine.Movement.Update(dt);
         Engine.RoomObjects.Update(dt);
         Engine.Dialogue.Update(dt);
+        Engine.Cutscenes.Update(dt);
     } };
 Engine.Private.Loop = function (timestamp) { if (!Engine.Private.LastTimestamp) { Engine.Private.LastTimestamp=timestamp;
     } var elapsed=Math.min(0.25,(timestamp-Engine.Private.LastTimestamp)/1000);
