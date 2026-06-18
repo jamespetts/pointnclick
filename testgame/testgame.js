@@ -114,7 +114,7 @@ PointClickEngine.RegisterGame({
                             conditions: [ { hasItem: 'coin' }, { missingItem: 'key' } ],
                             actions: [ { removeItem: 'coin' }, { addItem: 'key' }, { script: 'caretakerLeavesAfterTrade' } ],
                             response: 'A fair trade. Here is the key.',
-                            repeat: true
+                            end: true
                         },
                         {
                             id: 'askKeyAlreadyHaveKey',
@@ -142,8 +142,6 @@ PointClickEngine.RegisterGame({
     },
     scripts: {
         lookCoin: function (api) { api.Narrate('It is a small brass coin. Adventure game law says you should probably take it, now that you have won the preliminary contest of noticing it.'); },
-        takeCoin: function (api) { api.SetFlag('coinTaken', true); api.AddItem('coin'); api.Narrate('Taken.'); },
-        takeMap: function (api) { api.SetFlag('mapTaken', true); api.AddItem('map'); api.Narrate('Taken.'); },
         doorTemplateOpened: function (api) { api.SetFlag('doorOpen', true); },  
         doorTemplateClosed: function (api) { api.SetFlag('doorOpen', false); },
         completeTestGame: function (api) { api.EndGame('Test Complete', 'You have completed the test game, negotiated its tiny economy, opened the locked door, and walked through it. Somewhere, a test harness nods approvingly.'); },

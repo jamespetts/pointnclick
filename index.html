@@ -104,10 +104,14 @@
           This lets the same object be drawn differently in a room and in inventory
           without creating duplicate gameplay objects.
         - Room object runtime state is owned by Engine.RoomObjects and stored in
-          Engine.State.objectStates. Use api.SetObjectState(...) for stateful
-          room-object behaviour such as disabling a door's hotspot after opening,
-          changing a hotspot rectangle, or hiding a room object. Do not duplicate
-          hit testing or movement in a game script for this.
+          Engine.State.objectStates, keyed by globally unique room-object ids.
+          A room hotspot/object id must be unique across the whole game, not just
+          within its room, because objects can be picked up, moved between rooms,
+          or otherwise retain identity outside their original room. Use
+          api.SetObjectState(...) for stateful room-object behaviour such as
+          disabling a door's hotspot after opening, changing a hotspot rectangle,
+          or hiding a room object. Do not duplicate hit testing or movement in a
+          game script for this.
         - Overlapping click targets are resolved by hitPriority or priority, with higher values winning. Render order uses effective zIndex first, then baseline/depth y. Pickup template objects receive a higher default zIndex than furniture so small takeable items sitting on surfaces render in front unless content explicitly overrides zIndex.
         - Inventory scrolling is owned by the central inventory system. The UI
           renders a fixed visible window with up/down arrows and resolves clicks
@@ -702,6 +706,8 @@
     //     api.SetObjectAnimation or browser timers from a getter.
     //   - Store mutable puzzle state in self variables or scoped variables, not in
     //     ad-hoc JavaScript objects. Object variables are saved in objectStates.
+    //     Room hotspot/object ids must therefore be globally unique across the
+    //     whole game; they are object identities, not room-local names.
     //   - Prefer local state: object getters should normally read self variables;
     //     item getters should normally read item variables; room getters should
     //     normally read room variables. Global flags are allowed but couple the
@@ -711,8 +717,9 @@
     //
     // Properties commonly consumed by the engine:
     //   name, displayName, defaultText, description, sprite, worldSprite, x, y,
-    //   frameW, frameH, animation, hidden, renderHidden, hitDisabled,
-    //   interactionDisabled, hitRect, rect, hitPriority, priority, zIndex,
+    //   frameW, frameH, animation, hidden, renderHidden, blocksWhenHidden,
+    //   hitDisabled, interactionDisabled, hitRect, rect, hitPriority, priority,
+    //   zIndex,
     //   walkTo, walkThrough, walkThroughTo, interactions, refusals, walkBoxes,
     //   blockers, collisionShape, blocksMovement, walkBehind, occluderShape,
     //   baseline, triggerZones, onCollide and onBump.
@@ -819,11 +826,11 @@
             return defaultValue;
         },
         GetTemplateNames:function (entity) { var raw=entity && (entity.templates || entity.template || entity.templateId || entity.kind); if (!raw) { return []; } if (Array.isArray(raw)) { return raw; } if (typeof raw === 'string') { return raw.split(/[\s,]+/).filter(function (name) { return !!name; }); } return []; },
-        GetTemplates:function (entity) { var names=this.GetTemplateNames(entity); var list=[]; for (var i=0;i<names.length;i++) { if (Engine.Templates[names[i]]) { list.push({ name:names[i], template:Engine.Templates[names[i]] }); } else { Engine.Debug.Warn('Unknown template +names[i]+ on '+((entity&&entity.id)||'unknown')+'.'); } } return list; },
+        GetTemplates:function (entity) { var names=this.GetTemplateNames(entity); var list=[]; for (var i=0;i<names.length;i++) { if (Engine.Templates[names[i]]) { list.push({ name:names[i], template:Engine.Templates[names[i]] }); } else { Engine.Debug.Warn('Unknown template "'+names[i]+'" on '+((entity&&entity.id)||'unknown')+'.'); } } return list; },
         GetTemplate:function (entity) { var list=this.GetTemplates(entity); return list.length ? list[0].template : null; },
         Validate:function (propertyName, value, fallback) {
             if (value === undefined) { return fallback; }
-            if (propertyName==='visible' || propertyName==='hidden' || propertyName==='hitDisabled' || propertyName==='walkThrough' || propertyName==='renderHidden' || propertyName==='interactionDisabled' || propertyName==='blocksMovement' || propertyName==='blocksActors' || propertyName==='walkBehind') { return !!value; }
+            if (propertyName==='visible' || propertyName==='hidden' || propertyName==='hitDisabled' || propertyName==='walkThrough' || propertyName==='renderHidden' || propertyName==='blocksWhenHidden' || propertyName==='interactionDisabled' || propertyName==='blocksMovement' || propertyName==='blocksActors' || propertyName==='walkBehind') { return !!value; }
             if (propertyName==='hitRect' || propertyName==='rect') { if (value && typeof value.x==='number' && typeof value.y==='number' && typeof value.w==='number' && typeof value.h==='number') { return value; } Engine.Debug.Warn('Property '+propertyName+' returned an invalid rectangle.'); return fallback; }
             if (propertyName==='walkTo' || propertyName==='walkThroughTo') { if (!value || (typeof value.x==='number' && typeof value.y==='number')) { return value; } Engine.Debug.Warn('Property '+propertyName+' returned an invalid point.'); return fallback; }
             if (propertyName==='interactions' || propertyName==='refusals') { if (!value || typeof value==='object') { return value; } Engine.Debug.Warn('Property '+propertyName+' returned a non-object value.'); return fallback; }
@@ -1172,6 +1179,11 @@
             if (seen[id]) { this.Warn('Duplicate '+kind+' id "'+id+'" in '+where+'.'); return; }
             seen[id]=true;
         },
+        AddGlobalObjectId: function (seen, id, where) {
+            if (!id) { this.Warn('Room object in '+where+' is missing an id.'); return; }
+            if (seen[id]) { this.Warn('Duplicate globally-scoped room object id "'+id+'" in '+where+'. Room object ids are saved in Engine.State.objectStates and must be unique across the whole game.'); return; }
+            seen[id]=true;
+        },
         ValidateImagePath: function (path, role, where) { if (!path) { return; } try { Engine.Assets.ValidateImagePath(path,role); } catch (err) { this.Warn(where+': '+err.message); } },
         ValidateScriptName: function (game, scriptName, where) {
             if (!scriptName) { return; }
@@ -1233,6 +1245,7 @@
             if (!game.startRoomId || !game.rooms[game.startRoomId]) { this.Warn('Game startRoomId "'+game.startRoomId+'" is missing.'); }
             if (game.player && game.player.spriteId && game.sprites && !game.sprites[game.player.spriteId]) { this.Warn('Player references missing sprite "'+game.player.spriteId+'".'); }
             var self=this;
+            var globalObjectIds={};
             Object.keys(game.items||{}).forEach(function (itemId) {
                 var item=game.items[itemId];
                 if (item.id && item.id !== itemId) { self.Warn('Item key "'+itemId+'" has mismatched id "'+item.id+'".'); }
@@ -1251,6 +1264,7 @@
                 (room.hotspots||[]).forEach(function (h,index) {
                     var hwhere=where+'.hotspots['+index+']';
                     self.AddId(seenTargets,'target',h.id,hwhere);
+                    self.AddGlobalObjectId(globalObjectIds,h.id,hwhere);
                     if (h.itemId && (!game.items || !game.items[h.itemId])) { self.Warn(hwhere+' links to missing item "'+h.itemId+'".'); }
                     self.ValidatePointInArea(h.walkTo,room.walkableArea,hwhere+'.walkTo');
                     self.ValidateImagePath(h.sprite,'hotspot',hwhere+'.sprite'); self.ValidateImagePath(h.closedSprite,'hotspot',hwhere+'.closedSprite'); self.ValidateImagePath(h.openSprite,'hotspot',hwhere+'.openSprite');
@@ -1553,7 +1567,9 @@
     // objects. Future AIs should express room shape and collision with data and
     // effective properties, not with custom movement loops. The engine queries
     // room/object/character properties such as walkBoxes, blockers,
-    // collisionShape, blocksMovement, walkBehind, baseline and triggerZones.
+    // collisionShape, blocksMovement, blocksWhenHidden, walkBehind, baseline and
+    // triggerZones. Hidden objects are non-blocking by default; set the effective
+    // property blocksWhenHidden:true only for deliberate invisible barriers.
     //
     // Supported initial shapes:
     //   { rect:{x,y,w,h} } or a bare {x,y,w,h} rectangle
@@ -1602,7 +1618,8 @@
             return best || {x:x,y:y};
         },
         GetObjectCollisionShape:function (object) {
-            if (!object || Engine.RoomObjects.IsHidden(object)) { return null; }
+            if (!object) { return null; }
+            if (Engine.RoomObjects.IsHidden(object) && !Engine.Properties.Get(object,'blocksWhenHidden',{purpose:'geometry'},false)) { return null; }
             var shape=Engine.Properties.Get(object,'collisionShape',{purpose:'geometry'},null);
             if (shape) { return shape; }
             if (!Engine.Properties.Get(object,'blocksMovement',{purpose:'geometry'},false)) { return null; }
@@ -1660,7 +1677,8 @@
         GetVariable: function (objectId, name, defaultValue) { var state=this.PeekState(objectId); var vars=state.variables||{}; return Object.prototype.hasOwnProperty.call(vars,name) ? vars[name] : defaultValue; },
         SetVariable: function (objectId, name, value) { if (!objectId || !name) { return false; } if (!(typeof value === 'string' || (typeof value === 'number' && isFinite(value)))) { Engine.Debug.Warn('Object variable '+objectId+'.'+name+' rejected value of type '+(typeof value)+'. Use finite numbers or strings.'); return false; } var state=this.GetState(objectId); if (!state.variables) { state.variables={}; } state.variables[name]=value; return true; },
         AddVariable: function (objectId, name, amount) { if (typeof amount !== 'number' || !isFinite(amount)) { Engine.Debug.Warn('Object variable arithmetic on '+objectId+'.'+name+' received a non-numeric amount.'); return null; } var current=this.GetVariable(objectId,name,0); if (typeof current !== 'number' || !isFinite(current)) { Engine.Debug.Warn('Object variable arithmetic on '+objectId+'.'+name+' failed because the current value is not numeric.'); return null; } current+=amount; this.SetVariable(objectId,name,current); return current; },
-        IsHidden: function (object) { if (!object) { return false; } return !!(Engine.Properties.Get(object,'hidden',{purpose:'hitTest'},false) || Engine.Properties.Get(object,'renderHidden',{purpose:'hitTest'},false)); },
+        IsHidden: function (object) { if (!object) { return false; } return !!(Engine.Properties.Get(object,'hidden',{purpose:'visibility'},!!object.hidden) || (object.hiddenFlag && Engine.State.flags[object.hiddenFlag])); },
+        IsRenderHidden: function (object) { if (!object) { return false; } return !!(this.IsHidden(object) || Engine.Properties.Get(object,'renderHidden',{purpose:'render'},false)); },
         IsHitDisabled: function (object) { if (!object) { return false; } return !!(Engine.Properties.Get(object,'hitDisabled',{purpose:'hitTest'},false) || Engine.Properties.Get(object,'disableHit',{purpose:'hitTest'},false) || Engine.Properties.Get(object,'interactionDisabled',{purpose:'hitTest'},false)); },
         GetHitRect: function (object) { if (!object) { return null; } return Engine.Properties.Get(object,'hitRect',{purpose:'hitTest'},Engine.Properties.Get(object,'rect',{purpose:'hitTest'},object.rect||null)); },
         SetAnimation: function (objectId, animationName, options) { options=options||{}; var state=this.GetState(objectId); state.animation=animationName||null; state.animationStarted=Engine.Renderer ? Engine.Renderer.frameTime : 0; state.animationReverse=!!options.reverse; state.animationHoldFinal=!!options.holdFinal; state.animationComplete=false; state.animationCompletionFired=false; state.lifecycleToken=Engine.Lifecycle.Capture({room:true}); },
@@ -1833,7 +1851,7 @@
         // a larger hotspot, for example a coin on a table. Equal priorities preserve
         // the historic last-defined-wins behaviour, so existing games are not
         // changed unless they opt into explicit priority values.
-        HitTest: function (x, y) { var room=Engine.Rooms.GetCurrentRoom(); var candidates=(room.hotspots||[]).concat(room.characters||[]); var best=null; var bestPriority=-Infinity; var bestIndex=-1; for (var i=0;i<candidates.length;i++) { var c=candidates[i]; if (Engine.Properties.Get(c,'hidden',{purpose:'hitTest'},!!c.hidden) || (c.hiddenFlag && Engine.State.flags[c.hiddenFlag]) || Engine.RoomObjects.IsHidden(c) || Engine.RoomObjects.IsHitDisabled(c)) { continue; } var rect=Engine.RoomObjects.GetHitRect(c); if (rect && PointInRect(x,y,rect)) { var priority=this.GetHitPriority(c); if (priority>bestPriority || (priority===bestPriority && i>bestIndex)) { best=c; bestPriority=priority; bestIndex=i; } } } return best ? best.id : null; }
+        HitTest: function (x, y) { var room=Engine.Rooms.GetCurrentRoom(); var candidates=(room.hotspots||[]).concat(room.characters||[]); var best=null; var bestPriority=-Infinity; var bestIndex=-1; for (var i=0;i<candidates.length;i++) { var c=candidates[i]; if (Engine.RoomObjects.IsHidden(c) || Engine.RoomObjects.IsHitDisabled(c)) { continue; } var rect=Engine.RoomObjects.GetHitRect(c); if (rect && PointInRect(x,y,rect)) { var priority=this.GetHitPriority(c); if (priority>bestPriority || (priority===bestPriority && i>bestIndex)) { best=c; bestPriority=priority; bestIndex=i; } } } return best ? best.id : null; }
     };
 
     Engine.Dialogue = {
@@ -2325,7 +2343,7 @@
         RenderRoom: function () {
             var room=Engine.Rooms.GetCurrentRoom(); var bg=Engine.Assets.GetImage(room.background); if (bg) { this.DrawImage(bg,0,0); } else { this.Rect(0,0,320,136,'#303050'); }
             var drawables=[];
-            (room.hotspots||[]).forEach(function (h) { if (!(h.hiddenFlag && Engine.State.flags[h.hiddenFlag]) && !Engine.RoomObjects.IsHidden(h) && Engine.Renderer.GetHotspotSpritePath(h)) { var hy=Engine.Geometry.GetDrawableYForObject(h); drawables.push({type:'hotspot',data:h,y:hy,z:Engine.Geometry.GetDrawableZ(h)}); } });
+            (room.hotspots||[]).forEach(function (h) { if (!Engine.RoomObjects.IsRenderHidden(h) && Engine.Renderer.GetHotspotSpritePath(h)) { var hy=Engine.Geometry.GetDrawableYForObject(h); drawables.push({type:'hotspot',data:h,y:hy,z:Engine.Geometry.GetDrawableZ(h)}); } });
             (room.characters||[]).forEach(function (c) { if (!c.hidden) { drawables.push({type:'character',data:c,y:c.y,z:Engine.Geometry.GetDrawableZ(c)}); } }); if (Engine.State.player.visible) { drawables.push({type:'player',data:Engine.State.player,y:Engine.State.player.y,z:Engine.Geometry.GetDrawableZ(Engine.State.player)}); }
             drawables.sort(function (a,b) { return ((a.z||0)-(b.z||0)) || (a.y-b.y); });
             for (var i=0;i<drawables.length;i++) { if (drawables[i].type==='player') { this.DrawActor(drawables[i].data); } else if (drawables[i].type==='character') { this.DrawCharacter(drawables[i].data); } else { this.DrawHotspotSprite(drawables[i].data); } }
