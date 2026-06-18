@@ -26,9 +26,13 @@
         - All manifest paths must be relative to this index.html file.
         - Image assets are external .png files under canonical game subdirectories.
           Game scripts must not embed data:image URIs or use remote image URLs.
-          Use rooms/ for room/title/end backgrounds, characters/ for actor spritesheets,
-          objects/ for inventory icons, world/hotspot object sprites and object
-          close-up images such as maps, and ui/ for interface chrome only.
+          Asset directory names are implicit from asset role: room/title/end
+          backgrounds resolve under rooms/, actor spritesheets under characters/,
+          inventory/world/hotspot/overlay/map images under objects/, and interface
+          chrome under ui/. Music resolves under music/ and sound effects under
+          sounds/. Content scripts should normally specify only the filename, such
+          as player.png, start_room.png or intro.mp3; explicit canonical paths
+          such as characters/player.png remain accepted for compatibility.
         - No login, database, server-side code, or build step is required.
 
         INSTRUCTIONS FOR FUTURE AIS AND MAINTAINERS
@@ -185,8 +189,11 @@
           and followers. Game scripts should request movement; they should not
           create their own character animation or movement loops.
         - Character sprites may use directional rows in the same order as the
-          player sprite: down, left, right, up. Set directional:true, or rows:4,
-          in the sprite definition. Single-row sprites remain supported. Idle
+          player sprite: down, left, right, up. Character sprite image filenames
+          resolve implicitly under characters/, so scripts should normally use
+          image:'player.png' rather than image:'characters/player.png'. Set
+          directional:true, or rows:4, in the sprite definition. Single-row sprites
+          remain supported. Idle
           animations are supported through sprite.animations.idle with frames and
           fps, or through sprite.idleFrames and sprite.idleFps when no explicit
           idle animation is defined. Idle animation timing is per actor, so a room
@@ -368,20 +375,32 @@
 
     Engine.Assets = {
         images: {}, music: null, musicSrc: null,
+        RolePrefixes:{ roomBackground:'rooms/', titleBackground:'rooms/', endBackground:'rooms/', character:'characters/', itemIcon:'objects/', itemWorld:'objects/', hotspot:'objects/', ui:'ui/', overlay:'objects/', map:'objects/', music:'music/', sound:'sounds/', voice:'sounds/' },
         ImageRolePrefixes:{ roomBackground:'rooms/', titleBackground:'rooms/', endBackground:'rooms/', character:'characters/', itemIcon:'objects/', itemWorld:'objects/', hotspot:'objects/', ui:'ui/', overlay:'objects/', map:'objects/' },
-        ValidateImagePath:function (path, role) {
-            if (!path || typeof path !== 'string') { throw new Error('Invalid image path for '+(role||'image')+'.'); }
-            if (path.indexOf('data:')===0) { throw new Error('Embedded data:image assets are not allowed; use a .png file in the canonical asset directory for '+(role||'image')+'.'); }
-            if (/^(https?:)?\/\//.test(path)) { throw new Error('Remote image assets are not allowed: '+path); }
-            if (/\\/.test(path) || path.indexOf('..')>=0 || path.charAt(0)==='/') { throw new Error('Image path must be a simple relative path inside the game asset folder: '+path); }
-            var prefix=this.ImageRolePrefixes[role||'']||null; if (prefix && path.indexOf(prefix)!==0) { throw new Error('Image path for '+role+' must be in '+prefix+': '+path); }
-            if (!/\.png$/i.test(path)) { throw new Error('Image path must refer to a .png file: '+path); } return true;
+        NormalizePath:function (path, role) {
+            if (!path || typeof path !== 'string') { throw new Error('Invalid asset path for '+(role||'asset')+'.'); }
+            if (path.indexOf('data:')===0) { throw new Error('Embedded data: assets are not allowed; use external files in the canonical asset directory for '+(role||'asset')+'.'); }
+            if (/^(https?:)?\/\//.test(path)) { throw new Error('Remote assets are not allowed: '+path); }
+            if (path.indexOf('\\')>=0 || path.indexOf('..')>=0 || path.charAt(0)==='/') { throw new Error('Asset path must be a simple relative path inside the game asset folder: '+path); }
+            var prefix=this.RolePrefixes[role||'']||null;
+            if (prefix) {
+                if (path.indexOf(prefix)===0) { return path; }
+                if (path.indexOf('/')>=0) { throw new Error('Asset path for '+role+' must be a filename or be in '+prefix+': '+path); }
+                return prefix+path;
+            }
+            return path;
         },
-        QueueImage:function (list,path,role) { if (!path) { return; } this.ValidateImagePath(path,role); list.push({path:path,role:role}); },
+        ValidateImagePath:function (path, role) {
+            var normal=this.NormalizePath(path,role);
+            if (!/\.png$/i.test(normal)) { throw new Error('Image path must refer to a .png file: '+path); }
+            return true;
+        },
+        NormalizeImagePath:function (path, role) { this.ValidateImagePath(path,role); return this.NormalizePath(path,role); },
+        QueueImage:function (list,path,role) { if (!path) { return; } list.push({path:this.NormalizeImagePath(path,role),role:role}); },
         Resolve: function (path, role) {
-            if (role) { this.ValidateImagePath(path,role); }
-            if (!Engine.CurrentGame) { return path; }
-            return Engine.CurrentGame.assetPath + path;
+            var normal=this.NormalizePath(path,role);
+            if (!Engine.CurrentGame) { return normal; }
+            return Engine.CurrentGame.assetPath + normal;
         },
         LoadImage: function (path, role) {
             var resolved = this.Resolve(path, role);
@@ -393,7 +412,7 @@
                 img.src = resolved;
             });
         },
-        GetImage: function (path) { return this.images[this.Resolve(path)] || null; },
+        GetImage: function (path, role) { return this.images[this.Resolve(path,role)] || null; },
         ApplyAudioSettings: function () {
             if (this.music) { this.music.volume = Engine.State.audio.musicMuted ? 0 : Engine.State.audio.musicVolume; }
         },
@@ -405,7 +424,7 @@
         },
         PlayMusic: function (sources) {
             if (!sources || !sources.length) { this.StopMusic(); return; }
-            var src = this.Resolve(sources[0]);
+            var src = this.Resolve(sources[0],'music');
             if (this.musicSrc === src && this.music) {
                 this.ApplyAudioSettings();
                 if (this.music.paused) { this.TryPlayMusic(); }
@@ -422,13 +441,11 @@
         StopMusic: function () { if (this.music) { this.music.pause(); this.music.src = ''; } this.music = null; this.musicSrc = null; },
         PlaySound: function (sources) {
             if (!sources || !sources.length || Engine.State.audio.sfxMuted) { return; }
-            var audio = new Audio(this.Resolve(sources[0])); audio.preload = 'auto'; audio.volume = Engine.State.audio.sfxVolume;
+            var audio = new Audio(this.Resolve(sources[0],'sound')); audio.preload = 'auto'; audio.volume = Engine.State.audio.sfxVolume;
             audio.onerror = function () {};
             var playPromise = audio.play(); if (playPromise && playPromise.catch) { playPromise.catch(function () {}); }
         }
     };
-
-
     // DEBUG, HOOK AND SCOPED VARIABLE SYSTEMS
     // --------------------------------------
     // Engine.Debug is the central diagnostic path for content-authoring mistakes.
@@ -678,8 +695,8 @@
     //   {
     //       id:'cabinet',
     //       template:'container',
-    //       closedSprite:'objects/cabinet_closed.png',
-    //       openSprite:'objects/cabinet_open.png',
+    //       closedSprite:'cabinet_closed.png',
+    //       openSprite:'cabinet_open.png',
     //       propertyGetters:{ defaultText:'cabinetText' }
     //   }
     //
@@ -980,7 +997,7 @@
         //
         // Fields:
         //   template:'map'
-        //   map:{ image:'objects/map.png', places:[...] }
+        //   map:{ image:'map.png', places:[...] }
         //   propertyGetters:{ travelBlocked:'scriptName' } optional global block
         //   travelBlockedText:'...' optional default blocked text
         //
@@ -1170,7 +1187,7 @@
         ShowMap:function (item) { if (!item) { return; } Engine.State.activeOverlay={type:'map',itemId:item.id,image:(item.map&&item.map.image)||item.mapImage||item.image||item.closeupImage||null}; },
         GetTargets:function () { var ov=Engine.State.activeOverlay; if (!ov) { return []; } if (ov.type==='map') { var item=this.GetItem(); var places=this.GetPlaces(item); var targets=[]; for (var i=0;i<places.length;i++) { var p=places[i]; if (!this.IsPlaceVisible(p) || !p.rect) { continue; } targets.push(Object.assign({},p,{id:p.id||p.targetRoomId||('place'+i),name:p.name||p.label||p.targetRoomId||'place',_overlayTarget:true,_entityType:'overlay',interactions:{lookAt:'template:map.lookPlace',walkTo:'template:map.travelPlace'}})); } return targets; } var raw=ov.hotspots||[]; return raw.map(function (h,i) { return Object.assign({id:h.id||('overlay'+i),_overlayTarget:true,_entityType:'overlay'},h); }); },
         HitTest:function (x,y) { var targets=this.GetTargets(); var best=null; var bestPriority=-Infinity; for (var i=0;i<targets.length;i++) { var t=targets[i]; if (t.rect && PointInRect(x,y,t.rect)) { var p=typeof t.hitPriority==='number'?t.hitPriority:0; if (p>=bestPriority) { best=t; bestPriority=p; } } } return best; },
-        Render:function () { var ov=Engine.State.activeOverlay; if (!ov) { return; } var image=ov.image; if (!image && ov.type==='map') { var item=this.GetItem(); image=item ? ((item.map&&item.map.image)||item.mapImage||item.closeupImage||item.image) : null; } var img=image ? Engine.Assets.GetImage(image) : null; if (img) { Engine.Renderer.DrawImage(img,0,0,LOGICAL_WIDTH,SCENE_HEIGHT); } else { Engine.Renderer.Rect(0,0,LOGICAL_WIDTH,SCENE_HEIGHT,'#101018'); } }
+        Render:function () { var ov=Engine.State.activeOverlay; if (!ov) { return; } var image=ov.image; if (!image && ov.type==='map') { var item=this.GetItem(); image=item ? ((item.map&&item.map.image)||item.mapImage||item.closeupImage||item.image) : null; } var img=image ? Engine.Assets.GetImage(image,ov.type==='map'?'map':'overlay') : null; if (img) { Engine.Renderer.DrawImage(img,0,0,LOGICAL_WIDTH,SCENE_HEIGHT); } else { Engine.Renderer.Rect(0,0,LOGICAL_WIDTH,SCENE_HEIGHT,'#101018'); } }
     };
     Engine.Validator = {
         Warn: function (message) { Engine.Debug.Warn('Game validation: '+message); },
@@ -1886,7 +1903,7 @@
             Engine.Dialogue.SetCurrentBlockDuration();
             Engine.Animations.BeginDialogueAnimation(speakerId, options);
             if (Engine.State.dialogue.voiceAudio) { Engine.State.dialogue.voiceAudio.pause(); Engine.State.dialogue.voiceAudio=null; }
-            if (options.voice) { var voice=new Audio(Engine.Assets.Resolve(options.voice)); voice.preload='auto'; Engine.State.dialogue.voiceAudio=voice; var pp=voice.play(); if (pp && pp.catch) { pp.catch(function () {}); } }
+            if (options.voice) { var voice=new Audio(Engine.Assets.Resolve(options.voice,'voice')); voice.preload='auto'; Engine.State.dialogue.voiceAudio=voice; var pp=voice.play(); if (pp && pp.catch) { pp.catch(function () {}); } }
         },
         SetCurrentBlockDuration: function () {
             var d=Engine.State.dialogue;
@@ -2311,7 +2328,7 @@
         // At this resolution, heavy antialiasing makes 1-pixel counters disappear.
         AntiAliasText: function (text, x, y, color, font, shadowColor) { this.Text(text,x+1,y+1,shadowColor||this.GetTextColor('verbShadowColor','#000000')); this.Text(text,x,y,color||'#ffffff'); },
         RenderVerbLabel: function (verb, selected) { var ui=this.GetUIConfig(); var color=selected ? (ui.verbSelectedColor||'#fff2a0') : (ui.verbColor||'#ffffff'); var shadow=ui.verbShadowColor||'#000000'; if (selected) { this.Rect(verb.rect.x+1,verb.rect.y-1,verb.rect.w-4,10,ui.verbSelectedBackColor||'rgba(88,72,30,0.55)'); this.Rect(verb.rect.x+1,verb.rect.y+8,verb.rect.w-4,1,ui.verbSelectedUnderlineColor||'rgba(255,230,120,0.55)'); } this.AntiAliasText((selected ? '> ' : '  ')+verb.label,verb.rect.x,verb.rect.y,color,null,shadow); },
-        RenderUIPanelBackground: function (plain) { var ui=this.GetUIConfig(); if (!plain && ui.verbInventoryBackground) { var bg=Engine.Assets.GetImage(ui.verbInventoryBackground); if (bg) { this.DrawImage(bg,0,UI_TOP); } else { this.Rect(0,UI_TOP,320,64,ui.panelColor||'#101018'); } } else { this.Rect(0,UI_TOP,320,64,ui.panelColor||'#101018'); } this.Rect(0,UI_TOP,320,1,ui.panelTopLineColor||'#909090'); },
+        RenderUIPanelBackground: function (plain) { var ui=this.GetUIConfig(); if (!plain && ui.verbInventoryBackground) { var bg=Engine.Assets.GetImage(ui.verbInventoryBackground,'ui'); if (bg) { this.DrawImage(bg,0,UI_TOP); } else { this.Rect(0,UI_TOP,320,64,ui.panelColor||'#101018'); } } else { this.Rect(0,UI_TOP,320,64,ui.panelColor||'#101018'); } this.Rect(0,UI_TOP,320,1,ui.panelTopLineColor||'#909090'); },
         BuildWrappedLines: function (text, maxWidth) { var words=String(text).split(' '); var lines=[]; var line=''; for (var n=0;n<words.length;n++) { var test=line+words[n]+' '; if (this.MeasureText(test)>maxWidth && n>0) { lines.push(line); line=words[n]+' '; } else { line=test; } } if (line.length) { lines.push(line); } return lines; },
         FitLineToWidth: function (text, maxWidth) { var result=String(text); if (this.MeasureText(result)<=maxWidth) { return result; } while (result.length>0 && this.MeasureText(result+'...')>maxWidth) { result=result.slice(0,-1); } return result+'...'; },
         RenderWrappedLinesInBox: function (text, x, y, maxWidth, maxHeight, color, useShadow) { var maxLines=Math.max(1, Math.floor(maxHeight / this.GetLineHeight())); var lines=this.BuildWrappedLines(text,maxWidth); if (lines.length>maxLines) { lines=lines.slice(0,maxLines); lines[maxLines-1]=this.FitLineToWidth(lines[maxLines-1],maxWidth); } for (var i=0;i<lines.length;i++) { var line=this.FitLineToWidth(lines[i],maxWidth); if (useShadow) { this.TextWithShadow(line,x,y+i*this.GetLineHeight(),color); } else { this.Text(line,x,y+i*this.GetLineHeight(),color); } } },
@@ -2332,16 +2349,16 @@
             this.RenderRoom(); this.RenderUI(); if (Engine.State.debug) { this.RenderDebug(); }
         },
         RenderGameSelector: function () { this.Rect(0,0,320,200,'#000020'); this.Text('Select an Adventure',88,34,'#ffff55'); var games=Engine.State.availableGames||[]; for (var i=0;i<games.length;i++) { this.Text(String(i+1)+'. '+games[i].title,70,62+i*18,'#ffffff'); } },
-        RenderTitleBackground: function () { var bg=Engine.CurrentGame && Engine.CurrentGame.titleBackground ? Engine.Assets.GetImage(Engine.CurrentGame.titleBackground) : null; if (bg) { this.DrawImage(bg,0,0); this.Rect(0,136,320,64,'#050507'); } else { this.Rect(0,0,320,200,'#000020'); } },
+        RenderTitleBackground: function () { var bg=Engine.CurrentGame && Engine.CurrentGame.titleBackground ? Engine.Assets.GetImage(Engine.CurrentGame.titleBackground,'titleBackground') : null; if (bg) { this.DrawImage(bg,0,0); this.Rect(0,136,320,64,'#050507'); } else { this.Rect(0,0,320,200,'#000020'); } },
         CenterText: function (text, y, color) { var w=this.MeasureText(text); this.TextWithShadow(text,Math.round((320-w)/2),y,color||'#ffffff'); },
         RenderIntro: function () { this.RenderTitleBackground(); var title=(Engine.CurrentGame && Engine.CurrentGame.title) ? Engine.CurrentGame.title : 'Adventure'; var author=(Engine.CurrentGame && Engine.CurrentGame.author) ? Engine.CurrentGame.author : 'Unknown Author'; this.CenterText(title,82,'#ffff55'); this.CenterText('by '+author,96,'#ffffff'); this.CenterText('Click to continue...',182,'#55ff55'); },
         RenderMainMenu: function () { this.RenderTitleBackground(); var title=(Engine.CurrentGame && Engine.CurrentGame.title) ? Engine.CurrentGame.title : 'Adventure'; this.CenterText(title,38,'#ffff55'); this.TextWithShadow((Engine.State.gameStarted ? 'Resume game' : 'Resume game'),112,68,Engine.State.gameStarted ? '#ffffff' : '#606060'); this.TextWithShadow('New game',112,82,'#ffffff'); this.TextWithShadow('Load game',112,96,'#ffffff'); this.TextWithShadow('Save game',112,110,Engine.State.gameStarted ? '#ffffff' : '#606060'); this.TextWithShadow('Options',112,124,'#ffffff'); },
         RenderSaveLoadMenu: function () { this.RenderTitleBackground(); var isSave=Engine.State.mode==='saveGame'; this.CenterText(isSave ? 'Save Game' : 'Load Game',38,'#ffff55'); this.RenderWrappedLinesInBox(Engine.State.saveLoadMessage||'',50,50,220,14,'#ffffff',true); var list=Engine.State.saveLoadList||[]; for (var i=0;i<list.length;i++) { this.Text(this.FitLineToWidth(String(i+1)+'. '+list[i].label,250),36,64+i*18,'#ffffff'); } if (!list.length) { this.RenderWrappedLinesInBox('No saved games are available.',62,82,200,24,'#909090',true); } this.CenterText('Back',182,'#ffffff'); },
         RenderOptions: function () { this.RenderTitleBackground(); this.CenterText('Options',38,'#ffff55'); this.Text('Music volume',58,68,'#ffffff'); this.Text('-  '+Math.round(Engine.State.audio.musicVolume*100)+'%  +',176,68,'#ffffff'); this.Text('Music mute',58,84,'#ffffff'); this.Text(Engine.State.audio.musicMuted ? 'On' : 'Off',176,84,'#ffffff'); this.Text('FX volume',58,100,'#ffffff'); this.Text('-  '+Math.round(Engine.State.audio.sfxVolume*100)+'%  +',176,100,'#ffffff'); this.Text('FX mute',58,116,'#ffffff'); this.Text(Engine.State.audio.sfxMuted ? 'On' : 'Off',176,116,'#ffffff'); this.CenterText('Back',154,'#ffffff'); },
-        RenderEnded: function () { var bgPath=Engine.State.endGame.background || (Engine.CurrentGame && Engine.CurrentGame.endBackground ? Engine.CurrentGame.endBackground : null); var bg=bgPath ? Engine.Assets.GetImage(bgPath) : null; if (bg) { this.DrawImage(bg,0,0); } else { this.Rect(0,0,320,200,'#000000'); } this.RenderEndingAnimation(); this.CenterText(Engine.State.endGame.title || 'The End',54,'#ffff55'); this.RenderWrappedLinesInBox(Engine.State.endGame.text || 'The adventure is complete.',48,82,224,64,'#ffffff',true); this.CenterText('Click to continue...',182,'#55ff55'); },
-        RenderEndingAnimation: function () { var anim=Engine.State.endGame.animation; if (!anim || !anim.image) { return; } var img=Engine.Assets.GetImage(anim.image); if (!img) { return; } var frameW=anim.frameW||img.width; var frameH=anim.frameH||img.height; if (!frameW || !frameH) { return; } var frames=Math.max(1,anim.frames||Math.floor((img.width||frameW)/frameW)||1); var fps=anim.fps||1; var elapsed=Math.max(0,this.frameTime-(Engine.State.endGame.animationStarted||0)); var frame=anim.frame||0; if (frames>1) { frame=Math.floor(elapsed*fps); if (anim.loop!==false) { frame=frame%frames; } else { frame=Math.min(frames-1,frame); } } var row=anim.row||0; var x=(typeof anim.x==='number') ? anim.x : Math.round((320-frameW)/2); var y=(typeof anim.y==='number') ? anim.y : 24; this.DrawImage(img,frame*frameW,row*frameH,frameW,frameH,x,y,frameW,frameH); },
+        RenderEnded: function () { var bgPath=Engine.State.endGame.background || (Engine.CurrentGame && Engine.CurrentGame.endBackground ? Engine.CurrentGame.endBackground : null); var bg=bgPath ? Engine.Assets.GetImage(bgPath,'endBackground') : null; if (bg) { this.DrawImage(bg,0,0); } else { this.Rect(0,0,320,200,'#000000'); } this.RenderEndingAnimation(); this.CenterText(Engine.State.endGame.title || 'The End',54,'#ffff55'); this.RenderWrappedLinesInBox(Engine.State.endGame.text || 'The adventure is complete.',48,82,224,64,'#ffffff',true); this.CenterText('Click to continue...',182,'#55ff55'); },
+        RenderEndingAnimation: function () { var anim=Engine.State.endGame.animation; if (!anim || !anim.image) { return; } var img=Engine.Assets.GetImage(anim.image,'hotspot'); if (!img) { return; } var frameW=anim.frameW||img.width; var frameH=anim.frameH||img.height; if (!frameW || !frameH) { return; } var frames=Math.max(1,anim.frames||Math.floor((img.width||frameW)/frameW)||1); var fps=anim.fps||1; var elapsed=Math.max(0,this.frameTime-(Engine.State.endGame.animationStarted||0)); var frame=anim.frame||0; if (frames>1) { frame=Math.floor(elapsed*fps); if (anim.loop!==false) { frame=frame%frames; } else { frame=Math.min(frames-1,frame); } } var row=anim.row||0; var x=(typeof anim.x==='number') ? anim.x : Math.round((320-frameW)/2); var y=(typeof anim.y==='number') ? anim.y : 24; this.DrawImage(img,frame*frameW,row*frameH,frameW,frameH,x,y,frameW,frameH); },
         RenderRoom: function () {
-            var room=Engine.Rooms.GetCurrentRoom(); var bg=Engine.Assets.GetImage(room.background); if (bg) { this.DrawImage(bg,0,0); } else { this.Rect(0,0,320,136,'#303050'); }
+            var room=Engine.Rooms.GetCurrentRoom(); var bg=Engine.Assets.GetImage(room.background,'roomBackground'); if (bg) { this.DrawImage(bg,0,0); } else { this.Rect(0,0,320,136,'#303050'); }
             var drawables=[];
             (room.hotspots||[]).forEach(function (h) { if (!Engine.RoomObjects.IsRenderHidden(h) && Engine.Renderer.GetHotspotSpritePath(h)) { var hy=Engine.Geometry.GetDrawableYForObject(h); drawables.push({type:'hotspot',data:h,y:hy,z:Engine.Geometry.GetDrawableZ(h)}); } });
             (room.characters||[]).forEach(function (c) { if (!c.hidden) { drawables.push({type:'character',data:c,y:c.y,z:Engine.Geometry.GetDrawableZ(c)}); } }); if (Engine.State.player.visible) { drawables.push({type:'player',data:Engine.State.player,y:Engine.State.player.y,z:Engine.Geometry.GetDrawableZ(Engine.State.player)}); }
@@ -2362,11 +2379,12 @@
         GetAnimationStart: function (actor, spec) { if (actor.customAnimation) { return actor.customAnimationStarted||0; } if (actor.dialogueAnimation) { return actor.dialogueAnimationStarted||0; } if (spec.name==='idle') { if (!actor.idleAnimationStarted) { actor.idleAnimationStarted=this.frameTime; } return actor.idleAnimationStarted||0; } return actor.animationStarted||0; },
         GetRoomScaleConfig: function () { var room=Engine.Rooms.GetCurrentRoom(); var game=Engine.CurrentGame||{}; return (room && (room.characterScale||room.perspectiveScale)) || game.characterScale || game.perspectiveScale || null; },
         GetActorVisualScale: function (actor) { var base=(typeof actor.scale === 'number') ? actor.scale : 1; if (actor.fixedScale || actor.scaleWithPerspective === false || actor.perspectiveScale === false) { return base; } var cfg=actor.characterScale||actor.perspectiveScale||this.GetRoomScaleConfig(); if (!cfg) { return base; } var room=Engine.Rooms.GetCurrentRoom(); var area=Engine.Geometry ? Engine.Geometry.GetPrimaryWalkArea(room) : ((room && room.walkableArea) ? room.walkableArea : {x:0,y:80,w:320,h:56}); var farY=(typeof cfg.farY === 'number') ? cfg.farY : ((typeof cfg.backY === 'number') ? cfg.backY : area.y); var nearY=(typeof cfg.nearY === 'number') ? cfg.nearY : ((typeof cfg.frontY === 'number') ? cfg.frontY : area.y+area.h); var farScale=(typeof cfg.farScale === 'number') ? cfg.farScale : ((typeof cfg.backScale === 'number') ? cfg.backScale : 1); var nearScale=(typeof cfg.nearScale === 'number') ? cfg.nearScale : ((typeof cfg.frontScale === 'number') ? cfg.frontScale : 1); if (nearY===farY) { return base*nearScale; } var t=Clamp((actor.y-farY)/(nearY-farY),0,1); return base*(farScale+(nearScale-farScale)*t); },
-        DrawSpriteActor: function (actor, isPlayer) { var sprite=Engine.CurrentGame.sprites[actor.spriteId]; var img=sprite ? Engine.Assets.GetImage(sprite.image) : null; if (!img) { return; } var spec=this.GetAnimationSpec(sprite,actor,isPlayer); var directional=(spec.directional === false) ? false : (sprite.directional || sprite.rows>=4); var directionRow=directional ? ({down:0,left:1,right:2,up:3}[actor.facing]||0) : 0; var row=(spec.rowOffset||0)+directionRow; var frames=Math.max(1,spec.frames||1); var fps=spec.fps||1; var frame=spec.frame||0; if (frames>1) { frame=Math.floor(Math.max(0,this.frameTime-this.GetAnimationStart(actor,spec))*fps)%frames; } var scale=this.GetActorVisualScale(actor); var dw=Math.max(1,Math.round(sprite.frameW*scale)); var dh=Math.max(1,Math.round(sprite.frameH*scale)); this.DrawImage(img,frame*sprite.frameW,row*sprite.frameH,sprite.frameW,sprite.frameH,Math.round(actor.x-dw/2),Math.round(actor.y-dh),dw,dh); },
+        DrawSpriteActor: function (actor, isPlayer) { var sprite=Engine.CurrentGame.sprites[actor.spriteId]; var img=sprite ? Engine.Assets.GetImage(sprite.image,'character') : null; if (!img) { return; } var spec=this.GetAnimationSpec(sprite,actor,isPlayer); var directional=(spec.directional === false) ? false : (sprite.directional || sprite.rows>=4); var directionRow=directional ? ({down:0,left:1,right:2,up:3}[actor.facing]||0) : 0; var row=(spec.rowOffset||0)+directionRow; var frames=Math.max(1,spec.frames||1); var fps=spec.fps||1; var frame=spec.frame||0; if (frames>1) { frame=Math.floor(Math.max(0,this.frameTime-this.GetAnimationStart(actor,spec))*fps)%frames; } var scale=this.GetActorVisualScale(actor); var dw=Math.max(1,Math.round(sprite.frameW*scale)); var dh=Math.max(1,Math.round(sprite.frameH*scale)); this.DrawImage(img,frame*sprite.frameW,row*sprite.frameH,sprite.frameW,sprite.frameH,Math.round(actor.x-dw/2),Math.round(actor.y-dh),dw,dh); },
         DrawActor: function (actor) { this.DrawSpriteActor(actor,true); },
         DrawCharacter: function (c) { this.DrawSpriteActor(c,false); },
         GetHotspotSpritePath: function (h) { if (!h) { return null; } var sprite=Engine.Properties.Get(h,'sprite',{purpose:'render'},h.sprite||null); if (sprite) { return sprite; } if (h.itemId && Engine.CurrentGame && Engine.CurrentGame.items && Engine.CurrentGame.items[h.itemId]) { var item=Engine.CurrentGame.items[h.itemId]; return Engine.Properties.Get(item,'worldSprite',{purpose:'render'},item.worldSprite || item.icon || null); } return null; },
-        DrawHotspotSprite: function (h) { var spritePath=this.GetHotspotSpritePath(h); if (!spritePath) { return; } var img=Engine.Assets.GetImage(spritePath); if (!img) { return; } var x=Engine.Properties.Get(h,'x',{purpose:'render'},h.x||0); var y=Engine.Properties.Get(h,'y',{purpose:'render'},h.y||0); var frameW=Engine.Properties.Get(h,'frameW',{purpose:'render'},h.frameW||null); var frameH=Engine.Properties.Get(h,'frameH',{purpose:'render'},h.frameH||null); if (frameW && frameH) { var frame=Engine.RoomObjects.GetFrame(h); this.DrawImage(img,frame*frameW,0,frameW,frameH,x,y,frameW,frameH); return; } this.DrawImage(img,x,y); },
+        GetHotspotSpriteRole: function (h) { if (!h) { return 'hotspot'; } var sprite=Engine.Properties.Get(h,'sprite',{purpose:'render'},h.sprite||null); if (sprite) { return 'hotspot'; } if (h.itemId && Engine.CurrentGame && Engine.CurrentGame.items && Engine.CurrentGame.items[h.itemId]) { var item=Engine.CurrentGame.items[h.itemId]; return item.worldSprite ? 'itemWorld' : 'itemIcon'; } return 'hotspot'; },
+        DrawHotspotSprite: function (h) { var spritePath=this.GetHotspotSpritePath(h); if (!spritePath) { return; } var img=Engine.Assets.GetImage(spritePath,this.GetHotspotSpriteRole(h)); if (!img) { return; } var x=Engine.Properties.Get(h,'x',{purpose:'render'},h.x||0); var y=Engine.Properties.Get(h,'y',{purpose:'render'},h.y||0); var frameW=Engine.Properties.Get(h,'frameW',{purpose:'render'},h.frameW||null); var frameH=Engine.Properties.Get(h,'frameH',{purpose:'render'},h.frameH||null); if (frameW && frameH) { var frame=Engine.RoomObjects.GetFrame(h); this.DrawImage(img,frame*frameW,0,frameW,frameH,x,y,frameW,frameH); return; } this.DrawImage(img,x,y); },
         GetDialogueTextColor: function (speakerId) { var d=Engine.State.dialogue; if (d.color) { return d.color; } var ui=this.GetUIConfig(); if (speakerId && Engine.CurrentGame && Engine.CurrentGame.characters && Engine.CurrentGame.characters[speakerId] && Engine.CurrentGame.characters[speakerId].dialogueColor) { return Engine.CurrentGame.characters[speakerId].dialogueColor; } if (speakerId==='player' && ui.playerDialogueColor) { return ui.playerDialogueColor; } return ui.dialogueTextColor || ui.textColor || '#ffffff'; },
         RenderSpeechAboveCharacter: function () {
             var d=Engine.State.dialogue; if (!d.active || !d.speakerId || (d.options && d.options.length)) { return; }
@@ -2392,7 +2410,7 @@
         // tiny icon art. The central renderer scales icons down, preserving aspect
         // ratio, so they fit inside the fixed inventory grid. It never scales small
         // icons up, which avoids blurred or chunky enlargement artefacts.
-        DrawInventoryIcon: function (item, x, y) { if (!item || !item.icon) { return; } var img=Engine.Assets.GetImage(item.icon); if (!img) { return; } var max=this.GetInventoryIconMaxSize(); var iw=img.naturalWidth||img.width; var ih=img.naturalHeight||img.height; if (!iw || !ih) { return; } var scale=Math.min(1,max.w/iw,max.h/ih); var dw=Math.max(1,Math.floor(iw*scale)); var dh=Math.max(1,Math.floor(ih*scale)); var dx=x+Math.floor((Engine.Inventory.cell-dw)/2); var dy=y+Math.floor((Engine.Inventory.cell-dh)/2); this.DrawImage(img,dx,dy,dw,dh); },
+        DrawInventoryIcon: function (item, x, y) { if (!item || !item.icon) { return; } var img=Engine.Assets.GetImage(item.icon,'itemIcon'); if (!img) { return; } var max=this.GetInventoryIconMaxSize(); var iw=img.naturalWidth||img.width; var ih=img.naturalHeight||img.height; if (!iw || !ih) { return; } var scale=Math.min(1,max.w/iw,max.h/ih); var dw=Math.max(1,Math.floor(iw*scale)); var dh=Math.max(1,Math.floor(ih*scale)); var dx=x+Math.floor((Engine.Inventory.cell-dw)/2); var dy=y+Math.floor((Engine.Inventory.cell-dh)/2); this.DrawImage(img,dx,dy,dw,dh); },
         // CONTENT AUTHORING NOTE FOR FUTURE AIS:
         // Inventory item names are displayed here as a hover tooltip. Game scripts
         // should set item.name and should not draw their own inventory labels.
