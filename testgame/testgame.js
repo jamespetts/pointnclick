@@ -162,13 +162,22 @@ PointClickEngine.RegisterGame({
                 { type:'wait', duration:0.45 },
                 { type:'clearAnimation', actorId:'woofer' },
                 { type:'say', speakerId:'caretaker', text:'Morning. Mind the door; it has opinions.', duration:1.8 },
+                { type:'moveCharacter', actorId:'caretaker', x:270, y:114, speed:38 },
+                { type:'script', script:'assertCaretakerAtDoor' },
+                { type:'setCharacter', actorId:'caretaker', facing:'up' },
+                { type:'say', speakerId:'caretaker', text:'One moment. I should make sure it latches.', duration:1.4 },
                 { type:'parallel', steps:[
                     { steps:[ { type:'animateObject', objectId:'door', animation:'open', reverse:true, holdFinal:true } ] },
-                    { steps:[ { type:'wait', duration:0.18 }, { type:'sound', sources:['door_close.mp3'] } ] }
+                    { steps:[ { type:'setAnimation', actorId:'caretaker', animation:'talk' }, { type:'wait', duration:0.18 }, { type:'sound', sources:['door_close.mp3'] }, { type:'wait', duration:0.32 }, { type:'clearAnimation', actorId:'caretaker' } ] }
                 ] },
+                { type:'clearAnimation', actorId:'caretaker' },
                 { type:'setObjectState', objectId:'door', values:{ open:false, locked:true, animation:'closed' } },
                 { type:'setFlag', name:'doorOpen', value:false },
                 { type:'setObjectVariable', objectId:'door', name:'introClosedCount', value:1 },
+                { type:'setObjectVariable', objectId:'door', name:'introLockChecked', value:1 },
+                { type:'say', speakerId:'caretaker', text:'There. Locked again. We cannot have doors getting ideas.', duration:1.8 },
+                { type:'moveCharacter', actorId:'caretaker', x:190, y:116, speed:38 },
+                { type:'script', script:'assertCaretakerReturned' },
                 { type:'if', condition:{ flag:'introDustPuffed' }, then:[ { type:'script', script:'assertIntroCutsceneState' } ], else:[ { type:'script', script:'introDustMissingFailure' } ] },
                 { type:'say', speakerId:'player', text:'That was unnecessarily theatrical.', duration:1.6 },
                 { type:'setFlag', name:'introCutsceneComplete', value:true }
@@ -184,8 +193,17 @@ PointClickEngine.RegisterGame({
             if (!previousResult || previousResult.status !== 'completed' || previousResult.action !== 'characterMove' || previousResult.actorId !== 'caretaker') { return api.MakeActionResult('blocked', { action:'script', reason:'caretakerMoveResultMissing', continueCutscene:false }); }
             return api.MakeActionResult('completed', { action:'script', reason:'caretakerMoveResultVerified' });
         },
+        assertCaretakerAtDoor: function (api, step, previousResult) {
+            if (!previousResult || previousResult.status !== 'completed' || previousResult.action !== 'characterMove' || previousResult.actorId !== 'caretaker' || Math.abs(previousResult.x - 270) > 1 || Math.abs(previousResult.y - 114) > 1) { return api.MakeActionResult('blocked', { action:'script', reason:'caretakerDidNotReachDoor', continueCutscene:false }); }
+            return api.MakeActionResult('completed', { action:'script', reason:'caretakerAtDoorVerified' });
+        },
+        assertCaretakerReturned: function (api, step, previousResult) {
+            if (!previousResult || previousResult.status !== 'completed' || previousResult.action !== 'characterMove' || previousResult.actorId !== 'caretaker' || Math.abs(previousResult.x - 190) > 1 || Math.abs(previousResult.y - 116) > 1) { return api.MakeActionResult('blocked', { action:'script', reason:'caretakerReturnMissing', continueCutscene:false }); }
+            return api.MakeActionResult('completed', { action:'script', reason:'caretakerReturnVerified' });
+        },
         assertIntroCutsceneState: function (api) {
             if (!api.GetFlag('introDustPuffed')) { return api.MakeActionResult('blocked', { action:'script', reason:'dustCallbackMissing', continueCutscene:false }); }
+            if (api.GetObjectVariable('door','introLockChecked',0) !== 1) { return api.MakeActionResult('blocked', { action:'script', reason:'doorLockCheckMissing', continueCutscene:false }); }
             return api.MakeActionResult('completed', { action:'script', reason:'introStateVerified' });
         },
         introDustMissingFailure: function (api) { return api.MakeActionResult('blocked', { action:'script', reason:'introDustDidNotComplete', continueCutscene:false }); },
