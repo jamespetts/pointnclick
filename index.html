@@ -56,6 +56,10 @@
         - PointClickEngine.GetPublicCapabilities() returns read-only descriptive
           metadata for documentation and tooling. It must not be used as a
           gameplay state store.
+        - PointClickEngine.GetDiagnostics() returns a concise plain-text report
+          for human testers to copy into an AI debugging session.
+        - PointClickEngine.CopyDiagnosticsToClipboard() tries to copy the same
+          report to the clipboard and also returns it as text.
         - No other PointClickEngine properties are public. In particular, game
           scripts must not read PointClickEngine.State, PointClickEngine.Rooms,
           PointClickEngine.Renderer, PointClickEngine.Templates or any other
@@ -114,6 +118,15 @@
           Save and Load.
         - RunScript exists for calling another named content script. There is no
           public RunHook API; lifecycle hooks are invoked only by the engine.
+
+        Diagnostics for human testers:
+        - If the game fails to boot, copy the red boot-error panel text.
+        - If the game boots but behaves incorrectly, open the browser console and
+          run PointClickEngine.GetDiagnostics(). Copy the returned text and send
+          it to the debugging AI with the game script and the relevant GDD part.
+        - The diagnostics report is intentionally concise: engine/game identity,
+          current mode/room and recent engine messages only. It is not a saved
+          game dump and should not be used as gameplay state.
 
         Getter query/self APIs:
         - query exposes read-only HasItem, GetFlag, GetVariable,
@@ -661,28 +674,105 @@
     // report detailed debug warnings for bad scope names, bad ids, missing scripts,
     // arithmetic on strings, non-finite numbers and division by zero.
     Engine.Debug = {
-        Add: function (level, message) {
-            var text='[PointClickEngine] '+level+': '+message;
+        MaxMessages:120,
+        SafeString: function (value) {
+            if (value === undefined) { return 'undefined';
+            }
+            if (value === null) { return 'null';
+            }
+            if (typeof value === 'string') { return value;
+            }
+            if (typeof value === 'number' || typeof value === 'boolean') { return String(value);
+            }
+            try { return JSON.stringify(value);
+            }
+            catch (err) { return '[unserializable]';
+            }
+        },
+        SanitiseCode: function (code) {
+            var text=String(code||'GENERAL').toUpperCase().replace(/[^A-Z0-9_]/g,'_');
+            return text || 'GENERAL';
+        },
+        FormatDetails: function (details) {
+            if (!details || typeof details !== 'object') { return '';
+            }
+            var keys=Object.keys(details).sort();
+            if (!keys.length) { return '';
+            }
+            return keys.map(function (key) { return key+'='+Engine.Debug.SafeString(details[key]);
+            }).join(' ');
+        },
+        Add: function (level, code, message, details) {
+            if (message === undefined) {
+                message=code;
+                code='GENERAL';
+            }
+            level=String(level||'INFO').toUpperCase();
+            code=this.SanitiseCode(code);
+            message=String(message||'');
+            var detailText=this.FormatDetails(details);
+            var line='[PCE]['+level+']['+code+'] '+message+(detailText ? ' | '+detailText : '');
             if (window.console) {
-                if (level === 'ERROR' && console.error) { console.error(text);
+                if (level === 'ERROR' && console.error) { console.error(line);
                 }
-                else if (level === 'WARN' && console.warn) { console.warn(text);
+                else if (level === 'WARN' && console.warn) { console.warn(line);
                 }
-                else if (console.log) { console.log(text);
+                else if (console.log) { console.log(line);
                 }
             }
             Engine.State.debugMessages=Engine.State.debugMessages||[];
-            Engine.State.debugMessages.push({ level:level, message:message });
-            while (Engine.State.debugMessages.length>60) { Engine.State.debugMessages.shift();
+            Engine.State.debugMessages.push({ level:level, code:code, message:message, details:details||null, text:line });
+            while (Engine.State.debugMessages.length>this.MaxMessages) { Engine.State.debugMessages.shift();
             }
+            return line;
         },
-        Warn: function (message) { this.Add('WARN',message);
+        Warn: function (code, message, details) { return this.Add('WARN',code,message,details);
         },
-        Error: function (message) { this.Add('ERROR',message);
+        Error: function (code, message, details) { return this.Add('ERROR',code,message,details);
         },
-        Info: function (message) { this.Add('INFO',message);
+        Info: function (code, message, details) { return this.Add('INFO',code,message,details);
+        },
+        GetLines: function () {
+            return (Engine.State.debugMessages||[]).map(function (entry) {
+                return entry && entry.text ? entry.text : Engine.Debug.SafeString(entry);
+            });
+        },
+        GetReport: function () {
+            var lines=[];
+            lines.push('PointClickEngine diagnostics');
+            lines.push('engineApi='+ENGINE_API_VERSION+' saveDataVersion='+SAVE_DATA_VERSION);
+            lines.push('gameId='+(Engine.State.gameId||'')+' mode='+(Engine.State.mode||'')+' room='+(Engine.State.currentRoomId||''));
+            lines.push('selectedVerb='+(Engine.State.selectedVerbId||'')+' inventoryItem='+(Engine.State.selectedInventoryItemId||''));
+            if (Engine.State.bootError) { lines.push('bootError='+Engine.State.bootError);
+            }
+            lines.push('messages:');
+            var messages=this.GetLines();
+            if (!messages.length) { lines.push('(none)');
+            }
+            else { messages.forEach(function (line) { lines.push(line);
+                });
+            }
+            return lines.join('\n');
+        },
+        CopyReport: function () {
+            var report=this.GetReport();
+            if (window.navigator && navigator.clipboard && navigator.clipboard.writeText) {
+                try { navigator.clipboard.writeText(report).catch(function () {});
+                }
+                catch (err) {}
+            }
+            return report;
         }
     };
+    if (window.addEventListener) {
+        window.addEventListener('error',function (event) {
+            Engine.Debug.Error('JS_UNCAUGHT','Uncaught JavaScript error.',{ message:event.message||'', source:event.filename||'', line:event.lineno||0, column:event.colno||0 });
+        });
+        window.addEventListener('unhandledrejection',function (event) {
+            var reason=event && event.reason ? event.reason : null;
+            Engine.Debug.Error('JS_UNHANDLED_PROMISE','Unhandled promise rejection.',{ reason:reason && reason.message ? reason.message : Engine.Debug.SafeString(reason) });
+        });
+    }
     // LIFECYCLE GUARDS
     // ----------------
     // Browser JavaScript is single-threaded for this engine's ordinary gameplay
@@ -2357,10 +2447,14 @@
         },
         GetSaveDataVersion:function () { return SAVE_DATA_VERSION;
         },
+        GetDiagnostics:function () { return Engine.Debug.GetReport();
+        },
+        CopyDiagnosticsToClipboard:function () { return Engine.Debug.CopyReport();
+        },
         GetPublicCapabilities:function () {
             return DeepClone({
                 registration:['RegisterGame','RegisterManifest'],
-                metadata:['GetEngineApiVersion','GetSaveDataVersion','GetPublicCapabilities'],
+                metadata:['GetEngineApiVersion','GetSaveDataVersion','GetPublicCapabilities','GetDiagnostics','CopyDiagnosticsToClipboard'],
                 scriptApi:['Say','Narrate','StartDialogue','ShowDialogue','AskText','AskNumber','AddItem','RemoveItem','HasItem','SetFlag','GetFlag','SetVariable','GetVariable','ChangeRoom','MoveCharacter','SetAnimation','ClearAnimation','SetObjectAnimation','ClearObjectAnimation','SetObjectState','GetObjectState','SetObjectVariable','GetObjectVariable','AddObjectVariable','ShowOverlay','CloseOverlay','PlaySound','StartCutscene','QueueCutscene','MakeActionResult','EndGame','ShowEnding','Save','Load'],
                 getterApi:['HasItem','GetFlag','GetVariable','GetRoomVariable','GetCharacterVariable','GetItemVariable','GetObjectVariable','GetProperty'],
                 templates:['door','key','map','pickup','container','switch','readable','device','furniture','barrier']
@@ -2403,7 +2497,7 @@
             node.style.cssText='position:absolute;left:1rem;right:1rem;bottom:1rem;max-height:45vh;overflow:auto;background:#200000;color:#ffffff;border:1px solid #ffffff;padding:0.75rem;white-space:pre-wrap;user-select:text;font:14px monospace;z-index:10;';
             document.body.appendChild(node);
         }
-        node.textContent='Boot error:\n'+message;
+        node.textContent='Boot error:\n'+message+'\n\nDiagnostics:\n'+Engine.Debug.GetReport();
     };
     Engine.Private.ClearCopyableErrorText = function () { var node=document.getElementById('pointClickEngineCopyableError');
         if (node) { node.parentNode.removeChild(node);
@@ -2411,6 +2505,7 @@
     };
     Engine.Private.ShowBootError = function (message) { Engine.State.mode = 'error';
         Engine.State.bootError = message;
+        Engine.Debug.Error('BOOT_ERROR','Boot failed.',{ message:message });
         Engine.Private.SetCopyableErrorText(message);
         try { Engine.Renderer.Render();
         } catch (err) { var ctx=Engine.Ctx;
@@ -2446,6 +2541,7 @@
             game.assetPath = entry.assetPath;
             if (!Engine.Validator.ValidateGame(game)) { throw new Error('Game validation failed:\n'+Engine.Validator.errors.join('\n'));
             }
+            Engine.Debug.Info('GAME_VALIDATED','Game validation passed.',{ gameId:game.id });
             Engine.Private.StartGame(game);
         }).catch(function (err) { Engine.Private.ShowBootError(err.message);
         });
