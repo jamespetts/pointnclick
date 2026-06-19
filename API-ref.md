@@ -1255,13 +1255,19 @@ Authoring checklist before validation:
 Validation workflow:
 
 1. LLM semantic validation: check all ids, scripts, templates, assets, hooks, dialogue forms, cutscene steps, save-state use, and template-vs-custom-script choices.
-2. Run validator:
+2. Run validator. For the canonical layout `gameId/gameId.js` with assets below `gameId/`, the validator infers `gameId/` as the asset root for existence checks:
 
 EXAMPLE_START
 python validator.py gameId/gameId.js --engine index.html --check-assets --report validation_report.txt
 EXAMPLE_END
 
-If exactly one game script exists below the directory:
+If the game script is not in the same folder as its assets, pass the asset folder explicitly. The asset root is relative to `index.html`:
+
+EXAMPLE_START
+python validator.py scripts/gameId.js --engine index.html --asset-root gameId/ --check-assets --report validation_report.txt
+EXAMPLE_END
+
+If exactly one game script exists below the directory, the validator can discover it and infer that script's parent folder as the asset root:
 
 EXAMPLE_START
 python validator.py --check-assets --report validation_report.txt
@@ -1279,6 +1285,30 @@ Validator interpretation:
 - `SCRIPT_REF_MISSING`: missing script.
 - `LEGACY_HOOK_USED`: unsupported hook name.
 
-## 15. GDD Parsing Placeholder
+## 15. Authoring AI Output Contract
+
+When an AI is asked to create a game from this API reference and the completed Game Design Document, it must produce a predictable package. The GDD is the source of design truth; if a required value is absent, the AI should ask a clarification question before generating code, or state an explicit assumption in the implementation notes if the workflow requires a complete first draft.
+
+Required deliverables:
+
+1. Implementation notes: game id, title, intended `assetPath`, engine API version, assumptions, and any requested engine extensions.
+2. Manifest output: either a complete `games.json` file or a clearly labelled `games.json` entry with `id`, `title`, `script`, `assetPath`, and `engineApi`.
+3. Game script: one `gameId/gameId.js` script that calls `PointClickEngine.RegisterGame({...})` exactly once and uses only the public authoring contract in this document.
+4. Asset manifest: every image, music, sound, and voice asset needed by the game, with canonical path, role folder, expected dimensions, spritesheet frame size where applicable, and a note for any placeholder asset.
+5. Generated or placeholder assets: assets should be placed under the canonical role folders below `gameId/`. If the AI cannot create the binary assets, it must still provide exact filenames, sizes, transparency requirements, and content descriptions.
+6. Puzzle dependency graph or walkthrough: the shortest intended solution path, optional branches, failure/refusal paths, and all required inventory/state dependencies.
+7. Validation report: the validator command used, including `--asset-root` if needed, and the resulting errors/warnings. Errors must be fixed before handoff. Warnings must be fixed or explicitly justified.
+8. Runtime test plan: every room transition, dialogue branch, inventory action, template puzzle, cutscene, save/load case, ending, and custom script that a human tester should exercise.
+
+Output rules for game scripts:
+
+- Use declarative data and templates first. Use custom scripts only for distinctive logic that the documented systems cannot express.
+- Do not rely on `index.html`, private engine objects, DOM APIs, browser timers, custom save/load systems, custom renderers, or custom inventory/dialogue/movement loops.
+- Keep all mutable story state in public saved-state APIs or template-owned runtime variables.
+- Ensure all dynamically selected images are also referenced by documented preloadable image fields.
+- Prefer validator-checkable ids, templates, dialogue actions, cutscene steps, transitions, and asset paths over clever script code.
+- If the GDD asks for behaviour outside this contract, list it under requested engine extensions instead of inventing an API.
+
+## 16. GDD Parsing Placeholder
 
 Future section: parse the completed Game Design Document and map it to rooms, entities, templates, assets, dialogue trees, cutscenes, validation checks, and human test scripts.

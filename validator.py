@@ -338,6 +338,32 @@ def check_asset(log, base, asset_root, path, role, where, exists):
         if not os.path.exists(full):
             log.warn('ASSET_FILE_MISSING', 'Asset file was not found.', where=where, path=normal)
 
+def normal_asset_root(path):
+    if path is None:
+        return None, None
+    value = path.strip().replace('\\', '/')
+    if not value or value == '.':
+        return '', None
+    if re.match(r'^(https?:)?//', value) or value.startswith('/') or '..' in value:
+        return None, 'unsafe-relative-path'
+    value = value.strip('/')
+    if value:
+        value += '/'
+    return value, None
+
+def infer_asset_root(script_path, engine_path):
+    base = os.path.dirname(os.path.abspath(engine_path or '.'))
+    script_dir = os.path.dirname(os.path.abspath(script_path or '.'))
+    try:
+        rel = os.path.relpath(script_dir, base).replace('\\', '/')
+    except Exception:
+        return ''
+    if rel == '.':
+        return ''
+    if rel.startswith('../') or rel == '..':
+        return ''
+    return rel.strip('/') + '/'
+
 def validate_script(log, scripts, name, where, required=False, template_ok=True):
     if not name:
         return
@@ -453,9 +479,20 @@ def validate_dialogue(log, game, scripts, item_ids):
                             if item and item not in item_ids:
                                 log.warn('ITEM_REF_MISSING', 'Dialogue references a missing item.', where=where + '.' + field + '.' + item_field, itemId=item)
 
-def validate_game(game, source_text, script_path, engine_path, log, check_assets):
+def validate_game(game, source_text, script_path, engine_path, log, check_assets, asset_root=None):
     base = os.path.dirname(os.path.abspath(engine_path or '.'))
-    asset_root = ''
+    if asset_root is None:
+        asset_root = infer_asset_root(script_path, engine_path)
+        if check_assets and asset_root:
+            log.info('ASSET_ROOT_INFERRED', 'Using inferred asset root for asset file checks.', assetRoot=asset_root)
+    else:
+        normal_root, root_error = normal_asset_root(asset_root)
+        if root_error:
+            log.error('ASSET_ROOT_INVALID', 'Asset root is not allowed.', assetRoot=asset_root, reason=root_error)
+            normal_root = ''
+        asset_root = normal_root
+        if check_assets:
+            log.info('ASSET_ROOT_USED', 'Using explicit asset root for asset file checks.', assetRoot=asset_root)
     game_id = sprop(game, 'id')
     if not game_id:
         log.error('GAME_ID_MISSING', 'Game id is missing.')
@@ -631,6 +668,7 @@ def run(argv):
     parser.add_argument('game_script', nargs='?', help='Game content script, e.g. testgame/testgame.js')
     parser.add_argument('--engine', default='index.html', help='Engine HTML file in the same top directory. Default: index.html')
     parser.add_argument('--check-assets', action='store_true', help='Also check that referenced asset files exist.')
+    parser.add_argument('--asset-root', default=None, help='Asset folder relative to the engine file. If omitted, inferred from the game script folder.')
     parser.add_argument('--report', default='', help='Optional path to write the same log output.')
     args = parser.parse_args(argv)
     log = Log()
@@ -665,7 +703,7 @@ def run(argv):
         return 1
     game = extract_game(text, log)
     if game:
-        validate_game(game, text, args.game_script, args.engine, log, args.check_assets)
+        validate_game(game, text, args.game_script, args.engine, log, args.check_assets, args.asset_root)
     log.summary()
     write_report(args.report, log)
     return 1 if log.errors else 0
