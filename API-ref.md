@@ -186,10 +186,21 @@ Field roles:
 - `image`, `animationImage`, `closeupImage`: overlay unless documented for map/end animation.
 - `map.image`, `mapImage`: map image.
 
+Asset size and image authoring constraints:
+
+- All image assets must be PNG files. Use transparency for character, object, inventory icon, and overlay elements that should not cover their rectangular bounds.
+- Room backgrounds and ordinary overlay/map images are drawn in the scene area and should be 320x136.
+- Title and ending backgrounds are drawn on the full canvas and should be 320x200.
+- UI verb/inventory background is drawn at y=136 and should be 320x64.
+- Character and object animations are spritesheets. Each frame is `frameW` x `frameH` pixels, arranged left to right.
+
 Audio:
 
-- Music resolves under `music/`; sound/voice resolves under `sounds/`.
-- Arrays are accepted for source lists; the current engine uses the first source.
+- Music resolves under `music/`; sound and voice resolve under `sounds/`.
+- Music and sound source-list fields must be arrays of relative filenames; the current engine uses the first element. Use `[]` for silence.
+- Voice fields/options are a single relative filename string, not an array.
+- Use browser-supported audio file types such as `.ogg`, `.mp3`, or `.wav`. The engine does not validate audio extensions.
+- Music loops until replaced or stopped; sound effects and voice are one-shot.
 
 
 ## 3. Public Browser Facade: Exact Method Contracts
@@ -255,7 +266,7 @@ PointClickEngine.RegisterGame({
   defaultRefusals:{},
   endings:{},
   ui:{},
-  rendering:{imageSmoothing:false}{imageSmoothing:false}
+  rendering:{imageSmoothing:false}
 });
 EXAMPLE_END
 
@@ -281,7 +292,7 @@ Top-level fields read by the engine:
 - `imageSmoothing:boolean`: alias for `rendering.imageSmoothing`.
 - `titleBackground:string`: PNG in `rooms/`.
 - `endBackground:string`: PNG in `rooms/`.
-- `titleMusic:array|string`, `menuMusic:array|string`, `endMusic:array|string`: music sources; prefer arrays.
+- `titleMusic:array`, `menuMusic:array`, `endMusic:array`: music source lists; use arrays, normally with one filename.
 
 Do not author runtime-added fields such as `assetPath` or `initialRooms` in the game script. `assetPath` belongs in the manifest.
 
@@ -320,7 +331,7 @@ Room fields:
 - `id:string`: optional, should match room key.
 - `name:string`, `displayName:string`.
 - `background:string`: PNG in `rooms/`; warned if missing.
-- `music:array|string`: room music; prefer array.
+- `music:array`: room music source list; use an array, normally with one filename.
 - `start:{x:number,y:number,facing:string}`: content-defined default start point.
 - `playerStart:{x:number,y:number,facing:string}`: content pattern for scripts; room entry uses passed coordinates.
 - `walkableArea:{x:number,y:number,w:number,h:number}`: broad validation and reachable-point area.
@@ -422,8 +433,9 @@ Object animation fields:
 - `fps:number`: frames per second; default 1.
 - `loop:boolean`.
 - `frame:number`: static frame when no runtime animation is active.
+- Object animation spritesheets use row 0 only. If `frameW` and `frameH` are present, frame n is cropped from `x=n*frameW,y=0`. If `frameW`/`frameH` are omitted, the whole image is drawn and animation frames cannot be cropped.
 
-Object animation runtime options for `api.SetObjectAnimation`: `reverse`, `holdFinal`, `onComplete`.
+Object animation runtime options for `api.SetObjectAnimation`: `reverse`, `holdFinal`, `onComplete`. Replacing an active object animation calls the previous `onComplete` with status `superseded`; `ClearObjectAnimation` calls it with status `cancelled`. The current renderer holds the last frame of a completed non-looping object animation until another animation is set or cleared; `holdFinal:false` is accepted but has no visible effect in this engine version.
 
 
 ## 7. Inventory Items, Maps, Overlays, Sprites, and Actors
@@ -448,7 +460,9 @@ Item fields read by the engine:
 - `name`, `displayName`, `description`, `defaultText`.
 - `icon:string`: PNG in `objects/`.
 - `worldSprite:string`: PNG in `objects/`.
-- `image`, `closeupImage`, `lookOverlay`, `closeupOverlay`.
+- `lookOverlay`, `closeupOverlay`: overlay specs shown by `lookAt`/`readable` interactions.
+- `closeupImage:string`: PNG in `objects/`; preloaded overlay/map fallback.
+- `image:string`: legacy map fallback only; for new content prefer `lookOverlay`, `closeupOverlay`, `closeupImage`, `map.image`, or `mapImage`. Do not rely on bare `item.image` unless the same PNG is also referenced by a preloaded field.
 - `template`, `templateId`, `kind`, `templates`.
 - `interactions`, `refusals`, `properties`, getter maps.
 - `map` for map template.
@@ -458,7 +472,7 @@ Item fields read by the engine:
 
 Overlay spec fields:
 
-- `image:string`: PNG in `objects/`.
+- `image:string`: PNG in `objects/`, normally 320x136.
 - `itemId:string` optional.
 - `hotspots:array` optional; overlay targets use `id`, `name`, `rect`, `interactions`, `refusals`, and other ordinary target fields.
 
@@ -500,9 +514,9 @@ sprites:{
 }
 EXAMPLE_END
 
-Sprite fields: `image`, `frameW`, `frameH`, `directional`, `rows`, `animations`, `idleFrames`, `idleFps`. Directional row order is down, left, right, up. `talk` is used automatically by `api.Say()` if present.
+Sprite fields: `image`, `frameW`, `frameH`, `directional`, `rows`, `animations`, `idleFrames`, `idleFps`, `walkFrames`, `walkFps`. `frameW` and `frameH` are required for actor spritesheets. Directional row order is down, left, right, up. An animation entry may define `frames`, `fps`, `frame`, `rowOffset`, and `directional:false`. For directional sprites, `rowOffset` is added before the facing row is applied. `talk` is used automatically by `api.Say()` if present.
 
-Actor/player/room character fields: `id`, `name`, `displayName`, `spriteId`, `x`, `y`, `facing`, `visible`, `hidden`, `controllable`, `speed`, `scale`, `scaleWithPerspective`, `fixedScale`, `followPlayer`, `dialogueColor`, `walkTo`, `rect`, `interactions`, `refusals`, effective property maps.
+Actor/player/room character fields: `id`, `name`, `displayName`, `spriteId`, `x`, `y`, `facing`, `visible`, `hidden`, `controllable`, `speed`, `scale`, `scaleWithPerspective`, `perspectiveScale`, `fixedScale`, `followPlayer`, `dialogueColor`, `walkTo`, `rect`, `interactions`, `refusals`, effective property maps. Top-level `game.characters` supplies reusable character metadata such as names/dialogue colours and scoped-variable existence; NPCs that should appear, move, or be clicked must also be placed in `room.characters`.
 
 
 ## 8. Interactions, Refusals, Effective Properties, and Getter API
@@ -535,10 +549,15 @@ EXAMPLE_END
 
 Interaction value types:
 
-- Script name string naming a function in `game.scripts`.
+- Script name string naming a function in `game.scripts`. Interaction scripts are called as `function (api, command, target, self)`. `command` has `verbId`, `targetId`, `inventoryItemId`, `roomId`, `x`, `y`, and may have `_lastActionResult`. `target` is the clicked entity. `self` is the saved-state facade for `target`.
 - Template action string `template:templateName.actionName`.
 
 Template actions are valid only in interaction fields. Do not call private template internals.
+
+Interaction key lookup:
+
+- For ordinary verbs, use the verb id, such as `lookAt` or `open`.
+- For inventory-on-target `use`/`give`, the engine first checks `verbId:inventoryItemId` on the target or linked item, then checks the reverse key `verbId:targetId` on the selected inventory item, then falls back to `verbId`. Use these specific keys for one-off transitive interactions; use `combine` or `toolTarget` for reusable patterns.
 
 Refusal lookup order:
 
@@ -745,13 +764,22 @@ Adds `use`, `give`. Fields: `distractions`, `distractionRefusalText`. Rule key i
 
 ## 10. Runtime Script API: Exact Method Contracts
 
-Scripts in `game.scripts` receive `(api, context)`. Use `api` for all mutation and presentation. Unless stated otherwise, methods return `undefined`.
+Use `api` for all mutation and presentation. Unless stated otherwise, methods return `undefined`. Script function signatures depend on caller:
+
+- `api.RunScript`, hooks, input-prompt scripts, and dialogue condition/action/choice scripts receive `(api, context)`.
+- Interaction scripts receive `(api, command, target, self)`.
+- Property getters receive `(query, self, context)`.
+- Template optional scripts and map-place scripts receive `(api, self, context)`.
+- Cutscene script steps receive `(api, step, previousResult)`.
+- Object animation completion scripts receive `(api, result)`.
+
+Do not assume a script called from one system receives the context shape used by another system.
 
 ### Dialogue and input
 
 #### `api.Say(speakerId:string|null, text:string, options?:object) -> undefined`
 
-Formats `text` and shows spoken dialogue. Useful options: `duration:number`, `voice:string|array`, `choices:array`, `onComplete:function(result)`.
+Formats `text` and shows spoken dialogue. Useful options: `duration:number`, `voice:string`, `choices:array`, `onComplete:function(result)`.
 
 #### `api.Narrate(text:string, options?:object) -> undefined`
 
@@ -1091,8 +1119,8 @@ Supported step types:
 - `{type:'parallel',steps:[...]}`.
 - `{type:'if',condition:condition,then:[...],else:[...]}`; accepts `conditions`; true branch may use `steps`.
 - `{type:'wait',duration:number}`; accepts `seconds`; units are seconds; zero/negative completes immediately.
-- `{type:'say',speakerId:'actorId',text:'...',duration?:number,voice?:string|array}`; accepts `actorId`.
-- `{type:'narrate',text:'...',duration?:number,voice?:string|array}`.
+- `{type:'say',speakerId:'actorId',text:'...',duration?:number,voice?:string}`; accepts `actorId`.
+- `{type:'narrate',text:'...',duration?:number,voice?:string}`.
 - `{type:'walk',x:number,y:number,targetId?:string}`.
 - `{type:'moveCharacter',actorId:'npcId',x:number,y:number,speed?:number,hideOnComplete?:boolean}`; accepts `characterId`.
 - `{type:'animateObject',objectId:'objectId',animation:'name',wait?:boolean,reverse?:boolean,holdFinal?:boolean}`; accepts `animationName`; default `wait:true`; default `holdFinal:true`.
@@ -1105,7 +1133,7 @@ Supported step types:
 - `{type:'setAnimation',actorId:'id',animation:'name',options?:object}`; accepts `animationName`.
 - `{type:'clearAnimation',actorId:'id'}`.
 - `{type:'clearObjectAnimation',objectId:'id'}`.
-- `{type:'sound',sources?:array,sound?:string|array,sfx?:string|array}`.
+- `{type:'sound',sources?:array,sound?:array,sfx?:array}`; use an array, normally with one filename.
 
 Cutscene condition forms: array means all pass; `{flag:'flagName',value?:boolean}` means flag equals `value !== false`; `{notFlag:'flagName'}`; `{hasItem:'itemId'}`; `{missingItem:'itemId'}`. Other condition forms return true; use a script step for complex conditions.
 
@@ -1129,7 +1157,7 @@ endings:{
 }
 EXAMPLE_END
 
-Ending fields: `title`, `text`, `background`, `endBackground`, `music`, `endMusic`, `sound`, `sfx`, `animation`. If ending music is omitted, engine falls back to `game.endMusic`; use `music:[]` for silence.
+Ending fields: `title`, `text`, `background`, `endBackground`, `music`, `endMusic`, `sound`, `sfx`, `animation`. `music`/`endMusic`/`sound`/`sfx` must be source-list arrays. If ending music is omitted, engine falls back to `game.endMusic`; use `music:[]` for silence. `animation` may be `{image,x,y,frameW,frameH,frames,fps,loop,row}`; supported shorthand fields are `animationImage`, `animationX`, `animationY`, `animationFrameW`, `animationFrameH`, `animationFrames`, `animationFps`, and `animationLoop`.
 
 UI fields: `verbInventoryBackground`, `verbColor`, `verbSelectedColor`, `textColor`, `dialogueColor`. Rendering: `rendering.imageSmoothing` or top-level `imageSmoothing`.
 
