@@ -3,11 +3,11 @@
 Engine API: 1
 Authoring language: browser JavaScript in a `.js` game script.
 
-This is the complete public authoring contract for game scripts. The authoring AI will not receive `index.html`. Use only the APIs, data shapes, templates, and validation rules documented here. If a requested design cannot be expressed with this contract, say that the engine needs an extension; do not invent private APIs.
+This is the complete public authoring contract for game scripts. The authoring AI will not receive the game engine itself. Use only the APIs, data shapes, templates, and validation rules documented here. If a requested design cannot be expressed with this contract, say that the engine needs an extension and specify what it is.
 
 Examples use indented plain text blocks labelled `EXAMPLE_START` / `EXAMPLE_END`; no fenced code blocks are used so this file can be embedded in prompts safely.
 
-## 0. Genre, Mental Model, and Authoring Priorities
+## 1. Genre, Mental Model, and Authoring Priorities
 
 PointClickEngine creates early-1990s point-and-click adventure games in the style of SCUMM-era adventures: a 320x200 logical screen, painted room scene, lower verb/inventory interface, clickable hotspots, walking actors, inventory puzzles, dialogue trees, simple sprite animations, overlays/maps, cutscenes, save/load, refusals, and multiple endings.
 
@@ -22,7 +22,7 @@ Author in this priority order:
 Do not implement custom rendering, movement loops, inventory UI, dialogue UI, save/load systems, or timer-driven cutscene systems.
 
 
-## 0A. Core Authoring Principles for This Engine
+## 2. Core Authoring Principles for This Engine
 
 This engine has one canonical path for each major gameplay system. An authoring AI should design content so it flows through these paths rather than inventing parallel systems.
 
@@ -43,7 +43,7 @@ Decision process for authoring an interaction:
 - If the behaviour is a sequence of presentation/movement/state changes, use a cutscene.
 - Use a custom script only for distinctive game-specific logic that cannot be expressed by the above.
 
-## 0B. Glossary of Engine Concepts
+## 3. Glossary of Engine Concepts
 
 Declarative data means object, room, item, dialogue, cutscene, and template definitions written as data fields in the game definition. Declarative data is preferred because it is validator-checkable and uses the engine's canonical systems.
 
@@ -79,7 +79,7 @@ A template-owned runtime variable is an object/item variable used by a template,
 
 Validator-checkable means the validator can inspect the structure: referenced ids, script names, asset paths, templates, hooks, dialogue nodes, and many geometry fields. Prefer these structures so errors are caught before runtime.
 
-## 1. Screen, Coordinates, Verbs, and UI
+## 4. Screen, Coordinates, Verbs, and UI
 Screen:
 
 - Canvas logical size: `320x200`.
@@ -115,7 +115,7 @@ Presentation:
 - Actor `x`/`y` coordinates are foot/baseline points; actor sprites draw centred on `x` and above `y`. Hotspot/object `x`/`y` coordinates are top-left drawing coordinates.
 
 
-## 2. Files, Manifest, Assets, and Registration
+## 5. Files, Manifest, Assets, and Registration
 
 Folder layout:
 
@@ -210,8 +210,19 @@ Audio:
 - Use browser-supported audio file types such as `.ogg`, `.mp3`, or `.wav`. The engine does not validate audio extensions.
 - Music loops until replaced or stopped; sound effects and voice are one-shot.
 
+Audio authoring deliverables:
+- The GDD is expected to give general music and sound-effect direction, not a complete cue-by-cue specification. Do not require the human to fill in per-cue music or sound-effect blocks.
+- Music is normally expected for an early-1990s point-and-click adventure, even if the style is MIDI-like and the runtime file is MP3 or OGG. Use `[]` only where silence is intentional, such as a deliberately quiet room, title pause, or ending beat.
+- Sound effects are optional and may default to silence. Silent sound effects should be represented by omitting the effect or using `[]`/`null` in public APIs. Do not create placeholder sound files for effects the human has not chosen to include.
+- From the GDD's general audio overview, room moods, cutscenes, endings, and pacing, the authoring AI must derive a music cue manifest. Each cue entry must include id, filename, rooms/screens/endings using it, purpose/mood, style/instrumentation, tempo/energy, looping notes, and an AI music-generator prompt of 1000 characters or fewer.
+- Multiple rooms may share one music cue. Prefer reuse for rooms with the same mood or hub area rather than generating unnecessary tracks.
+- From the GDD's general sound-effect direction and the implemented gameplay, the authoring AI must create an optional sound-effect manifest. Each entry must include id, filename, required/optional status, trigger/use, description, an AI sound-generator prompt of 1000 characters or fewer, and implementation notes if needed.
+- Required sound effects are only those needed for gameplay comprehension, timing, feedback, or a specified dramatic beat. Optional effects may be listed for human selection without being referenced by the game script.
+- If a listed optional effect is not referenced by the game script, mark it as optional in the asset manifest and do not require it for validation or runtime testing.
+- Keep audio prompts original and concise. Describe mood, instrumentation, timing, texture, loop behaviour, and era flavour; do not request imitation of a living artist or copying a specific copyrighted track.
 
-## 3. Public Browser Facade: Exact Method Contracts
+
+## 6. Public Browser Facade: Exact Method Contracts
 
 Use these only before runtime/for diagnostics. Runtime gameplay scripts use the `api` object documented later.
 
@@ -250,7 +261,7 @@ Returns a diagnostic report containing engine/save versions, game id, current mo
 Returns the same diagnostic report and attempts to copy it to the clipboard if the browser permits it.
 
 
-## 4. Game Script and Top-Level Game Definition
+## 7. Game Script and Top-Level Game Definition
 
 A game script must register one game:
 
@@ -306,7 +317,7 @@ Top-level fields read by the engine:
 Do not author runtime-added fields such as `assetPath` or `initialRooms` in the game script. `assetPath` belongs in the manifest.
 
 
-## 5. Rooms, Geometry, Transitions, and Triggers
+## 8. Rooms, Geometry, Transitions, and Triggers
 
 Rooms are stored in `game.rooms` as an object keyed by room id. The key is the canonical id. If a room object contains `id`, it should match the key.
 
@@ -427,7 +438,7 @@ Trigger zone fields:
 Trigger scripts receive `(api, context)` with context `{actor,zone,room,roomId,object}`. `object` is the source hotspot for hotspot trigger zones, otherwise null.
 
 
-## 6. Room Hotspots/Objects and Object Animation
+## 9. Room Hotspots/Objects and Object Animation
 
 Hotspots live in `room.hotspots`. Their ids are globally scoped saved object ids and must be unique across all rooms.
 
@@ -493,7 +504,7 @@ Object animation fields:
 Object animation runtime options for `api.SetObjectAnimation`: `reverse`, `holdFinal`, `onComplete`. Replacing an active object animation calls the previous `onComplete` with status `superseded`; `ClearObjectAnimation` calls it with status `cancelled`. The current renderer holds the last frame of a completed non-looping object animation until another animation is set or cleared; `holdFinal:false` is accepted but has no visible effect in this engine version.
 
 
-## 7. Inventory Items, Maps, Overlays, Sprites, and Actors
+## 10. Inventory Items, Maps, Overlays, Sprites, and Actors
 
 Item syntax:
 
@@ -574,7 +585,7 @@ Sprite fields: `image`, `frameW`, `frameH`, `directional`, `rows`, `animations`,
 
 Actor/player/room character fields: `id`, `name`, `displayName`, `spriteId`, `x`, `y`, `facing`, `visible`, `hidden`, `controllable`, `speed`, `scale`, `scaleWithPerspective`, `perspectiveScale`, `characterScale`, `fixedScale`, `followPlayer`, `followDistance`, `avoidanceRadius`, `personalSpace`, `avoidanceDisabled`, `avoidanceLocked`, `dialogueColor`, `walkTo`, `rect`, `hitW`, `hitH`, `rectW`, `rectH`, `interactions`, `refusals`, effective property maps. Top-level `game.characters` supplies reusable character metadata such as names/dialogue colours and scoped-variable existence; NPCs that should appear, move, or be clicked must also be placed in `room.characters`. If a room character lacks `rect`, the engine derives it from `x`/`y` using `hitW`/`hitH` or `rectW`/`rectH`, default 16x16, with `x` centred and `y` as the foot point. `api.MoveCharacter()` moves NPCs directly to `x`/`y` and does not use `walkGraph` pathfinding. `followTarget`, `lastMoveX`, `lastMoveY`, `moveTarget` and animation timing fields are runtime state; do not author them except in saved-state restoration generated by the engine.
 
-## 8. Interactions, Refusals, Effective Properties, and Getter API
+## 11. Interactions, Refusals, Effective Properties, and Getter API
 
 This section explains how authoring data becomes runtime behaviour. For an authoring AI, the key rule is: do not write scripts merely to vary text, visibility, blocking, sprites, availability, or refusals by state. Use effective properties, template runtime variables, and getters.
 
@@ -702,7 +713,7 @@ Avoid these mistakes:
 - Do not mutate state in const getters. If mutation is unavoidable, declare the getter in `nonConstPropertyGetters` or `mutablePropertyGetters` and keep the mutation minimal and saved-state-safe.
 
 
-## 9. Templates
+## 12. Templates
 
 A template is a declarative behaviour package. It can add default interactions, refusals, effective properties, and runtime state conventions to an entity. Templates are the engine's main way to author common point-and-click adventure behaviours without custom scripts.
 
@@ -829,7 +840,7 @@ Adds `lookAt`, `use`. Fields: `unlockBlocked`, `unlockBlockedText`, `unlocksPlac
 Adds `use`, `give`. Runtime variable: `distracted`. Fields: `distractions`, `distractionRefusalText`. Source is the selected inventory item/subject, or absent for intransitive use. Rule key is source id or `default`, with `'*'` fallback through the shared rule lookup. On success it sets `distracted=1`, applies rule effects, then says `rule.text` using `rule.speakerId` or the target id. On failure it narrates the rule refusal or `distractionRefusalText`.
 
 
-## 10. Runtime Script API: Exact Method Contracts
+## 13. Runtime Script API: Exact Method Contracts
 
 Use `api` for all mutation and presentation. Unless stated otherwise, methods return `undefined`. Script function signatures depend on caller:
 
@@ -1063,7 +1074,7 @@ Saves slot; default `'1'`. The built-in menus expose slots 1..5. Saving is block
 Loads slot; default `'1'`. Loads only compatible saves for the same game id and engine API/save-data version. Loading bumps lifecycle guards and cancels stale deferred callbacks.
 
 
-## 11. Lifecycle Hooks
+## 14. Lifecycle Hooks
 
 Hook values are script name strings or arrays. Hook scripts receive `(api, context)`. Context is deep-cloned and frozen; do not mutate it.
 
@@ -1090,7 +1101,7 @@ Unsupported legacy hooks: `onEnter`, `onExit`, `onBeforeEnter`, `onAfterEnter`, 
 Lifecycle guard rule: deferred callbacks from movement, dialogue, cutscenes, character movement, object animation, room changes, loads, new games, and endings are invalidated when superseded. Use engine cutscenes/callbacks, not raw browser timers, for story sequencing.
 
 
-## 12. Dialogue Trees
+## 15. Dialogue Trees
 
 Dialogue tree syntax:
 
@@ -1162,7 +1173,7 @@ Unknown dialogue condition warns and returns true. Unknown action warns and does
 Text placeholders: `{{var:name}}`, `{{flag:name}}`, `{{room:roomId.name}}`, `{{character:characterId.name}}`, `{{item:itemId.name}}`, `{{playerName}}`. Bare `{{name}}` is also accepted as shorthand for global variable `name`.
 
 
-## 13. Cutscenes
+## 16. Cutscenes
 
 Use `api.StartCutscene(steps, options)` or `api.QueueCutscene(steps, options)`. `steps` may be a single step or array.
 
@@ -1207,7 +1218,7 @@ Cutscene condition forms: array means all pass; `{flag:'flagName',value?:boolean
 There is no built-in cutscene `changeRoom` step. Use a script step calling `api.ChangeRoom()`. Unknown cutscene step types are skipped and treated as completed, so validation should catch typos before runtime.
 
 
-## 14. Endings, UI, Save/Load, and Validation
+## 17. Endings, UI, Save/Load, and Validation
 
 Ending syntax:
 
@@ -1285,7 +1296,7 @@ Validator interpretation:
 - `SCRIPT_REF_MISSING`: missing script.
 - `LEGACY_HOOK_USED`: unsupported hook name.
 
-## 15. Authoring AI Output Contract
+## 18. Authoring AI Output Contract
 
 When an AI is asked to create a game from this API reference and the completed Game Design Document, it must produce a predictable package. The GDD is the source of design truth; if a required value is absent, the AI should ask a clarification question before generating code, or state an explicit assumption in the implementation notes if the workflow requires a complete first draft.
 
@@ -1309,22 +1320,22 @@ Output rules for game scripts:
 - Prefer validator-checkable ids, templates, dialogue actions, cutscene steps, transitions, and asset paths over clever script code.
 - If the GDD asks for behaviour outside this contract, list it under requested engine extensions instead of inventing an API.
 
-## 16. Using the Game Design Document
+## 19. Using the Game Design Document
 
 The completed Game Design Document is the design source of truth. The authoring AI must convert it into a complete, original, validator-checkable PointClickEngine package while obeying this API reference.
 
-### 16A. Required AI process for a completed GDD
+### 20. Required AI process for a completed GDD
 
 1. Parse the GDD into a normalized plan: core premise, setting, style, plot control level, rooms, characters, puzzles, items, dialogue needs, cutscenes, endings, themes, assets, and constraints.
 2. Identify missing or ambiguous information. Ask clarification questions only when reasonably necessary to avoid a materially wrong game, a contradiction, or an impossible implementation. Do not ask questions merely because optional detail is blank; apply the template defaults and state assumptions.
 3. Research the requested genre, subgenre, period, and any reference games or works in detail. Find real walkthroughs for games of that type, especially 1990s point-and-click adventures where relevant. Analyse puzzle flow, room gating, inventory dependencies, dialogue loops, hinting, pacing, tone, UI conventions, and ending structure.
-4. Do not copy any puzzle, room layout, joke, character, dialogue, image, music, or prose from the research. Use research only to synthesize original patterns and genre flavour.
+4. Do not copy any puzzle, room layout, joke, character, dialogue, image, music, or prose exactly from the research. Use research to synthesize original patterns and genre flavour.
 5. For each named character, build a voice brief from the GDD and, where helpful, research the character's role, profession, period, region, genre archetype, motives, and comparable public examples. Capture personality, diction, idiom, rhythm, humour style, and motives without copying protected dialogue or imitating a real person so closely that the output becomes non-original.
 6. Map the design to engine systems: rooms to `game.rooms`, room travel to `transitionZones`, standard object behaviour to templates, branching conversation to `dialogueTrees`, staged presentation to cutscenes, persistent state to public flags/variables/scoped variables/object variables, and endings to `game.endings`.
 7. Prefer the smallest implementation that satisfies the GDD. Use declarative data and templates before custom scripts. If the GDD asks for behaviour outside this contract, list a requested engine extension instead of inventing a private API.
 8. Produce the required deliverables from the Authoring AI Output Contract, including implementation notes, manifest, game script, asset manifest, style reference sheet, walkthrough/dependency graph, validation report, and runtime test plan.
 
-### 16B. Clarification rules
+### 21. Clarification rules
 
 Ask the human before coding only if:
 - the title, setting, premise/objective, or player character is absent and cannot be sensibly inferred;
@@ -1341,7 +1352,7 @@ Do not ask if:
 
 When asking, group questions into the fewest possible numbered questions. If proceeding with assumptions, list them in the implementation notes.
 
-### 16C. Research-to-design rules
+### 22. Research-to-design rules
 
 The AI's research should extract reusable design patterns, not content. Useful patterns include:
 - verb/object and inventory interactions;
@@ -1355,7 +1366,7 @@ The AI's research should extract reusable design patterns, not content. Useful p
 
 For serious games, keep jokes sparse or absent and use atmosphere, mystery, music, pacing, and environmental detail to carry tone. For comic games, use consistent character-driven humour rather than random gags.
 
-### 16D. GDD-to-engine mapping checklist
+### 23. GDD-to-engine mapping checklist
 
 - Title and game id -> manifest entry and top-level `id`/`title`.
 - Setting, style, motifs -> room descriptions, asset prompts, music/sound notes, text tone, and title/end screens.
@@ -1368,7 +1379,7 @@ For serious games, keep jokes sparse or absent and use atmosphere, mystery, musi
 - Art style -> actual assets and the additional `style_reference_sheet.png`.
 - Themes/motifs -> recurring object descriptions, room details, dialogue subtext, puzzle metaphors, and ending language.
 
-### 16E. Art asset workflow from the GDD
+### 24. Art asset workflow from the GDD
 
 In addition to actual runtime assets, the AI must create one style reference sheet named `style_reference_sheet.png` unless the human explicitly disables it. This file is not referenced by the game script. It is a reusable visual brief for future asset-generation sessions.
 
@@ -1380,234 +1391,23 @@ The sheet must contain:
 
 The asset manifest must say that future sessions creating graphical assets should be given the GDD, asset manifest, and `style_reference_sheet.png` so that new assets remain stylistically coherent.
 
-#### 16F. GDD defaults and invariant workflow rules
+#### 25. GDD defaults and invariant workflow rules
 
-The GDD template intentionally contains only game-specific design choices. Do not require the human to repeat invariant engine, packaging, validation, asset-handoff, or tester-handoff instructions in every GDD. Apply these defaults unless the GDD overrides them:
+The GDD template intentionally contains only game-specific design choices. Apply these defaults unless the GDD overrides them:
 - Engine style: early-1990s verb/inventory point-and-click adventure.
 - Room count: 6-10 rooms.
-- World structure: hub-and-spoke with gentle gating.
+- World structure: mixed linear and hub-and-spoke with gentle gating.
 - Puzzle difficulty: medium.
 - Moon logic: low; strange solutions must be signposted.
 - Failure model: no player death and no unwinnable dead ends.
 - Endings: one good ending.
 - AI invention: allowed for connective plot, minor characters, rooms, puzzles, dialogue, jokes, and cutscenes if consistent with the GDD.
 - Art default: 1990s painted pixel-art backgrounds, readable silhouettes, slightly exaggerated character sprites, side-on 320x136 room scenes.
-- Audio default: light MIDI-like room music, short one-shot effects, and silence where unspecified.
-- Cutscene default: extra AI-added cutscenes should be limited to intro, major reveal, puzzle completion, and ending moments unless the GDD asks for more.
+- Audio default: light MIDI-like room music rendered as MP3 or OGG. Music should normally be present for rooms/screens unless the GDD requests sparse or silent music. Sound effects are optional and default to silence where unspecified; the authoring AI should derive any optional sound-effect suggestions rather than requiring the human to specify each effect.
+- Where the AI authoring the game cannot produce music itself, inform the human of this and give the human style prompts in 1,000 characters or less for an AI music generator for each piece of music required, specifying the file name that the resulting music from each style prompt should have.
+- Cutscene default: extra AI-added cutscenes should be limited to intro, major reveal, puzzle completion, and ending moments unless the GDD allows for more.
 - Technical default: standard engine save/load only; custom scripts only when templates, dialogue trees, cutscenes, and effective properties cannot express the behaviour.
-- Asset default: create all needed runtime assets, or exact placeholder specifications if binary generation is unavailable.
+- Asset default: create all needed runtime assets, or exact placeholder specifications if binary generation is unavailable (see above on music).
 - Style-reference default: create `style_reference_sheet.png` unless the GDD explicitly disables it.
 
-The AI must still produce all deliverables listed in the Authoring AI Output Contract and must still follow the validation workflow and runtime test expectations in this API reference. Those invariant handoff requirements belong here, not in the GDD.
-
-## 17. Game Design Document Template
-
-
-Use `default` to let the AI decide; use `none` to forbid something. Copy blocks as needed.
-
-### 1. Core Brief
-
-Title:
-Game id: default
-One-sentence premise:
-Setting:
-Genre/subgenre: comic adventure
-Overall style: 1990s point-and-click adventure
-Humour style: default; write `serious` if serious
-Humour/dialogue examples:
-- 
-- 
-Intended audience/tone boundaries:
-Reference games/genres/works for flavour only, not copying:
-- 
-
-### 2. Creative Control
-
-Plot definition level: key beats
-Options: exact / key beats / premise only / AI decides
-AI may invent: medium
-Options: low / medium / high
-Must preserve exactly:
-- 
-AI must not include:
-- 
-Clarification preference: ask only if reasonably necessary
-
-### 3. Themes, Motifs, and World Logic
-
-Underlying themes to weave in subtly:
-- 
-Recurring motifs/symbols/images/phrases:
-- 
-World rules or running absurdities:
-- 
-Serious emotional notes, if any:
-- 
-
-### 4. Plot Shape
-
-Opening situation:
-Main objective:
-Act/key beat outline:
-- Beginning:
-- Middle:
-- Late game:
-- Climax:
-Required jokes, incidents, reveals, or set-pieces:
-- 
-Optional incidents the AI may add: yes
-
-### 5. World and Room Plan
-
-Room count or range: default
-World structure: default
-Options: linear / hub / hub-and-spoke / map travel / AI decides
-Rooms the human specifically wants:
-- 
-Rooms the AI may invent: yes
-
-COPY THIS ROOM BLOCK AS NEEDED
-Room name:
-Purpose in story/puzzles:
-Visual description:
-Mood/lighting/weather:
-Important hotspots/objects:
-Characters present:
-Exits/transitions:
-Puzzles or events here:
-Asset notes:
-END ROOM BLOCK
-
-### 6. Characters
-
-COPY THIS CHARACTER BLOCK AS NEEDED
-Character name:
-Character id: default
-Type: player / NPC / antagonist / helper / background
-Brief visual description:
-Clothing:
-Distinctive visual characteristics/silhouette:
-Game-world role:
-Motivation:
-Knowledge/secrets:
-Relationship to player:
-Player interaction: talk / trade / blocks passage / gives clue / comic foil / other
-Humour style for this character:
-Diction, idiom, accent, or speech rhythm:
-Dialogue examples:
-- 
-- 
-Gameplay function: dialogue tree / gatekeeper / exchange / distractible / clue / other
-END CHARACTER BLOCK
-
-Player character special notes:
-Starting goal:
-Starting inventory: none
-Things the player character would never do:
-
-### 7. Puzzle Design
-
-Overall puzzle difficulty: medium
-Moon logic allowance: low
-Options: none / low / moderate / high
-Hinting/signposting style: in-character hints and examinable clues
-Inventory puzzle density: medium
-Dialogue puzzle density: medium
-Map/travel gating: default
-Death or unwinnable states allowed: no
-AI may add extra puzzles: yes
-
-Specific puzzles the human wants:
-
-COPY THIS PUZZLE BLOCK AS NEEDED
-Puzzle name:
-Required: yes / optional
-Goal/obstacle:
-Location(s):
-Solution, if known:
-Required items/state/dialogue:
-Clues/signposts:
-Wrong-action/refusal tone:
-Preferred template: default
-END PUZZLE BLOCK
-
-### 8. Inventory and Important Objects
-
-COPY THIS ITEM/OBJECT BLOCK AS NEEDED
-Name:
-World form: room object / inventory item / both / background hotspot
-Visual description:
-Where found:
-Uses:
-Can combine with:
-Should persist/change state:
-Asset notes:
-END ITEM/OBJECT BLOCK
-
-### 9. Dialogue and Conversation Content
-
-Dialogue volume: medium
-Options: sparse / medium / dialogue-heavy
-Dialogue choice style: concise player choices, distinctive NPC responses
-Required conversation topics:
-- 
-Information discoverable through dialogue:
-- 
-Recurring catchphrases or verbal motifs:
-- 
-Conversation topics to avoid:
-- 
-
-### 10. Cutscenes and Events
-
-AI may add extra cutscenes: yes
-
-COPY THIS CUTSCENE/EVENT BLOCK AS NEEDED
-Name:
-Required: yes / optional
-Trigger:
-Purpose:
-Characters involved:
-Events shown:
-Player control afterwards:
-END CUTSCENE/EVENT BLOCK
-
-### 11. Endings
-
-Ending structure: single
-Options: single / multiple
-If multiple, what changes the ending:
-
-COPY THIS ENDING BLOCK AS NEEDED
-Ending id/name:
-Required conditions:
-Tone:
-What happens:
-Final image/animation notes:
-END ENDING BLOCK
-
-### 12. Art and Audio Direction
-
-Art style:
-Palette/colour mood:
-Perspective/camera style:
-Character sprite style:
-Object/icon style:
-UI style:
-Title screen notes:
-Ending screen notes:
-Style reference sheet override: default
-Options: default / not needed / specific notes below
-Style reference sheet notes:
-Audio/music style:
-Specific music/sound requirements:
-- 
-
-### 13. Technical, Accessibility, and Extension Requests
-
-Use map item: default
-Options: yes / no / default
-Requested engine extensions, if any:
-- 
-Accessibility/readability notes:
-- 
+The AI must still produce all deliverables listed in the Authoring AI Output Contract and must still follow the validation workflow and runtime test expectations in this API reference.

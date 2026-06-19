@@ -198,8 +198,19 @@ Style reference sheet override: default
 Options: default / not needed / specific notes below
 Style reference sheet notes:
 Audio/music style:
-Specific music/sound requirements:
-- 
+Music direction: default
+Options: default / music-heavy / sparse music / no music
+Music default: early-1990s MIDI-like room music, rendered as MP3 or OGG files for this engine
+Music silence allowed: no by default; use yes only for deliberately silent rooms/screens
+Music reuse preference: reuse one cue across multiple rooms where mood and pacing match
+Music mood/style notes:
+Specific music requirements, if any:
+
+Sound effects direction: silent by default
+Options: silent / sparse / medium / expressive
+Sound effects default: optional and silent unless specified; early-1990s floppy-era style may use few or no effects
+Required sound effects, if any:
+Optional sound effect suggestions, if any:
 
 ### 13. Technical, Accessibility, and Extension Requests
 
