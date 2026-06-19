@@ -1052,15 +1052,24 @@
     //           GetRoomVariable, GetCharacterVariable, GetItemVariable,
     //           GetObjectVariable and GetProperty. It deliberately has no
     //           mutation, movement, dialogue, sound or timer methods.
-    //   self    entity facade. It has Id, Type, RoomId, Entity, Context,
-    //           Get/Set, GetBool/SetBool, GetNumber/SetNumber,
-    //           GetString/SetString, Add, GetBaseProperty and GetProperty.
+    //   self    const entity facade by default. It has Id, Type, RoomId,
+    //           Entity, Context, Get, GetBool, GetNumber, GetString,
+    //           GetBaseProperty and GetProperty. Const getter facades deliberately
+    //           do not permit mutation.
     //   context context object supplied by the caller. For interactions this
     //           normally contains {command,target}. For rendering/hit testing it
     //           contains a purpose string such as {purpose:'render'}.
     //
+    // Const and non-const getters:
+    //   - propertyGetters and getters are const by default and are the normal
+    //     authoring path. They must only inspect state and return a value.
+    //   - nonConstPropertyGetters, or the alias mutablePropertyGetters, opt a
+    //     property into receiving a mutating self facade with Set, SetBool,
+    //     SetNumber, SetString and Add. Use non-const getters where and only
+    //     where deriving a property genuinely must update saved state.
+    //
     // Getter rules for future AIs:
-    //   - Getters must be query-only. Do not call api.Narrate, api.Say,
+    //   - Const getters must be query-only. Do not call api.Narrate, api.Say,
     //     api.AddItem, api.RemoveItem, api.ChangeRoom, api.MoveCharacter,
     //     api.SetObjectAnimation or browser timers from a getter.
     //   - Store mutable puzzle state in self variables or scoped variables, not in
@@ -1089,7 +1098,8 @@
     //      applicable.
     //   2. entity.properties[propertyName].
     //   3. legacy entity[propertyName].
-    //   4. entity.propertyGetters[propertyName] script, if defined. The getter is
+    //   4. entity.nonConstPropertyGetters[propertyName] script, if defined, or
+    //      otherwise entity.propertyGetters[propertyName] script. The getter is
     //      passed the base value as fallback and may replace it.
     //   5. template default property, if the entity has template:'...'.
     //   6. supplied caller default.
@@ -1097,8 +1107,9 @@
     // with entity maps so content can override or add individual verbs/statuses
     // without copying the whole template table. callbackResults supports keys
     // such as '*', 'blocked', 'walkTo' and 'walkTo:blocked'. callbackStatus and
-    // callbackResult may also be computed by property getters; these getters are
-    // query-only like all other effective-property getters.
+    // callbackResult may also be computed by const property getters; use
+    // nonConstPropertyGetters for them only where state mutation is genuinely
+    // necessary.
     //
     // TEMPLATE SUMMARY
     // ----------------
@@ -1188,6 +1199,12 @@
                 GetProperty:function (name, context, defaultValue) { return Engine.Properties.Get(entity,name,context||this.Context,defaultValue);
                 }
             };
+        },
+        CreateConstFacade: function (entity, type, extra) {
+            var facade=this.CreateFacade(entity,type,extra||{});
+            var deny=function () { throw new Error('Const property getter cannot mutate state; use nonConstPropertyGetters only when state mutation is genuinely necessary.');
+            };
+            return { Id:facade.Id, Type:facade.Type, RoomId:facade.RoomId, Entity:facade.Entity, Context:facade.Context, Get:facade.Get, GetNumber:facade.GetNumber, GetBool:facade.GetBool, GetString:facade.GetString, GetBaseProperty:facade.GetBaseProperty, GetProperty:facade.GetProperty, Set:deny, SetNumber:deny, SetBool:deny, SetString:deny, Add:deny };
         }
     };
     Engine.Properties = {
@@ -1215,8 +1232,17 @@
             };
             return this.ReadAPI;
         },
-        GetGetterName:function (entity, propertyName) { var getters=(entity && (entity.propertyGetters || entity.getters)) || {};
-            return getters[propertyName] || getters['get'+CapitaliseFirst(propertyName)] || null;
+        GetGetterSpec:function (entity, propertyName) {
+            var mutable=(entity && (entity.nonConstPropertyGetters || entity.mutablePropertyGetters)) || {};
+            var mutableName=mutable[propertyName] || mutable['get'+CapitaliseFirst(propertyName)] || null;
+            if (mutableName) { return { name:mutableName, mutable:true };
+            }
+            var getters=(entity && (entity.propertyGetters || entity.getters)) || {};
+            var name=getters[propertyName] || getters['get'+CapitaliseFirst(propertyName)] || null;
+            return name ? { name:name, mutable:false } : null;
+        },
+        GetGetterName:function (entity, propertyName) { var spec=this.GetGetterSpec(entity,propertyName);
+            return spec ? spec.name : null;
         },
         GetRaw:function (entity, propertyName, defaultValue) {
             if (!entity) { return defaultValue;
@@ -1282,13 +1308,14 @@
             return value;
         },
         RunGetter:function (entity, propertyName, context, fallback) {
-            var getterName=this.GetGetterName(entity,propertyName);
-            if (!getterName) { return fallback;
+            var getterSpec=this.GetGetterSpec(entity,propertyName);
+            if (!getterSpec) { return fallback;
             }
+            var getterName=getterSpec.name;
             if (!Engine.CurrentGame || !Engine.CurrentGame.scripts || !Engine.CurrentGame.scripts[getterName]) { Engine.Debug.Warn('Property getter '+getterName+' for '+(entity && entity.id || 'unknown')+'.'+propertyName+' is missing.');
                 return fallback;
             }
-            try { var self=Engine.Entities.CreateFacade(entity,Engine.Entities.DetectType(entity),{context:context||{}});
+            try { var self=getterSpec.mutable ? Engine.Entities.CreateFacade(entity,Engine.Entities.DetectType(entity),{context:context||{}}) : Engine.Entities.CreateConstFacade(entity,Engine.Entities.DetectType(entity),{context:context||{}});
                 return this.Validate(propertyName,Engine.CurrentGame.scripts[getterName](this.GetReadAPI(),self,context||{}),fallback);
             }
             catch (err) { Engine.Debug.Error('Property getter '+getterName+' for '+(entity && entity.id || 'unknown')+'.'+propertyName+' failed: '+(err && err.message ? err.message : err));
@@ -2210,6 +2237,36 @@
         var images = [];
         var queueImage=function (path,role) { Engine.Assets.QueueImage(images,path,role);
         };
+        var queueOverlaySpec=function (overlaySpec, role) {
+            role=role||'overlay';
+            if (!overlaySpec) { return;
+            }
+            if (typeof overlaySpec === 'string') { queueImage(overlaySpec,role);
+                return;
+            }
+            queueImage(overlaySpec.image,role);
+            queueImage(overlaySpec.background,role);
+            queueImage(overlaySpec.endBackground,role);
+            if (overlaySpec.map && overlaySpec.map.image) { queueImage(overlaySpec.map.image,'map');
+            }
+            if (overlaySpec.animation && overlaySpec.animation.image) { queueImage(overlaySpec.animation.image,'hotspot');
+            }
+            if (overlaySpec.animationImage) { queueImage(overlaySpec.animationImage,'hotspot');
+            }
+            (overlaySpec.hotspots||[]).forEach(function (h) {
+                queueImage(h.sprite,'hotspot');
+                queueImage(h.closedSprite,'hotspot');
+                queueImage(h.openSprite,'hotspot');
+                queueImage(h.emptySprite,'hotspot');
+                queueImage(h.fullSprite,'hotspot');
+                queueImage(h.onSprite,'hotspot');
+                queueImage(h.offSprite,'hotspot');
+                queueOverlaySpec(h.lookOverlay,'overlay');
+                queueOverlaySpec(h.closeupOverlay,'overlay');
+                if (h.map && h.map.image) { queueImage(h.map.image,'map');
+                }
+            });
+        };
         Object.keys(game.rooms).forEach(function (roomId) { queueImage(game.rooms[roomId].background,'roomBackground');
         });
         Object.keys(game.sprites || {}).forEach(function (spriteId) { queueImage(game.sprites[spriteId].image,'character');
@@ -2220,9 +2277,10 @@
             queueImage(item.closeupImage,'overlay');
             queueImage(item.mapImage,'map');
             if (item.map && item.map.image) { queueImage(item.map.image,'map');
-            } if (item.lookOverlay && item.lookOverlay.image) { queueImage(item.lookOverlay.image,'overlay');
-            } if (item.closeupOverlay && item.closeupOverlay.image) { queueImage(item.closeupOverlay.image,'overlay');
-            } });
+            }
+            queueOverlaySpec(item.lookOverlay,'overlay');
+            queueOverlaySpec(item.closeupOverlay,'overlay');
+        });
         Object.keys(game.rooms || {}).forEach(function (roomId) { (game.rooms[roomId].hotspots||[]).forEach(function (h) { queueImage(h.sprite,'hotspot');
                 queueImage(h.closedSprite,'hotspot');
                 queueImage(h.openSprite,'hotspot');
@@ -2230,6 +2288,10 @@
                 queueImage(h.fullSprite,'hotspot');
                 queueImage(h.onSprite,'hotspot');
                 queueImage(h.offSprite,'hotspot');
+                queueOverlaySpec(h.lookOverlay,'overlay');
+                queueOverlaySpec(h.closeupOverlay,'overlay');
+                if (h.map && h.map.image) { queueImage(h.map.image,'map');
+                }
                 if (h.itemId && game.items && game.items[h.itemId]) { if (game.items[h.itemId].worldSprite) { queueImage(game.items[h.itemId].worldSprite,'itemWorld');
                     } else if (game.items[h.itemId].icon) { queueImage(game.items[h.itemId].icon,'itemIcon');
                     } } });
@@ -2242,14 +2304,7 @@
         }
         Object.keys(game.endings || {}).forEach(function (endingId) {
             var ending=game.endings[endingId] || {};
-            if (ending.background) { queueImage(ending.background,'endBackground');
-            }
-            if (ending.endBackground) { queueImage(ending.endBackground,'endBackground');
-            }
-            if (ending.animation && ending.animation.image) { queueImage(ending.animation.image,'hotspot');
-            }
-            if (ending.animationImage) { queueImage(ending.animationImage,'hotspot');
-            }
+            queueOverlaySpec(ending,'endBackground');
         });
         var uniqueImages = [];
         var seenImages = {};
@@ -3247,6 +3302,9 @@
             this.UpdateFollowers(dt);
             this.ApplyActorAvoidance();
         },
+        MakeTransitionState: function (state, zone, context, result) {
+            return { state:state, zone:zone||null, context:context||null, result:result||null };
+        },
         CheckTransitions: function () { var room=this.GetCurrentRoom();
             var zones=room.transitionZones||[];
             var p=Engine.State.player;
@@ -3256,17 +3314,24 @@
                 } if (z.enabledObjectId) { var enabledObject=Engine.RoomObjects.FindObject(z.enabledObjectId);
                     var enabledProperty=z.enabledProperty||'open';
                     var enabledDefault=Engine.Properties.Get(enabledObject,enabledProperty,{purpose:'transition',transition:z},false);
-                    var enabledFacade=enabledObject ? Engine.Entities.CreateFacade(enabledObject,Engine.Entities.DetectType(enabledObject),{context:{purpose:'transition',transition:z}}) : null;
+                    var enabledFacade=enabledObject ? Engine.Entities.CreateConstFacade(enabledObject,Engine.Entities.DetectType(enabledObject),{context:{purpose:'transition',transition:z}}) : null;
                     if (!enabledObject || !enabledFacade.GetBool(enabledProperty,!!enabledDefault)) { continue;
                     }
                 } if (z.rect && PointInRect(p.x,p.y,z.rect)) { var context={ transition:z, fromRoomId:Engine.State.currentRoomId, toRoomId:z.targetRoomId||null, player:Engine.State.player };
-                    if (Engine.Hooks.RunTransitionHook(z,'beforeTransition',context) === false) { return true;
-                    } if (z.script && Engine.CurrentGame.scripts[z.script]) { Engine.CurrentGame.scripts[z.script](Engine.API,context);
+                    if (Engine.Hooks.RunTransitionHook(z,'beforeTransition',context) === false) { return this.MakeTransitionState('blocked',z,context,Engine.ActionResults.Blocked({action:'transition',reason:'beforeTransitionCancelled',targetId:z.id||null,roomId:Engine.State.currentRoomId}));
+                    } if (z.script && Engine.CurrentGame.scripts[z.script]) { var scriptResult=Engine.CurrentGame.scripts[z.script](Engine.API,context);
+                        var state=Engine.State.mode==='ended' ? 'ended' : 'scripted';
+                        var fallback=state==='ended' ? Engine.ActionResults.Ended({action:'transition',reason:'scriptEndedGame',targetId:z.id||null,roomId:Engine.State.currentRoomId}) : Engine.ActionResults.Transitioned({action:'transition',reason:'scriptedTransition',targetId:z.id||null,roomId:Engine.State.currentRoomId});
+                        var result=Engine.ActionResults.Normalise(scriptResult,fallback);
                         Engine.Hooks.RunTransitionHook(z,'afterTransition',context);
-                        return true;
+                        if (result.status==='blocked' || result.status==='cancelled' || result.status==='superseded') { state='blocked';
+                        } else if (result.status==='ended') { state='ended';
+                        }
+                        return this.MakeTransitionState(state,z,context,result);
                     } if (this.EnterRoom(z.targetRoomId,z.targetX,z.targetY,z.targetFacing,{ transition:z }) !== false) { Engine.Hooks.RunTransitionHook(z,'afterTransition',context);
-                    } return true;
-                } } return false;
+                        return this.MakeTransitionState('transitioned',z,context,Engine.ActionResults.Transitioned({action:'transition',reason:'roomTransition',targetId:z.id||null,roomId:z.targetRoomId||Engine.State.currentRoomId}));
+                    } return this.MakeTransitionState('blocked',z,context,Engine.ActionResults.Blocked({action:'transition',reason:'roomTransitionCancelled',targetId:z.id||null,roomId:Engine.State.currentRoomId}));
+                } } return this.MakeTransitionState('none',null,null,null);
         }
     };
     Engine.Movement = {
@@ -3406,7 +3471,11 @@
             } if (status==='cancelled') { return Engine.ActionResults.Cancelled(values);
             } return Engine.ActionResults.Completed(values);
         },
-        FinishTransitionWalk: function (cb, token, context) { var result=this.BuildWalkResult('transitioned',{reason:'transition',reached:true,targetId:(context&&context.targetId)||null,x:Engine.State.player.x,y:Engine.State.player.y});
+        FinishTransitionWalk: function (cb, token, context, transitionState) { transitionState=transitionState||{state:'transitioned',result:null,zone:null};
+            var transitionResult=transitionState.result||{};
+            var status=transitionState.state==='blocked' ? 'blocked' : (transitionState.state==='ended' ? 'ended' : 'transitioned');
+            var values=Object.assign({},transitionResult,{action:'walk',reason:transitionResult.reason||transitionState.state||'transition',reached:status!=='blocked' && status!=='ended',targetId:(context&&context.targetId)||transitionResult.targetId||null,transitionState:transitionState.state,transitionId:transitionState.zone ? transitionState.zone.id||null : null,transitionResult:transitionResult,x:Engine.State.player.x,y:Engine.State.player.y});
+            var result=status==='ended' ? Engine.ActionResults.Ended(values) : this.BuildWalkResult(status,values);
             Engine.State.player.walkCallback=null;
             Engine.State.player.walkToken=null;
             Engine.State.player.walkContext=null;
@@ -3428,7 +3497,8 @@
                 var cb=p.walkCallback;
                 var token=p.walkToken;
                 var context=p.walkContext||{};
-                if (Engine.Rooms.CheckTransitions()) { this.FinishTransitionWalk(cb,token,context);
+                var transitionState=Engine.Rooms.CheckTransitions();
+                if (transitionState.state !== 'none') { this.FinishTransitionWalk(cb,token,context,transitionState);
                     return;
                 } if (p.walkPath && p.walkPath.length) { p.walkTarget=p.walkPath.shift();
                     return;
@@ -3464,7 +3534,8 @@
             var moveCb=p.walkCallback;
             var moveToken=p.walkToken;
             var moveContext=p.walkContext||{};
-            if (Engine.Rooms.CheckTransitions()) { this.FinishTransitionWalk(moveCb,moveToken,moveContext);
+            var movingTransitionState=Engine.Rooms.CheckTransitions();
+            if (movingTransitionState.state !== 'none') { this.FinishTransitionWalk(moveCb,moveToken,moveContext,movingTransitionState);
             } else { Engine.Rooms.UpdateCharacters(dt);
             }
         }
@@ -4123,6 +4194,7 @@ Engine.Cutscenes = {
         if (!cs || !Engine.Lifecycle.IsCurrent(token)) { return;
         }
         Engine.State.activeCutscene=null;
+        Engine.Lifecycle.BumpCutscene();
         Engine.State.mode='play';
         Engine.Hooks.RunGameHook('afterCutscene',{ steps:cs.steps, result:result, stopped:true });
     },
@@ -4146,10 +4218,11 @@ Engine.Cutscenes = {
             }
         }
     },
-    RunChildSequence: function (steps, parentToken, onComplete, previousResult) { var local={steps:this.NormaliseSteps(steps),index:0,lastResult:previousResult||null,currentStep:null};
+    RunChildSequence: function (steps, parentToken, onComplete, previousResult) { var active=Engine.State.activeCutscene;
+        var local={steps:this.NormaliseSteps(steps),index:0,lastResult:previousResult||null,currentStep:null,activeCutscene:active};
         var self=this;
         var next=function (result) {
-            if (!Engine.Lifecycle.IsCurrent(parentToken)) { return;
+            if (!Engine.Lifecycle.IsCurrent(parentToken) || Engine.State.activeCutscene !== local.activeCutscene) { return;
             }
             if (result) { local.lastResult=result;
             }
@@ -4165,7 +4238,8 @@ Engine.Cutscenes = {
         };
         next(previousResult||Engine.ActionResults.Completed({action:'sequenceStart'}));
     },
-    RunParallel: function (steps, token, done, previousResult) { steps=this.NormaliseSteps(steps);
+    RunParallel: function (steps, token, done, previousResult) { var active=Engine.State.activeCutscene;
+        steps=this.NormaliseSteps(steps);
         if (!steps.length) { done(Engine.ActionResults.Completed({action:'parallel',reason:'empty'}));
             return;
         }
@@ -4175,7 +4249,7 @@ Engine.Cutscenes = {
         var self=this;
         steps.forEach(function (child,index) {
             self.RunChildSequence(child.steps||child.sequence||child,token,function (result) {
-                if (finished || !Engine.Lifecycle.IsCurrent(token)) { return;
+                if (finished || !Engine.Lifecycle.IsCurrent(token) || Engine.State.activeCutscene !== active) { return;
                 }
                 results[index]=result;
                 if (!Engine.ActionResults.ShouldContinueCutscene(result)) { finished=true;
