@@ -10,7 +10,8 @@ One-sentence premise:
 Setting:
 Genre/subgenre: comic adventure
 Overall style: 1990s point-and-click adventure
-Humour style: default; write `serious` if serious
+Humour style: default
+Options: default / comic / dry / absurd / gentle / serious
 Humour/dialogue examples:
 - 
 - 

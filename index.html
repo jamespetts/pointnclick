@@ -1304,7 +1304,8 @@
                     } Engine.Overlays.Close();
                     if (place.script) { Engine.Scripts.RunTemplate(place.script,itemFacade,Object.assign({},context,{place:place}),'map place script '+place.script);
                         return;
-                    } if (place.targetRoomId) { api.ChangeRoom(place.targetRoomId,place.targetX,place.targetY,place.targetFacing);
+                    } var targetRoomId=place.targetRoomId||place.roomId;
+                    if (targetRoomId) { api.ChangeRoom(targetRoomId,place.targetX,place.targetY,place.targetFacing);
                     } }
             }
         },
@@ -2599,6 +2600,7 @@
             for (var i=0;i<zones.length;i++) { var z=zones[i];
                 if (z.enabledFlag && !Engine.State.flags[z.enabledFlag]) { continue;
                 } if (z.disabledFlag && Engine.State.flags[z.disabledFlag]) { continue;
+                } if (z.once && Engine.State.flags['__used_'+z.id]) { continue;
                 } if (z.actorId && z.actorId!==actor.id) { continue;
                 } var inside=this.PointInShape(actor.x,actor.y,z.shape||z.rect);
                 var key=this.TriggerKey(actor,z);
@@ -2606,8 +2608,7 @@
                 var context={ actor:actor, zone:z, room:room, roomId:Engine.State.currentRoomId, object:z.object||null };
                 if (inside && !was) { Engine.State.geometry.activeTriggers[key]=true;
                     this.RunTriggerScript(z.onEnter||z.script,context);
-                    if (z.once) { z.disabledFlag='__used_'+z.id;
-                        Engine.State.flags[z.disabledFlag]=true;
+                    if (z.once) { Engine.State.flags['__used_'+z.id]=true;
                     } }
                 else if (!inside && was) { delete Engine.State.geometry.activeTriggers[key];
                     this.RunTriggerScript(z.onExit,context);
