@@ -34,6 +34,90 @@
           as player.png, start_room.png or intro.mp3; explicit canonical paths
           such as characters/player.png remain accepted for compatibility.
         - No login, database, server-side code, or build step is required.
+        PUBLIC AUTHORING API REFERENCE
+        ------------------------------
+        This in-code API reference is deliberately written for content-authoring
+        AIs and human designers. While the engine is still changing, keep this
+        section in sync with the actual public API; later it will be broken out
+        into a separate document. The intended authoring workflow is that an AI
+        receives this public reference plus a completed Game Design Document, not
+        the engine internals. Therefore, the public surface must stay small,
+        explicit and difficult to misuse.
+
+        Public browser global:
+        - window.PointClickEngine is a frozen public facade. It is not the
+          internal engine object.
+        - PointClickEngine.RegisterGame(gameDefinition) is the only normal way
+          for a game content script to register a game.
+        - PointClickEngine.RegisterManifest(manifestDefinition) is only for the
+          games.js direct-file manifest fallback.
+        - PointClickEngine.GetEngineApiVersion() returns the required engineApi
+          value for game definitions.
+        - PointClickEngine.GetPublicCapabilities() returns read-only descriptive
+          metadata for documentation and tooling. It must not be used as a
+          gameplay state store.
+        - No other PointClickEngine properties are public. In particular, game
+          scripts must not read PointClickEngine.State, PointClickEngine.Rooms,
+          PointClickEngine.Renderer, PointClickEngine.Templates or any other
+          internal subsystem. Those names are intentionally not exposed.
+
+        Game definition contract:
+        - A game script calls PointClickEngine.RegisterGame({ ... }) once.
+        - The game object contains declarative data: id, title, author,
+          engineApi, startRoomId, player, sprites, characters, items, rooms,
+          dialogueTrees, scripts, hooks, defaultRefusals, endings and UI/audio
+          metadata.
+        - Asset paths are simple relative filenames in the canonical asset
+          folders described above. Do not use remote URLs, absolute paths,
+          data: URLs or paths containing "..".
+        - Room objects/hotspots have globally unique ids. They are persistent
+          object identities, not room-local labels.
+        - Prefer templates, declarative interactions, dialogue trees and cutscene
+          steps over imperative script. Use custom scripts only for story logic
+          that cannot be expressed declaratively.
+
+        Script function API:
+        - Ordinary named scripts receive (api, context). They must use api.* for
+          every state change, room change, dialogue line, cutscene, movement,
+          sound effect, overlay and ending.
+        - Hook scripts also receive (api, context). Returning false from a
+          before hook cancels that operation.
+        - Cutscene script steps receive (api, step, previousResult) and should
+          return api.MakeActionResult(...) when success/failure matters.
+        - Property getter scripts receive (query, self, context). propertyGetters
+          are const by default and must inspect state only. Use
+          nonConstPropertyGetters or mutablePropertyGetters only where deriving a
+          property genuinely has to update saved state.
+
+        Ordinary script api methods currently include:
+        - Dialogue/input: Say, Narrate, StartDialogue, ShowDialogue, AskText,
+          AskNumber.
+        - Inventory/flags/variables: AddItem, RemoveItem, HasItem, SetFlag,
+          GetFlag, SetVariable, GetVariable.
+        - Scoped variables: Set/Get/Has/Clear/Add/Subtract/Multiply/Divide/
+          CompareScopedVariable, plus Room/Character/Item-specific helper
+          variants.
+        - Room and actor control: ChangeRoom, MoveCharacter, SetAnimation,
+          ClearAnimation.
+        - Object control: SetObjectAnimation, ClearObjectAnimation,
+          SetObjectState, GetObjectState, SetObjectVariable, GetObjectVariable,
+          AddObjectVariable.
+        - Presentation and flow: ShowOverlay, CloseOverlay, PlaySound,
+          StartCutscene, QueueCutscene, MakeActionResult, EndGame, ShowEnding,
+          Save and Load.
+        - RunScript exists for calling another named content script. RunHook is
+          legacy/diagnostic and must not be used for ordinary story flow.
+
+        Getter query/self APIs:
+        - query exposes read-only HasItem, GetFlag, GetVariable,
+          GetRoomVariable, GetCharacterVariable, GetItemVariable,
+          GetObjectVariable and GetProperty.
+        - const self exposes Id, Type, RoomId, Entity, Context, Get, GetBool,
+          GetNumber, GetString, GetBaseProperty and GetProperty.
+        - non-const self additionally exposes Set, SetBool, SetNumber,
+          SetString and Add. Use this only through nonConstPropertyGetters or
+          mutablePropertyGetters, and only when mutation is genuinely necessary.
+
 
         INSTRUCTIONS FOR FUTURE AIS AND MAINTAINERS
         -------------------------------------------
@@ -41,6 +125,9 @@
         - If a requested adventure action cannot be implemented through the public content API,
           flag the engine shortcoming for human review.
         - Do not reach into private engine state or duplicate engine systems in a game script.
+          The public PointClickEngine global intentionally exposes only the
+          small registration/version facade documented above; all story/runtime
+          changes must go through the api object passed to script functions.
         - Spaghetti code is forbidden.
         - ENGINE FORMATTING RULE: each statement that properly ends with a semicolon
           must be on its own physical line with a carriage return immediately after
@@ -60,7 +147,8 @@
         - There is exactly one registered handler function per verb.
         - The renderer reads state. It does not own narrative logic.
         - Game content scripts define data and content actions only.
-        - Game content scripts must use the public engine API to mutate state.
+        - Game content scripts must use the public script api object to mutate
+          state. The browser global is for registration only.
         - Engine code must remain narrative-agnostic.
         - Dynamic story text uses the built-in readable bitmap text path, not raw
           canvas fillText. The glyphs are deliberately one-pixel-stroke,
@@ -406,7 +494,10 @@
     };
 
     var Engine = {};
-    window.PointClickEngine = Engine;
+    // Engine is deliberately private inside this closure. The browser global
+    // window.PointClickEngine is assigned later to a frozen public facade that
+    // exposes only registration and version/capability metadata for content
+    // scripts and authoring tools.
     Engine.Private = {};
     Engine.Games = {};
     Engine.CurrentGame = null;
@@ -2145,6 +2236,29 @@
     };
     Engine.RegisterManifest = function (manifestDefinition) { Engine.Private.ScriptManifest = manifestDefinition;
     };
+    Engine.PublicAPI = Object.freeze({
+        apiName:'PointClickEngine',
+        engineApiVersion:ENGINE_API_VERSION,
+        saveDataVersion:SAVE_DATA_VERSION,
+        RegisterGame:function (gameDefinition) { return Engine.RegisterGame(gameDefinition);
+        },
+        RegisterManifest:function (manifestDefinition) { return Engine.RegisterManifest(manifestDefinition);
+        },
+        GetEngineApiVersion:function () { return ENGINE_API_VERSION;
+        },
+        GetSaveDataVersion:function () { return SAVE_DATA_VERSION;
+        },
+        GetPublicCapabilities:function () {
+            return DeepClone({
+                registration:['RegisterGame','RegisterManifest'],
+                metadata:['GetEngineApiVersion','GetSaveDataVersion','GetPublicCapabilities'],
+                scriptApi:['Say','Narrate','StartDialogue','ShowDialogue','AskText','AskNumber','AddItem','RemoveItem','HasItem','SetFlag','GetFlag','SetVariable','GetVariable','ChangeRoom','MoveCharacter','SetAnimation','ClearAnimation','SetObjectAnimation','ClearObjectAnimation','SetObjectState','GetObjectState','SetObjectVariable','GetObjectVariable','AddObjectVariable','ShowOverlay','CloseOverlay','PlaySound','StartCutscene','QueueCutscene','MakeActionResult','EndGame','ShowEnding','Save','Load'],
+                getterApi:['HasItem','GetFlag','GetVariable','GetRoomVariable','GetCharacterVariable','GetItemVariable','GetObjectVariable','GetProperty'],
+                templates:['door','key','map','pickup','container','switch','readable','device','furniture','barrier']
+            });
+        }
+    });
+    window.PointClickEngine = Engine.PublicAPI;
     Engine.Private.LoadScript = function (src) {
         return new Promise(function (resolve, reject) {
             var s = document.createElement('script');
