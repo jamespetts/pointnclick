@@ -172,6 +172,12 @@ Manifest game entry fields:
 - `assetPath:string`: asset base folder, normally `gameId/`.
 - `engineApi:number`: must be `1`.
 
+Registry file merge workflow:
+- `games.json` and `games.js` are site registry files, not ordinary per-game source files. If current registry files already exist and have not been supplied in the same request, the authoring AI must not invent replacement `games.json` or `games.js` files and must not present new registry files as safe drop-in replacements.
+- When existing registry files are not supplied, output a registry entry snippet for `games.json` and, where the direct-file fallback is used, a `games.js` entry snippet. Then explicitly ask the human to upload the current `games.json` and `games.js` in the next turn so the AI can merge the new entry while preserving existing games.
+- If the human requests a standalone test package, the AI may also output uniquely named standalone harness files such as `games_standalone_gameId_v1.json` and `games_standalone_gameId_v1.js`. These must be labelled standalone-only and must not be named `games.json` or `games.js` unless the existing registry files were supplied and merged.
+- When the current registry files are supplied, merge by preserving all existing entries, adding exactly one entry for the new game id, avoiding duplicate ids, preserving comments/formatting where practical, and writing uniquely named merged outputs for human review rather than overwriting originals.
+
 Asset path validation:
 
 - Images must end in `.png`.
@@ -232,7 +238,10 @@ Audio authoring deliverables:
 - Music is normally expected for an early-1990s point-and-click adventure, even if the style is MIDI-like and the runtime file is MP3 or OGG. Use `[]` only where silence is intentional, such as a deliberately quiet room, title pause, or ending beat.
 - Sound effects are optional and may default to silence. Silent sound effects should be represented by omitting the effect or using `[]`/`null` in public APIs. Do not create placeholder sound files for effects the human has not chosen to include.
 - From the GDD's general audio overview, room moods, cutscenes, endings, and pacing, the authoring AI must derive a music cue manifest. Each cue entry must include id, filename, rooms/screens/endings using it, purpose/mood, style/instrumentation, tempo/energy, looping notes, and an AI music-generator prompt of 1000 characters or fewer.
+- The music cue manifest is required even when binary audio generation is unavailable. Do not omit it merely because the runtime package cannot include audio files. The manifest must identify which room, title, menu, cutscene, and ending music arrays should use each cue once the audio files are generated.
 - Multiple rooms may share one music cue. Prefer reuse for rooms with the same mood or hub area rather than generating unnecessary tracks.
+- For each room or screen, the implementation notes or asset manifest must state the intended music cue id and filename, even when several rooms share one cue. If the game script temporarily uses `[]` because binary audio files are absent, this must be labelled as temporary silence pending generated audio, not as intentional silent design.
+- Use `[]` for music only when silence is an intentional design choice, or as a clearly labelled temporary validation/runtime fallback while the required music cue files are still to be generated. In the latter case, include exact instructions for replacing the temporary `[]` arrays with the cue filenames after generation.
 - From the GDD's general sound-effect direction and the implemented gameplay, the authoring AI must create an optional sound-effect manifest. Each entry must include id, filename, required/optional status, trigger/use, description, an AI sound-generator prompt of 1000 characters or fewer, and implementation notes if needed.
 - Required sound effects are only those needed for gameplay comprehension, timing, feedback, or a specified dramatic beat. Optional effects may be listed for human selection without being referenced by the game script.
 - If a listed optional effect is not referenced by the game script, mark it as optional in the asset manifest and do not require it for validation or runtime testing.
@@ -1296,6 +1305,7 @@ Validation workflow:
 1. LLM structural-semantic validation: check all ids, scripts, templates, assets, hooks, dialogue forms, cutscene steps, save-state use, and template-vs-custom-script choices.
 2. Quality/depth validation: review the package against the general quality and depth contract. Confirm that each major content role has adequate authored depth, state awareness, clueing, feedback, tone, and payoff; revise low-effort but technically valid content before running the validator.
 3. Visual semantic validation: compare runtime images, asset manifest visual acceptance notes, and `style_reference_sheet.png`. Check that important visuals are specific, coherent, and readable in their engine context.
+- Audio semantic validation: check that every room, title/menu/ending screen, and music-relevant cutscene has either a mapped music cue with filename and generator prompt, a reused cue with justification, or explicitly intentional silence. Temporary silence for missing binaries must be documented as pending audio generation.
 4. Run validator. For the canonical layout `gameId/gameId.js` with assets below `gameId/`, the validator infers `gameId/` as the asset root for existence checks:
 
 EXAMPLE_START
@@ -1334,14 +1344,15 @@ Required deliverables:
 
 1. Implementation notes: game id, title, intended `assetPath`, engine API version, assumptions, requested engine extensions, and the declared asset tier: production-quality first pass, readable prototype, or placeholder-only. Default to production-quality first pass unless the user or workflow says otherwise.
 2. Style reference sheet first: before producing the full runtime asset set, create `style_reference_sheet.png` and the accompanying visual style brief. The sheet is the visual contract for all later runtime assets.
-3. Manifest output: either a complete `games.json` file or a clearly labelled `games.json` entry with `id`, `title`, `script`, `assetPath`, and `engineApi`.
+3. Registry output: if existing `games.json`/`games.js` files are supplied, provide uniquely named merged registry files preserving existing entries. If they are not supplied, provide registry entry snippets and explicitly ask the human to upload the current registry files next turn for merging. Only provide standalone harness registry files under unique standalone names when requested or clearly useful for isolated testing.
 4. Game script: one `gameId/gameId.js` script that calls `PointClickEngine.RegisterGame({...})` exactly once and uses only the public authoring contract in this document.
-5. Asset manifest: every image, music, sound, and voice asset needed by the game, with canonical path, role folder, expected dimensions, spritesheet frame size where applicable, asset tier, and visual acceptance notes for important runtime images.
-6. Generated assets: assets should be placed under the canonical role folders below `gameId/`. If binary image generation is unavailable, provide exact filenames, sizes, transparency requirements, content descriptions, and visual acceptance notes instead; do not present such a package as visually production-ready.
-7. Puzzle dependency graph or walkthrough: the shortest intended solution path, optional branches, failure/refusal paths, and all required inventory/state dependencies.
-8. Quality/depth validation report: a concise review of the major content roles, how each is supported by authored depth, and any deliberately terse/minimal elements with justification. This report must be completed before structural validator handoff.
-9. Validation report: the validator command used, including `--asset-root` if needed, and the resulting errors/warnings. Errors must be fixed before handoff. Warnings must be fixed or explicitly justified.
-10. Runtime test plan: every room transition, dialogue branch, inventory action, template puzzle, cutscene, save/load case, ending, custom script, and visual readability check that a human tester should exercise.
+5. Asset manifest: every image, music, sound, and voice asset needed by the game, with canonical path, role folder, expected dimensions, spritesheet frame size where applicable, asset tier, and visual acceptance notes for important runtime images. For audio, include cue ids, filenames, use locations, generation prompts, and whether each cue is implemented, pending generation, optional, or intentionally silent.
+6. Music cue manifest: a concise list of every required music cue, filename, rooms/screens/endings using it, purpose/mood, style/instrumentation, tempo/energy, looping notes, and an AI music-generator prompt of 1000 characters or fewer. This is required even if audio binaries are not generated in the package.
+7. Generated assets: assets should be placed under the canonical role folders below `gameId/`. If binary image generation is unavailable, provide exact filenames, sizes, transparency requirements, content descriptions, and visual acceptance notes instead; do not present such a package as visually production-ready.
+8. Puzzle dependency graph or walkthrough: the shortest intended solution path, optional branches, failure/refusal paths, and all required inventory/state dependencies.
+9. Quality/depth validation report: a concise review of the major content roles, how each is supported by authored depth, and any deliberately terse/minimal elements with justification. This report must be completed before structural validator handoff.
+10. Validation report: the validator command used, including `--asset-root` if needed, and the resulting errors/warnings. Errors must be fixed before handoff. Warnings must be fixed or explicitly justified.
+11. Runtime test plan: every room transition, dialogue branch, inventory action, template puzzle, cutscene, save/load case, ending, custom script, and visual readability check that a human tester should exercise.
 
 Output rules for game scripts:
 
@@ -1351,6 +1362,7 @@ Output rules for game scripts:
 - Ensure all dynamically selected images are also referenced by documented preloadable image fields.
 - Prefer validator-checkable ids, templates, dialogue actions, cutscene steps, transitions, and asset paths over clever script code.
 - If the GDD asks for behaviour outside this contract, list it under requested engine extensions instead of inventing an API.
+- Do not output replacement `games.json` or `games.js` files unless the current files were supplied and merged. Otherwise output entry snippets and ask the human to supply the current registry files for the next-turn merge.
 
 ## 19. Using the Game Design Document
 
@@ -1366,6 +1378,7 @@ The completed Game Design Document is the design source of truth. The authoring 
 - Map the design to content roles and required depth: identify critical-path gates, puzzle/clue carriers, major characters, minor characters, ambience, rewards/payoffs, endings, and deliberately incidental elements. State which elements require substantial authored depth and which may remain concise.
 6. Map the design to engine systems: rooms to `game.rooms`, room travel to `transitionZones`, standard object behaviour to templates, branching conversation to `dialogueTrees`, staged presentation to cutscenes, persistent state to public flags/variables/scoped variables/object variables, and endings to `game.endings`.
 7. Establish the visual contract before generating the full asset set: derive a concise art direction from the GDD and research, create `style_reference_sheet.png`, then use it to guide all runtime room, character, object, inventory, overlay, and UI assets.
+- Establish the audio plan before final script handoff: derive the music cue manifest from the GDD and room/cutscene/ending moods, map every room/screen/ending to a cue or intentional silence, and document any temporary silence caused only by missing binary audio files.
 8. Prefer the smallest implementation that satisfies the GDD. Use declarative data and templates before custom scripts. If the GDD asks for behaviour outside this contract, list a requested engine extension instead of inventing a private API.
 - Produce the required deliverables from the Authoring AI Output Contract, including implementation notes, manifest, game script, asset manifest, style reference sheet, walkthrough/dependency graph, quality/depth validation report, validator report, and runtime test plan.
 
@@ -1448,7 +1461,7 @@ The GDD template intentionally contains only game-specific design choices. Apply
 - Endings: one good ending.
 - AI invention: allowed for connective plot, minor characters, rooms, puzzles, dialogue, jokes, and cutscenes if consistent with the GDD.
 - Art default: 1990s painted pixel-art backgrounds, readable silhouettes, slightly exaggerated character sprites, side-on 320x136 room scenes.
-- Audio default: light MIDI-like room music rendered as MP3 or OGG. Music should normally be present for rooms/screens unless the GDD requests sparse or silent music. Sound effects are optional and default to silence where unspecified; the authoring AI should derive any optional sound-effect suggestions rather than requiring the human to specify each effect.
+- Audio default: light MIDI-like room music rendered as MP3 or OGG. Music should normally be present for rooms/screens unless the GDD requests sparse or silent music. The AI must derive a music cue manifest with filenames, room/screen/ending usage, and AI music-generator prompts even if it cannot generate the binary audio itself. Sound effects are optional and default to silence where unspecified; the authoring AI should derive any optional sound-effect suggestions rather than requiring the human to specify each effect.
 - Where the AI authoring the game cannot produce music itself, inform the human of this and give the human style prompts in 1,000 characters or less for an AI music generator for each piece of music required, specifying the file name that the resulting music from each style prompt should have.
 - Cutscene default: extra AI-added cutscenes should be limited to intro, major reveal, puzzle completion, and ending moments unless the GDD allows for more.
 - Technical default: standard engine save/load only; custom scripts only when templates, dialogue trees, cutscenes, and effective properties cannot express the behaviour.
