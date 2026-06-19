@@ -205,6 +205,7 @@ Audio:
 
 - Music resolves under `music/`; sound and voice resolve under `sounds/`.
 - Music and sound source-list fields must be arrays of relative filenames; the current engine uses the first element. Use `[]` for silence.
+- Public `api.PlaySound()` and cutscene sound steps should be given an array, normally with one filename. Do not pass a bare string to `api.PlaySound()`; the current engine's low-level sound player indexes the first array element. Template `rule.sound` may be a string because template effect handling wraps it into an array before playing.
 - Voice fields/options are a single relative filename string, not an array.
 - Use browser-supported audio file types such as `.ogg`, `.mp3`, or `.wav`. The engine does not validate audio extensions.
 - Music loops until replaced or stopped; sound effects and voice are one-shot.
@@ -526,7 +527,8 @@ Item fields read by the engine:
 
 Overlay spec fields:
 
-- `image:string`: PNG in `objects/`, normally 320x136.
+- `image:string`: PNG in `objects/`, normally 320x136. A string `overlaySpec` is equivalent to `{image:'filename.png'}`.
+- `background`, `endBackground:string`: accepted by the preload path for ending/overlay-like specs, but ordinary overlays render `image`; use `image` for normal closeups and maps.
 - `itemId:string` optional.
 - `hotspots:array` optional; overlay targets use `id`, `name`, `rect`, `interactions`, `refusals`, and other ordinary target fields. Overlay targets are clicked only while the overlay is open; their ids do not place persistent room objects, but if they use object variables they still share the object-variable namespace for that id.
 
@@ -632,7 +634,7 @@ Effective property resolution:
 1. Runtime object state override, where applicable.
 2. `entity.properties[propertyName]`.
 3. `entity[propertyName]`.
-4. Getter script.
+4. Getter script. The raw value above is passed as the getter fallback; a getter may override a direct field/property/state value by returning a non-`undefined` value.
 5. Template default.
 6. Caller default.
 
@@ -734,7 +736,9 @@ Shared puzzle rule fields: `requiresFlag`, `requiresItem`, `allowProperty`, `sou
 
 ### `door`
 
-Adds `lookAt`, `open`, `close`, `use`, `walkTo`. Fields: `locked`, `open`, sprites, transition/unlock/lock animations, `walkThroughTo`, `onOpen`, `onClose`, `onUnlock`, `onLock`, all door text fields. Runtime variables: `open`, `locked`. Doors control open/closed/blocking; room transitions are still transition zones.
+Adds `lookAt`, `open`, `close`, `use`, `walkTo`. Runtime object variables: `open`, `locked`. Initial values come from authored `open`/`locked` if the runtime variables are absent. Effective defaults: `defaultText` varies by open/locked state; `sprite` selects `openSprite` or `closedSprite`, falling back to `sprite`; `walkThrough` is true when open; `blocksMovement` is true when not open; `collisionShape` falls back to `rect`; `baseline` falls back to rect bottom or `y`. Doors control open/closed/blocking; room transitions are still transition zones.
+Fields: `locked`, `open`, `sprite`, `closedSprite`, `openSprite`, `rect`, `collisionShape`, `baseline`, `walkThroughTo`, `transitionAnimation`, `openAnimation`, `unlockAnimation`, `lockAnimation`, `onOpen`, `onClose`, `onUnlock`, `onLock`.
+Text fields: `openText`, `lockedText`, `unlockedText`, `closedText`, `alreadyOpenText`, `lockedOpenText`, `openActionText`, `alreadyClosedText`, `closeActionText`, `wrongKeyText`, `unlockText`, `lockText`, `closedWalkText`.
 
 ### `key`
 
@@ -750,31 +754,37 @@ Adds `lookAt`, `take`. Fields: `itemId`, `hiddenFlag`, `takenFlag`, `takeText`, 
 
 ### `container`
 
-Adds `lookAt`, `open`, `close`, `use`. Fields: `locked`, `open`, `contents`, `contains`, sprites, animations, `onOpen`, `onClose`, `onUnlock`, `onLock`, `onEmpty`, text fields. Runtime variables: `open`, `locked`, `emptied`.
+Adds `lookAt`, `open`, `close`, `use`. Runtime object variables: `open`, `locked`, `emptied`. Initial `open`/`locked` values come from authored fields if runtime variables are absent. Effective defaults: `defaultText` varies by open/locked/emptied state; `sprite` selects `emptySprite`, `openSprite`, `closedSprite`, or `sprite`.
+Fields: `locked`, `open`, `contents` or `contains` (string or array of item ids), `sprite`, `closedSprite`, `openSprite`, `emptySprite`, `transitionAnimation`, `openAnimation`, `unlockAnimation`, `lockAnimation`, `onOpen`, `onClose`, `onUnlock`, `onLock`, `onEmpty`. Opening an unlocked unopened container sets `open=1`, adds all contents to inventory once, then sets `emptied=1` if contents were present.
+Text fields: `emptyText`, `openText`, `lockedText`, `closedText`, `alreadyOpenText`, `lockedOpenText`, `takeContentsText`, `openActionText`, `alreadyClosedText`, `closeActionText`, `wrongKeyText`, `unlockText`, `lockText`.
 
 ### `switch`
 
-Adds `lookAt`, `use`, `open`, `close`. Fields: `on`, sprites, `onToggle`, `onOn`, `onOff`, text fields. Runtime variable: `on`.
+Adds `lookAt`, `use`, `open`, `close`. Runtime object variable: `on`. Initial value comes from authored `on` if the runtime variable is absent. `use` toggles; `open` turns on; `close` turns off. Effective defaults: `defaultText` varies by on/off state; `sprite` selects `onSprite` or `offSprite`, falling back to `sprite`.
+Fields: `on`, `sprite`, `onSprite`, `offSprite`, `onToggle`, `onOn`, `onOff`.
+Text fields: `onText`, `offText`, `actionOnText`, `actionOffText`, `alreadyOnText`, `alreadyOffText`.
 
 ### `readable`
 
-Adds `lookAt`, `use`. Fields: `readText`, `lookOverlay`, `closeupOverlay`, `onRead`, `defaultText`.
+Adds `lookAt`, `use`. Fields: `readText`, `lookOverlay`, `closeupOverlay`, `onRead`, `defaultText`. If `lookOverlay` or `closeupOverlay` exists, reading shows the overlay and returns immediately; `onRead` is only run on the text-reading path. Without an overlay, the template narrates `readText`, falling back to effective `defaultText`.
 
 ### `device`
 
-Adds `lookAt`, `use`. Fields: `powered`, `powerFlag`, `requiredItem`, `consumeRequiredItem`, `setsFlag`, `fixedOnUse`, `singleUse`, `onUse`, text fields. Runtime variables: `used`, `fixed`.
+Adds `lookAt`, `use`. Runtime object variables: `used`, `fixed`. `use` refuses if `singleUse` is true and `used` is already true; then checks `powerFlag` if present, otherwise authored `powered` defaulting to true; then checks `requiredItem` when supplied; then may `consumeRequiredItem`, set `fixed`, set `used`, set `setsFlag`, narrate `successText`, and run `onUse`.
+Fields: `powered`, `powerFlag`, `requiredItem`, `consumeRequiredItem`, `setsFlag`, `fixedOnUse`, `singleUse`, `onUse`.
+Text fields: `defaultText`, `alreadyUsedText`, `noPowerText`, `wrongItemText`, `successText`.
 
 ### `furniture`
 
-Adds `lookAt`. Fields: `rect`, `collisionShape`, `baseline`, `walkBehind`, `allowWalkBehindWithoutSprite`, `zIndex`, `defaultText`, `onCollide`, `sprite`. Defaults to blocking movement and refusing take/open/close.
+Adds `lookAt`. Defaults to `blocksMovement:true`, provides take/open/close refusals, and uses `callbackResults` for blocked movement. Fields: `rect`, `collisionShape`, `baseline`, `walkBehind`, `allowWalkBehindWithoutSprite`, `zIndex`, `defaultText`, `onCollide`, `onBump`, `sprite`. `walkBehind` defaults to true only when a sprite exists, unless `allowWalkBehindWithoutSprite:true` is set. `collisionShape` falls back to `rect`, then `x`/`y`/`frameW`/`frameH`. `baseline` falls back to collision bottom or `y`.
 
 ### `barrier`
 
-Adds `lookAt`. Fields: `rect`, `collisionShape`, `defaultText`. Defaults to blocking movement and refusing take/open/close.
+Adds `lookAt`. Defaults to `blocksMovement:true`, provides take/open/close refusals, and uses `callbackResults` for blocked movement. Fields: `rect`, `collisionShape`, `defaultText`, `onCollide`, `onBump`. `collisionShape` falls back to `rect`. Use `barrier` for invisible or simple blocking geometry; use `furniture` for visible foreground/background objects with walk-behind behaviour.
 
 ### `combine`
 
-Adds `use`. Symmetric. Fields: `combine`, `combinations`, `intransitiveUseText`, `selfUseText`, `combineRefusalText`.
+Adds `use`. Symmetric. Fields: `combine`, `combinations`, `intransitiveUseText`, `selfUseText`, `combineRefusalText`. When no inventory item/source is selected it narrates `intransitiveUseText`; when source and target are the same it narrates `selfUseText`. For two different subjects, the engine checks rules on the lexically first id first, then the second, using the other id or `'*'`. Rules support the shared requirement/effect fields and `text`, `playerText`, `speakerId`.
 
 EXAMPLE_START
 combine:{
@@ -785,11 +795,11 @@ EXAMPLE_END
 
 ### `openableBox`
 
-Adds `open`, `use`. Fields: `alreadyOpenText`, `openEffect`, `revealsItem`, `openSpeakerId`, `openText`. Runtime variable: `opened`.
+Adds `open`, `use` and sets `transitiveUse:false`. Runtime object/item variable: `opened`. Fields: `alreadyOpenText`, `openEffect`, `revealsItem`, `openSpeakerId`, `openText`. First open sets `opened=1`, applies `openEffect`, and if `openEffect` has no `addItem` and `revealsItem` is present, adds `revealsItem`. Later opens narrate `alreadyOpenText`.
 
 ### `exchange`
 
-Adds `give` only. Fields: `exchanges`, `exchangeNeedItemText`, `exchangeRefusalText`. Rule fields also include `playerRefusalText`, `playerSpeakerId`, `playerText`, `npcSpeakerId`, `npcText`, `text`, `afterDialogueScript`. Exchange/barter is Give-only.
+Adds `give` only. Fields: `exchanges`, `exchangeNeedItemText`, `exchangeRefusalText`. Source is the selected inventory item/subject. Rule key is source id or `'*'`. Rules support shared requirement/effect fields plus `playerRefusalText`, `playerSpeakerId`, `playerText`, `npcSpeakerId`, `npcText`, `text`, `afterDialogueScript`. Successful exchange applies effects, then says optional `playerText` followed by `npcText`/`text`, then runs `afterDialogueScript`. Exchange/barter is Give-only.
 
 ### `multiRequirement`
 
@@ -797,23 +807,23 @@ Adds `give`, `use`. Fields: `requirements`, `requirementNeedItemText`, `requirem
 
 ### `gatekeeper`
 
-Adds `talkTo`, `use`, `give`. Fields: `dialogueTree`, `allowsPassage`, `allowText`, `blockText`.
+Adds `talkTo`, `use`, `give`. Fields: `dialogueTree`, `allowsPassage`, `allowText`, `blockText`. `talkTo` starts `dialogueTree` when present; otherwise it performs the same check as `use`/`give`. The check narrates `allowText` when effective `allowsPassage` is true, otherwise `blockText`. Gatekeeper does not itself change rooms or enable transitions; use transition zones and effective properties/flags for passage.
 
 ### `costume`
 
-Adds `use`. Fields: `costumeSpriteId`, `playerSpriteId`, `baseClothes`, `replacesItem`, `returnItem`, `wearText`, `costumeNoSpriteText`. Runtime item variable: `worn`.
+Adds `use` and sets `transitiveUse:false`. Runtime item variable: `worn`. Fields: `costumeSpriteId`, `playerSpriteId`, `baseClothes`, `replacesItem`, `returnItem`, `wearText`, `costumeNoSpriteText`. `use` changes the player sprite to `costumeSpriteId`/`playerSpriteId`; if `baseClothes:true`, it restores the authored `game.player.spriteId`. It sets `worn=1`, removes `replacesItem` if supplied, adds `returnItem` if supplied and absent, then narrates `wearText`. The referenced sprite id must exist in `game.sprites`.
 
 ### `toolTarget`
 
-Adds `use`. Fields: `toolUses`, `toolNeedItemText`, `toolRefusalText`. Rule key is source/tool id or `'*'`.
+Adds `use`. Fields: `toolUses`, `toolNeedItemText`, `toolRefusalText`. Source is the selected inventory item/subject. Rule key is source/tool id or `'*'`. Rules support shared requirement/effect fields plus `text` and `speakerId`. Without a source it narrates `toolNeedItemText`; with no passing rule it narrates the rule refusal or `toolRefusalText`.
 
 ### `clueUnlocker`
 
-Adds `lookAt`, `use`. Fields: `unlockBlocked`, `unlockBlockedText`, `unlocksPlaces`, `mapItemId`, `unlockText`. Effect: sets item variable `place_placeId_unlocked=1`.
+Adds `lookAt`, `use`. Fields: `unlockBlocked`, `unlockBlockedText`, `unlocksPlaces`, `mapItemId`, `unlockText`. If `unlockBlocked` is true, narrates `unlockBlockedText`. Otherwise, for each place id in `unlocksPlaces` it sets item variable `place_placeId_unlocked=1` on `mapItemId` or on the clue item/object id, then narrates `unlockText`. Pair this with map place `visibleFlag` or custom map visibility logic when the design needs clue-gated map places.
 
 ### `distractible`
 
-Adds `use`, `give`. Fields: `distractions`, `distractionRefusalText`. Rule key is source id or `default`. Effect: sets self variable `distracted=1` and applies rule effects.
+Adds `use`, `give`. Runtime variable: `distracted`. Fields: `distractions`, `distractionRefusalText`. Source is the selected inventory item/subject, or absent for intransitive use. Rule key is source id or `default`, with `'*'` fallback through the shared rule lookup. On success it sets `distracted=1`, applies rule effects, then says `rule.text` using `rule.speakerId` or the target id. On failure it narrates the rule refusal or `distractionRefusalText`.
 
 
 ## 10. Runtime Script API: Exact Method Contracts
@@ -1017,9 +1027,9 @@ String becomes `{image:string}`. Object may contain `image`, `itemId`, and `hots
 
 Closes active overlay.
 
-#### `api.PlaySound(sources:string|array) -> undefined`
+#### `api.PlaySound(sources:array) -> undefined`
 
-Prefer array. The engine uses first source and resolves under `sounds/`.
+Pass an array of relative filenames, normally with one filename. The engine uses `sources[0]` and resolves under `sounds/`. Use `[]` or `null` for silence/no-op. Do not pass a bare string to this public method.
 
 #### `api.StartCutscene(steps:object|array, options?:object) -> undefined`
 
