@@ -43,6 +43,17 @@ Decision process for authoring an interaction:
 - If the behaviour is a sequence of presentation/movement/state changes, use a cutscene.
 - Use a custom script only for distinctive game-specific logic that cannot be expressed by the above.
 
+
+General quality and depth contract:
+- A valid package must not merely run; it must show production-intent design depth appropriate to the requested asset tier, genre, tone, and GDD. Structural validation is necessary but not sufficient.
+- Content parsimony means avoiding redundant systems, filler, duplicated state, and unnecessary branches. It does not mean reducing important rooms, characters, objects, puzzles, clues, descriptions, refusals, dialogue, endings, or visual/audio assets to the smallest technically valid representation.
+- For each authored element, first identify its content role: critical path gate, puzzle source, clue carrier, red herring, worldbuilding element, comic/tonal beat, characterisation beat, reward/payoff, tutorial, transition, ambience, or purely incidental detail. The depth of implementation must match that role.
+- Critical path, puzzle-relevant, recurring, gatekeeping, companion, antagonist, or theme-bearing elements require state-aware authored depth unless the GDD explicitly says they should be terse, silent, abstract, or minimalist. Depth may be expressed through dialogue trees, effective-property text, refusals, environmental descriptions, cutscenes, audio/visual design, or puzzle affordances; choose the canonical engine mechanism for the content role.
+- Incidental elements may be concise, but they should still be specific to the game world and tone. Avoid generic first-draft text, interchangeable jokes, unexplained gates, single-line substitutes for major interactions, and content that satisfies only id/reference/path validation.
+- Important clues should normally be represented in more than one channel, such as object description, dialogue, refusal, post-failure hint, environmental signposting, or state change. Repetition should clarify without spoiling and should escalate only after player action or failure.
+- Major conversations should normally be dialogue trees rather than one-line talk scripts. A one-line talkTo script is appropriate only for incidental targets with no puzzle, clue, plot, theme, character, gatekeeping, trade, recruitment, or recurring function.
+- Before handoff, perform a depth review: identify the major content roles, state what each contributes, and revise any element whose implementation is merely functional when its role requires authored depth.
+
 ## 3. Glossary of Engine Concepts
 
 Declarative data means object, room, item, dialogue, cutscene, and template definitions written as data fields in the game definition. Declarative data is preferred because it is validator-checkable and uses the engine's canonical systems.
@@ -1133,6 +1144,10 @@ EXAMPLE_END
 
 Tree fields: `speakerId`, `start`, `nodes`, `emptyText`. Node fields: `speakerId`, `text`, `choices`, `emptyText`. `emptyText` supplies a single closing choice when a node has no visible choices.
 
+Dialogue depth guidance:
+- Dialogue trees are both a technical structure and a content-delivery mechanism. For any NPC or entity whose role is substantial under the quality/depth contract, the tree should reflect that role through state-aware choices, character voice, clueing, refusal/hint integration, world or theme content, and post-event reactions where relevant.
+- Do not replace a substantial conversation with a custom talkTo script that only says one line. Use a script only to start the dialogue tree or for distinctive logic that dialogue conditions/actions cannot express.
+
 Choice fields: `id`, `text`, `playerText`, `skipPlayerLine`, `speakerId`, `response`, `next`, `end`, `repeat`, `stay`, `hideAfterUse`, `condition`, `conditions`, `showIf`, `preAction`, `preActions`, `action`, `actions`, `script`, `postResponseAction`, `postResponseActions`.
 
 Selection order:
@@ -1271,11 +1286,17 @@ Authoring checklist before validation:
 - Are all `walkTo` points, transition target points, graph nodes, NPC move targets, blockers, and trigger/transition zones consistent with the room's walkable geometry and the documented player/NPC movement differences?
 - Are all refusals data-driven unless they require distinctive game logic?
 
+- Has the authoring AI classified major content roles and matched implementation depth to those roles, rather than treating runtime validity as the quality bar?
+- Do major NPCs, gatekeepers, companions, antagonists, clue sources, and recurring characters use dialogue trees or equivalent state-aware canonical systems rather than one-line scripts?
+- Do critical-path puzzles, gates, and clues have sufficient signposting, feedback, refusal/hint escalation, and post-state reactions for their role?
+- Do important descriptions, refusals, dialogue, visual/audio assets, endings, and puzzle payoffs feel specific to this game world, tone, and character set rather than generic first-draft filler?
+
 Validation workflow:
 
-1. LLM semantic validation: check all ids, scripts, templates, assets, hooks, dialogue forms, cutscene steps, save-state use, and template-vs-custom-script choices.
-2. Visual semantic validation: compare runtime images, asset manifest visual acceptance notes, and `style_reference_sheet.png`. Check that important visuals are specific, coherent, and readable in their engine context.
-3. Run validator. For the canonical layout `gameId/gameId.js` with assets below `gameId/`, the validator infers `gameId/` as the asset root for existence checks:
+1. LLM structural-semantic validation: check all ids, scripts, templates, assets, hooks, dialogue forms, cutscene steps, save-state use, and template-vs-custom-script choices.
+2. Quality/depth validation: review the package against the general quality and depth contract. Confirm that each major content role has adequate authored depth, state awareness, clueing, feedback, tone, and payoff; revise low-effort but technically valid content before running the validator.
+3. Visual semantic validation: compare runtime images, asset manifest visual acceptance notes, and `style_reference_sheet.png`. Check that important visuals are specific, coherent, and readable in their engine context.
+4. Run validator. For the canonical layout `gameId/gameId.js` with assets below `gameId/`, the validator infers `gameId/` as the asset root for existence checks:
 
 EXAMPLE_START
 python validator.py gameId/gameId.js --engine index.html --check-assets --report validation_report.txt
@@ -1318,8 +1339,9 @@ Required deliverables:
 5. Asset manifest: every image, music, sound, and voice asset needed by the game, with canonical path, role folder, expected dimensions, spritesheet frame size where applicable, asset tier, and visual acceptance notes for important runtime images.
 6. Generated assets: assets should be placed under the canonical role folders below `gameId/`. If binary image generation is unavailable, provide exact filenames, sizes, transparency requirements, content descriptions, and visual acceptance notes instead; do not present such a package as visually production-ready.
 7. Puzzle dependency graph or walkthrough: the shortest intended solution path, optional branches, failure/refusal paths, and all required inventory/state dependencies.
-8. Validation report: the validator command used, including `--asset-root` if needed, and the resulting errors/warnings. Errors must be fixed before handoff. Warnings must be fixed or explicitly justified.
-9. Runtime test plan: every room transition, dialogue branch, inventory action, template puzzle, cutscene, save/load case, ending, custom script, and visual readability check that a human tester should exercise.
+8. Quality/depth validation report: a concise review of the major content roles, how each is supported by authored depth, and any deliberately terse/minimal elements with justification. This report must be completed before structural validator handoff.
+9. Validation report: the validator command used, including `--asset-root` if needed, and the resulting errors/warnings. Errors must be fixed before handoff. Warnings must be fixed or explicitly justified.
+10. Runtime test plan: every room transition, dialogue branch, inventory action, template puzzle, cutscene, save/load case, ending, custom script, and visual readability check that a human tester should exercise.
 
 Output rules for game scripts:
 
@@ -1341,10 +1363,11 @@ The completed Game Design Document is the design source of truth. The authoring 
 3. Research the requested genre, subgenre, period, and any reference games or works in detail. Find real walkthroughs for games of that type, especially 1990s point-and-click adventures where relevant. Analyse puzzle flow, room gating, inventory dependencies, dialogue loops, hinting, pacing, tone, UI conventions, and ending structure.
 4. Do not copy any puzzle, room layout, joke, character, dialogue, image, music, or prose exactly from the research. Use research to synthesize original patterns and genre flavour.
 5. For each named character, build a voice brief from the GDD and, where helpful, research the character's role, profession, period, region, genre archetype, motives, and comparable public examples. Capture personality, diction, idiom, rhythm, humour style, and motives without copying protected dialogue or imitating a real person so closely that the output becomes non-original.
+- Map the design to content roles and required depth: identify critical-path gates, puzzle/clue carriers, major characters, minor characters, ambience, rewards/payoffs, endings, and deliberately incidental elements. State which elements require substantial authored depth and which may remain concise.
 6. Map the design to engine systems: rooms to `game.rooms`, room travel to `transitionZones`, standard object behaviour to templates, branching conversation to `dialogueTrees`, staged presentation to cutscenes, persistent state to public flags/variables/scoped variables/object variables, and endings to `game.endings`.
 7. Establish the visual contract before generating the full asset set: derive a concise art direction from the GDD and research, create `style_reference_sheet.png`, then use it to guide all runtime room, character, object, inventory, overlay, and UI assets.
 8. Prefer the smallest implementation that satisfies the GDD. Use declarative data and templates before custom scripts. If the GDD asks for behaviour outside this contract, list a requested engine extension instead of inventing a private API.
-9. Produce the required deliverables from the Authoring AI Output Contract, including implementation notes, manifest, game script, asset manifest, style reference sheet, walkthrough/dependency graph, validation report, and runtime test plan.
+- Produce the required deliverables from the Authoring AI Output Contract, including implementation notes, manifest, game script, asset manifest, style reference sheet, walkthrough/dependency graph, quality/depth validation report, validator report, and runtime test plan.
 
 ### 21. Clarification rules
 
@@ -1429,6 +1452,7 @@ The GDD template intentionally contains only game-specific design choices. Apply
 - Where the AI authoring the game cannot produce music itself, inform the human of this and give the human style prompts in 1,000 characters or less for an AI music generator for each piece of music required, specifying the file name that the resulting music from each style prompt should have.
 - Cutscene default: extra AI-added cutscenes should be limited to intro, major reveal, puzzle completion, and ending moments unless the GDD allows for more.
 - Technical default: standard engine save/load only; custom scripts only when templates, dialogue trees, cutscenes, and effective properties cannot express the behaviour.
+- Quality/depth default: production-quality first pass for content as well as assets. Major content roles require state-aware, game-specific authored depth; concise treatment is acceptable only for incidental elements or when the GDD intentionally asks for minimalism.
 - Asset default: create all needed runtime assets as a production-quality first pass. If binary image generation is unavailable, provide exact replacement specifications and label the package as not visually production-ready.
 - Style-reference default: create `style_reference_sheet.png` first, before the full runtime asset set, unless the GDD explicitly disables image generation or the human explicitly disables the style-reference workflow.
 
