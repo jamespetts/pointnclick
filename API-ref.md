@@ -469,7 +469,7 @@ Hotspot/object fields read by the engine:
 - Identity/template: `id`, `name`, `displayName`, `template`, `templateId`, `kind`, `templates`, `itemId`.
 - Text/behaviour: `defaultText`, `description`, `interactions`, `refusals`, `properties`, getter maps, `callbackStatus`, `callbackResult`, `callbackResults`.
 - Rendering: `x`, `y`, `frameW`, `frameH`, `sprite`, `closedSprite`, `openSprite`, `emptySprite`, `fullSprite`, `onSprite`, `offSprite`, `animation`, `animations`, `animationCompleteScripts`.
-- Visibility/hit: `hidden`, `renderHidden`, `hitDisabled`, `disableHit`, `interactionDisabled`, `rect`, `hitRect`, `priority`, `hitPriority`, `zIndex`, `baseline`, `hideOnTake` for pickup-template objects.
+- Visibility/hit/command behaviour: `hidden`, `renderHidden`, `hitDisabled`, `disableHit`, `interactionDisabled`, `rect`, `hitRect`, `priority`, `hitPriority`, `zIndex`, `baseline`, `hideOnTake` for pickup-template objects, and `transitiveUse` for Use-command selection behaviour.
 - Movement/geometry: `walkTo`, `walkThrough`, `walkThroughTo`, `walkThroughPoint`, `blocksMovement`, `blocksWhenHidden`, `collisionShape`, `walkBehind`, `baseline`, `zIndex`, `triggerZones`, `onCollide`, `onBump`, `onStay`. Reserved/no-op in this engine version: `blocksActors`, `occluderShape`, `walkBoxes`, `blockers`, `walkBehinds`.
 
 Object geometry semantics:
@@ -637,11 +637,14 @@ Refusal lookup order:
 
 Use/Give:
 
-- `use` and `give` are two-target verbs: select inventory item, then click target.
-- Set effective property `transitiveUse:false` on a target/item when `Use` should run its own intransitive `use` interaction immediately instead of selecting it as the first object for `Use X with Y`. The `costume` and `openableBox` templates do this.
+- `give` is always a two-target verb: select inventory item, then click target.
+- `use` supports both intransitive operation and two-target Use X with Y. A target or inventory item with effective `transitiveUse:false` runs its own plain `use` interaction immediately. A target or inventory item with effective `transitiveUse:true` is selectable as the first subject for Use X with Y.
+- If `transitiveUse` is omitted, the engine infers the safer behaviour. A target or inventory item with a plain `use` interaction is treated as intransitive unless that interaction is a known transitive template (`combine`, `toolTarget`, `multiRequirement`, door key use, or container key use). This prevents ordinary terminals, switches, kiosks, levers, readers, devices, and custom one-click use objects from requiring accidental Use X with X authoring.
+- `Use X with X` is never exposed as a distinct gameplay action. If the selected Use subject and clicked target are the same entity, or the clicked world target is the world instance of that item, the engine clears the selected subject and runs intransitive `Use X` instead. Specific `use:X` self-use keys should not be authored; they will not be reached through ordinary UI input.
 - `exchange`/barter is Give-only.
-- True symmetric `Use X with Y` uses `combine`.
+- True symmetric Use X with Y uses `combine`.
 - Target-specific tools use `toolTarget`.
+- If a custom plain `use` interaction really is intended to select the object as the first subject for Use X with Y, set `transitiveUse:true` explicitly and test both subject-first and target-first orders.
 
 Effective property resolution:
 
@@ -798,12 +801,11 @@ Adds `lookAt`. Defaults to `blocksMovement:true`, provides take/open/close refus
 
 ### `combine`
 
-Adds `use`. Symmetric. Fields: `combine`, `combinations`, `intransitiveUseText`, `selfUseText`, `combineRefusalText`. When no inventory item/source is selected it narrates `intransitiveUseText`; when source and target are the same it narrates `selfUseText`. For two different subjects, the engine checks rules on the lexically first id first, then the second, using the other id or `'*'`. Rules support the shared requirement/effect fields and `text`, `playerText`, `speakerId`.
-
+Adds `use`. Symmetric. Fields: `combine`, `combinations`, `intransitiveUseText`, `combineRefusalText`. When no inventory item/source is selected it narrates `intransitiveUseText`. Ordinary UI input never dispatches Use X with X as a separate combination; the interaction system normalises that case to intransitive Use X before template lookup. For two different subjects, the engine checks rules on the lexically first id first, then the second, using the other id or `'*'`. Rules support the shared requirement/effect fields and text, playerText, speakerId.  
 EXAMPLE_START
 combine:{
-  otherItemId:{removeSource:true,removeTarget:true,resultItem:'combinedItem',text:'That should do it.'},
-  '*':{refusalText:'Those do not go together.'}
+otherItemId:{removeSource:true,removeTarget:true,resultItem:'combinedItem',text:'That should do it.'},
+'*':{refusalText:'Those do not go together.'}
 }
 EXAMPLE_END
 
@@ -1254,7 +1256,7 @@ State storage guidance:
 
 Authoring checklist before validation:
 
-- Does each standard puzzle use the appropriate template before any custom script? For ordinary world pickups, use `template:'pickup'` and rely on the default hide-after-take behaviour; add `hideOnTake:false` only when the world object should deliberately remain visible.
+- Does each standard puzzle use the appropriate template before any custom script? For ordinary world pickups, use `template:'pickup'` and rely on the default hide-after-take behaviour; add `hideOnTake:false` only when the world object should deliberately remain visible. For ordinary terminals, switches, kiosks, levers, readers, devices, and other one-click objects, provide a plain `use` interaction and rely on inferred intransitive use; set `transitiveUse:true` only when the object is deliberately meant to be the first subject in Use X with Y.
 - Does every mutable value that matters after save/load use a public saved-state API?
 - Are dynamic text, visibility, blocking, sprites, and available interactions represented as effective properties/getters rather than custom scripts where possible?
 - Are all branching conversations dialogue trees?

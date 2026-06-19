@@ -3351,8 +3351,31 @@
             command.targetType='inventory';
             this.RunTargetInteraction(command,target);
         },
+        IsKnownTransitiveUseScript: function (scriptName) { return scriptName==='template:combine.use' || scriptName==='template:toolTarget.use' || scriptName==='template:multiRequirement.add' || scriptName==='template:door.useKey' || scriptName==='template:container.useKey';
+        },
+        HasIntransitiveUseInteraction: function (target) { if (!target) { return false;
+            } var context={target:target,purpose:'command'};
+            var interactions=Engine.Properties.Get(target,'interactions',context,undefined) || target.interactions || {};
+            return !!(interactions.use && !this.IsKnownTransitiveUseScript(interactions.use));
+        },
         IsTransitiveUseTarget: function (target) { if (!target) { return true;
-            } return Engine.Properties.Get(target,'transitiveUse',{target:target,purpose:'command'},true) !== false;
+            } var explicit=Engine.Properties.Get(target,'transitiveUse',{target:target,purpose:'command'},undefined);
+            if (explicit !== undefined) { return explicit !== false;
+            }
+            if (this.HasIntransitiveUseInteraction(target)) { return false;
+            }
+            return true;
+        },
+        IsSelfUseCommand: function (command, target) { if (!command || !target || command.verbId !== 'use' || !command.inventoryItemId) { return false;
+            } return command.inventoryItemId === target.id || (!!target.itemId && command.inventoryItemId === target.itemId);
+        },
+        NormaliseSelfUseCommand: function (command, target) { if (!this.IsSelfUseCommand(command,target)) { return command;
+            } command._implicitIntransitiveUseSubjectId = command.inventoryItemId;
+            command.inventoryItemId = null;
+            Engine.State.selectedInventoryItemId = null;
+            if (command._hookContext) { command._hookContext.command = command;
+            }
+            return command;
         },
         GetCommandSubjectName: function (subjectId) { if (!subjectId) { return '';
             } var item=Engine.CurrentGame && Engine.CurrentGame.items ? Engine.CurrentGame.items[subjectId] : null;
@@ -3362,6 +3385,7 @@
             } return subjectId;
         },
         RunTargetInteraction: function (command, target) {
+            command=this.NormaliseSelfUseCommand(command,target);
             var context={ command:command, target:target };
             var interactions=Engine.Properties.Get(target,'interactions',context,undefined) || target.interactions || {};
             var linked=this.GetLinkedInventoryTarget(target);
