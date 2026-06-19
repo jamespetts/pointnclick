@@ -14,7 +14,7 @@ import re
 import sys
 
 ENGINE_API_VERSION = 1
-KNOWN_TEMPLATES = set(['door', 'key', 'map', 'pickup', 'container', 'switch', 'readable', 'device', 'furniture', 'barrier'])
+KNOWN_TEMPLATES = set(['door', 'key', 'map', 'pickup', 'container', 'switch', 'readable', 'device', 'furniture', 'barrier', 'combine', 'openableBox', 'exchange', 'multiRequirement', 'gatekeeper', 'costume', 'toolTarget', 'clueUnlocker', 'distractible'])
 GAME_HOOKS = set(['beforeRoomEnter', 'afterRoomEnter', 'beforeRoomExit', 'afterRoomExit', 'beforeTransition', 'afterTransition', 'beforeCommand', 'afterCommand', 'onInventoryChanged', 'beforeCutscene', 'afterCutscene', 'onMenuEnter', 'onMenuExit'])
 ROOM_HOOKS = set(['beforeEnter', 'afterEnter', 'beforeExit', 'afterExit'])
 TRANSITION_HOOKS = set(['beforeTransition', 'afterTransition'])
@@ -30,7 +30,7 @@ ROLE_PREFIX = {
     'itemIcon':'objects/', 'itemWorld':'objects/', 'hotspot':'objects/', 'overlay':'objects/', 'map':'objects/',
     'ui':'ui/', 'music':'music/', 'sound':'sounds/'
 }
-SCRIPT_FIELDS = set(['script', 'blockedScript', 'onOpen', 'onClose', 'onUnlock', 'onLock', 'onTake', 'onEmpty', 'onToggle', 'onOn', 'onOff', 'onRead', 'onUse', 'onCollide', 'onBump', 'onStay'])
+SCRIPT_FIELDS = set(['script', 'blockedScript', 'onOpen', 'onClose', 'onUnlock', 'onLock', 'onTake', 'onEmpty', 'onToggle', 'onOn', 'onOff', 'onRead', 'onUse', 'onCollide', 'onBump', 'onStay', 'onComplete', 'afterDialogueScript', 'blockedAction', 'onWear', 'onRemove'])
 
 class Log(object):
     def __init__(self):

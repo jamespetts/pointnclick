@@ -161,11 +161,20 @@ PointClickEngine.RegisterGame({
         coin:{
             id:'coin',
             name:'coin',
+            template:'combine',
             icon:'coin_inventory_cartoon90s_v2.png',
             worldSprite:'coin_table_cartoon90s_v2.png',
             defaultText:'A small brass coin. It has seen a lot of pockets.',
             interactions:{
                 'use:key':'useCoinWithKey'
+            },
+            combine:{
+                map:{
+                    text:'The coin refuses to become a decorative compass rose.'
+                },
+                woofer:{
+                    text:'Woofer sniffs the coin and decides that economics is not his field.'
+                }
             },
             refusals:{
                 open:'It is a coin, not a tin.',
@@ -175,7 +184,7 @@ PointClickEngine.RegisterGame({
         key:{
             id:'key',
             name:'key',
-            template:'key',
+            template:'key combine',
             unlocks:[
                 'door'
             ],
@@ -183,14 +192,21 @@ PointClickEngine.RegisterGame({
             defaultText:'A small brass key. It looks suitable for the door.',
             interactions:{
                 open:'openKey',
-                close:'closeKey',
-                'use:coin':'useCoinWithKey'
+                close:'closeKey'
+            },
+            combine:{
+                map:{
+                    text:'Poking the map with the key adds no new geography.'
+                },
+                woofer:{
+                    text:'Woofer declines to be unlocked. He is already alarmingly open-hearted.'
+                }
             }
         },
         map:{
             id:'map',
             name:'map',
-            template:'map',
+            template:'map combine',
             icon:'map_table_sprite_20260618_2140.png',
             worldSprite:'map_table_sprite_20260618_2140.png',
             defaultText:'A small sketch map of the test area.',
@@ -231,6 +247,8 @@ PointClickEngine.RegisterGame({
             },
             propertyGetters:{
                 travelBlocked:'mapTravelBlocked'
+            },
+            combine:{
             }
         }
     },
@@ -483,6 +501,7 @@ PointClickEngine.RegisterGame({
                 {
                     id:'caretaker',
                     name:'caretaker',
+                    template:'exchange',
                     spriteId:'caretaker',
                     x:270,
                     y:90,
@@ -505,15 +524,26 @@ PointClickEngine.RegisterGame({
                     refusals:{
                         open:"I'm not qualified to perform surgery"
                     },
+                    exchanges:{
+                        coin:{
+                            removeSource:true,
+                            addItem:'key',
+                            npcText:'A fair trade. Here is the key.',
+                            afterDialogueScript:'caretakerLeavesAfterTrade'
+                        }
+                    },
                     interactions:{
                         lookAt:'lookCaretaker',
                         talkTo:'talkCaretaker',
-                        'give:coin':'giveCoinToCaretaker'
+                        'use:coin':'useCoinWithCaretaker',
+                        'give:woofer':'giveWooferToCaretaker',
+                        'give:map':'giveMapToCaretaker'
                     }
                 },
                 {
                     id:'woofer',
                     name:'Woofer',
+                    template:'toolTarget',
                     spriteId:'woofer',
                     x:52,
                     y:118,
@@ -536,6 +566,17 @@ PointClickEngine.RegisterGame({
                         y:116
                     },
                     defaultText:'Woofer is a small light grey dog who looks like a mop without a handle.',
+                    toolUses:{
+                        key:{
+                            text:'Woofer gives the key a polite sniff. He remains unlocked in the spiritual sense only.'
+                        },
+                        map:{
+                            text:'Woofer studies the map upside down and looks pleased with himself.'
+                        },
+                        coin:{
+                            text:'Woofer sniffs the coin and waits for someone to invent biscuits as legal tender.'
+                        }
+                    },
                     interactions:{
                         lookAt:'lookWoofer',
                         talkTo:'talkWoofer'
@@ -769,6 +810,7 @@ PointClickEngine.RegisterGame({
                 {
                     id:'woofer',
                     name:'Woofer',
+                    template:'toolTarget',
                     spriteId:'woofer',
                     x:280,
                     y:118,
@@ -791,6 +833,17 @@ PointClickEngine.RegisterGame({
                         y:116
                     },
                     defaultText:'Woofer is a small light grey dog who looks like a mop without a handle.',
+                    toolUses:{
+                        key:{
+                            text:'Woofer gives the key a polite sniff. He remains unlocked in the spiritual sense only.'
+                        },
+                        map:{
+                            text:'Woofer studies the map upside down and looks pleased with himself.'
+                        },
+                        coin:{
+                            text:'Woofer sniffs the coin and waits for someone to invent biscuits as legal tender.'
+                        }
+                    },
                     interactions:{
                         lookAt:'lookWoofer',
                         talkTo:'talkWoofer'
@@ -1380,6 +1433,18 @@ PointClickEngine.RegisterGame({
             api.RemoveItem('coin');
             api.AddItem('key');
             return true;
+        },
+        useCoinWithCaretaker:function (api) {
+            api.Say('player',
+            'I could wave the coin at him, but commerce traditionally requires handing it over.');
+        },
+        giveWooferToCaretaker:function (api) {
+            api.Say('player',
+            'I would not dream of giving away my beloved Woofer.');
+        },
+        giveMapToCaretaker:function (api) {
+            api.Say('caretaker',
+            'Thank you, but I know this place like the back of my hand. Unfortunately, so does the back of my hand.');
         },
         giveCoinToCaretaker:function (api) {
             if (api.RunScript('tradeCoinForKey',

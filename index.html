@@ -1386,6 +1386,9 @@
     //              collision geometry, optional invisible/background-integrated
     //              behaviour, walk-behind baseline and z sorting.
     //   barrier    Generic visible or invisible impassable scene boundary.
+    //   combine/openableBox/exchange/multiRequirement/gatekeeper/costume/toolTarget/
+    //              clueUnlocker/distractible declaratively cover common
+    //              early adventure inventory, access and NPC puzzle patterns.
     //
     // Template action names are internal strings such as template:door.open. Game
     // scripts should not call Engine.Templates directly; define template:'door'
@@ -1651,7 +1654,88 @@
             }
             return contents.length>0;
         },
+        GetSubject:function (subjectId) { if (!subjectId) { return null; }
+            if (Engine.CurrentGame && Engine.CurrentGame.items && Engine.CurrentGame.items[subjectId]) { var item=Engine.Interactions.GetInventoryTarget(subjectId); item._subjectType='item'; return item; }
+            return Engine.Interactions.GetTarget(subjectId);
+        },
+        SayIfText:function (api, speakerId, text, options) { if (text===undefined || text===null || text==='') { if (options && options.onComplete) { options.onComplete(); } return; }
+            if (speakerId) { api.Say(speakerId,String(text),options||{}); } else { api.Narrate(String(text),options||{}); }
+        },
+        SayPair:function (api, firstSpeaker, firstText, secondSpeaker, secondText, done) { if (firstText!==undefined && firstText!==null && firstText!=='') { this.SayIfText(api,firstSpeaker,firstText,{onComplete:function () { Engine.Templates.SayIfText(api,secondSpeaker,secondText,{onComplete:done}); }}); return; }
+            this.SayIfText(api,secondSpeaker,secondText,{onComplete:done});
+        },
+        GetRule:function (rules, key) { if (!rules) { return null; } return rules[key] || rules['*'] || null; },
+        CheckRequirements:function (rule, source, target, context) { if (!rule) { return {ok:false,text:null}; }
+            if (rule.allowProperty && !Engine.Properties.Get(target,rule.allowProperty,context,false)) { return {ok:false,text:rule.refusalText||rule.blockedText||'That will not work just now.'}; }
+            if (rule.sourceAllowProperty && source && !Engine.Properties.Get(source,rule.sourceAllowProperty,context,false)) { return {ok:false,text:rule.refusalText||rule.blockedText||'That will not work just now.'}; }
+            if (rule.targetAllowProperty && !Engine.Properties.Get(target,rule.targetAllowProperty,context,false)) { return {ok:false,text:rule.refusalText||rule.blockedText||'That will not work just now.'}; }
+            if (rule.requiresFlag && !Engine.State.flags[rule.requiresFlag]) { return {ok:false,text:rule.refusalText||rule.blockedText||'That is not possible yet.'}; }
+            if (rule.requiresItem && !Engine.Inventory.HasItem(rule.requiresItem)) { return {ok:false,text:rule.refusalText||rule.blockedText||'You need something else first.'}; }
+            return {ok:true,text:null};
+        },
+        SetEntityVar:function (entity, name, value) { if (!entity || !name) { return; } var type=Engine.Entities.DetectType(entity);
+            if (type==='item') { Engine.ScopedVariables.Set('item',entity.id,name,value); return; }
+            if (type==='character') { Engine.ScopedVariables.Set('character',entity.id,name,value); return; }
+            if (type==='room') { Engine.ScopedVariables.Set('room',entity.id,name,value); return; }
+            Engine.RoomObjects.SetVariable(entity.id,name,value);
+        },
+        ApplyEffects:function (api, rule, source, target, context) { rule=rule||{};
+            if ((rule.removeSource||rule.consumeSource) && source && source._subjectType==='item') { api.RemoveItem(source.id); }
+            if ((rule.removeTarget||rule.consumeTarget) && target && target.isInventoryItem) { api.RemoveItem(target.id); }
+            if (rule.removeItem) { api.RemoveItem(rule.removeItem); }
+            if (rule.addItem) { api.AddItem(rule.addItem); }
+            if (rule.resultItem) { api.AddItem(rule.resultItem); }
+            if (rule.setFlag) { api.SetFlag(rule.setFlag,rule.flagValue!==false); }
+            if (rule.clearFlag) { api.SetFlag(rule.clearFlag,false); }
+            var vars=rule.setSource||rule.sourceVars||{}; Object.keys(vars).forEach(function (key) { Engine.Templates.SetEntityVar(source,key,vars[key]); });
+            vars=rule.setTarget||rule.targetVars||{}; Object.keys(vars).forEach(function (key) { Engine.Templates.SetEntityVar(target,key,vars[key]); });
+            vars=rule.setVariables||{}; Object.keys(vars).forEach(function (key) { api.SetVariable(key,vars[key]); });
+            if (rule.setObjectState && target && target.id) { api.SetObjectState(target.id,rule.setObjectState); }
+            if (rule.setSourceState && source && source.id) { api.SetObjectState(source.id,rule.setSourceState); }
+            if (rule.animation && target && target.id) { api.SetObjectAnimation(target.id,rule.animation,rule.animationOptions||{}); }
+            if (rule.sound) { api.PlaySound(Array.isArray(rule.sound) ? rule.sound : [rule.sound]); }
+            Engine.Templates.RunOptionalScript(rule.script||rule.onComplete,Engine.Entities.CreateFacade(target,Engine.Entities.DetectType(target),{context:context}),context);
+        },
+        combine:{ properties:{ interactions:function () { return { use:'template:combine.use' }; } }, actions:{ use:function (api,self,context) { var target=context.target; var source=Engine.Templates.GetSubject((context.command||{}).inventoryItemId);
+            if (!source) { Engine.Templates.SayIfText(api,'player',Engine.Properties.Get(target,'intransitiveUseText',context,'I need to use it with something.')); return; }
+            if (source.id===target.id) { Engine.Templates.SayIfText(api,'player',Engine.Properties.Get(target,'selfUseText',context,'That would be pointlessly self-referential.')); return; }
+            var first=String(source.id)<String(target.id) ? source : target;
+            var second=first===source ? target : source;
+            var rules=Engine.Properties.Get(first,'combine',Object.assign({},context,{source:second,target:first,other:second}),Engine.Properties.Get(first,'combinations',context,{}));
+            var rule=Engine.Templates.GetRule(rules,second.id);
+            var ruleTarget=first;
+            var ruleSource=second;
+            if (!rule) { rules=Engine.Properties.Get(second,'combine',Object.assign({},context,{source:first,target:second,other:first}),Engine.Properties.Get(second,'combinations',context,{}));
+                rule=Engine.Templates.GetRule(rules,first.id);
+                ruleTarget=second;
+                ruleSource=first;
+            }
+            var check=Engine.Templates.CheckRequirements(rule,ruleSource,ruleTarget,context); if (!check.ok) { Engine.Templates.SayIfText(api,'player',check.text||Engine.Properties.Get(target,'combineRefusalText',context,'Those things do not seem to combine.')); return; }
+            Engine.Templates.ApplyEffects(api,rule,ruleSource,ruleTarget,context); Engine.Templates.SayIfText(api,rule.speakerId||'player',rule.text||rule.playerText||'That should do it.');
+        } } },
+        exchange:{ properties:{ interactions:function () { return { give:'template:exchange.give' }; } }, actions:{ give:function (api,self,context) { var target=context.target; var source=Engine.Templates.GetSubject((context.command||{}).inventoryItemId);
+            if (!source) { Engine.Templates.SayIfText(api,'player',Engine.Properties.Get(target,'exchangeNeedItemText',context,'I need to offer something first.')); return; }
+            var rule=Engine.Templates.GetRule(Engine.Properties.Get(target,'exchanges',Object.assign({},context,{source:source}),{}),source.id); var check=Engine.Templates.CheckRequirements(rule,source,target,context);
+            if (!check.ok) { Engine.Templates.SayPair(api,'player',rule&&rule.playerRefusalText,rule&&rule.npcSpeakerId||target.id,check.text||Engine.Properties.Get(target,'exchangeRefusalText',context,'No deal.'),null); return; }
+            Engine.Templates.ApplyEffects(api,rule,source,target,context); Engine.Templates.SayPair(api,rule.playerSpeakerId||'player',rule.playerText,rule.npcSpeakerId||target.id,rule.npcText||rule.text,function () { if (rule.afterDialogueScript) { Engine.Scripts.Run(rule.afterDialogueScript,{command:context.command,target:target,source:source}); } });
+        } } },
+        multiRequirement:{ properties:{ interactions:function () { return { give:'template:multiRequirement.add', use:'template:multiRequirement.add' }; } }, actions:{ add:function (api,self,context) { var target=context.target; var source=Engine.Templates.GetSubject((context.command||{}).inventoryItemId); var requirements=Engine.Properties.Get(target,'requirements',context,[]);
+            if (!source) { Engine.Templates.SayIfText(api,'player',Engine.Properties.Get(target,'requirementNeedItemText',context,'I need to put something into it.')); return; }
+            var req=null; for (var i=0;i<requirements.length;i++) { if (requirements[i]===source.id || requirements[i].itemId===source.id) { req=typeof requirements[i]==='string'?{itemId:requirements[i]}:requirements[i]; } }
+            if (!req) { Engine.Templates.SayIfText(api,'player',Engine.Properties.Get(target,'requirementWrongItemText',context,'That is not one of the things needed.')); return; }
+            var check=Engine.Templates.CheckRequirements(req,source,target,context); if (!check.ok) { Engine.Templates.SayIfText(api,'player',check.text||req.refusalText||'That is not ready to be added.'); return; }
+            if (self.GetBool('delivered_'+source.id,false)) { Engine.Templates.SayIfText(api,'player',req.alreadyText||'I have already added that.'); return; }
+            self.SetBool('delivered_'+source.id,true); if (req.consume!==false && source._subjectType==='item') { api.RemoveItem(source.id); } Engine.Templates.SayIfText(api,req.speakerId||'player',req.text||'Added.');
+            var complete=true; for (var r=0;r<requirements.length;r++) { var id=typeof requirements[r]==='string'?requirements[r]:requirements[r].itemId; if (!self.GetBool('delivered_'+id,false)) { complete=false; } }
+            if (complete) { Engine.Templates.ApplyEffects(api,Engine.Properties.Get(target,'completion',context,{}),source,target,context); Engine.Templates.SayIfText(api,Engine.Properties.Get(target,'completionSpeakerId',context,'player'),Engine.Properties.Get(target,'completionText',context,'')); }
+        } } },
+        gatekeeper:{ properties:{ interactions:function () { return { talkTo:'template:gatekeeper.talkTo', use:'template:gatekeeper.check', give:'template:gatekeeper.check' }; } }, actions:{ talkTo:function (api,self,context) { var tree=Engine.Properties.Get(context.target,'dialogueTree',context,null); if (tree) { api.StartDialogue(tree); return; } Engine.Templates.gatekeeper.actions.check(api,self,context); }, check:function (api,self,context) { var target=context.target; Engine.Templates.SayIfText(api,target.id,Engine.Properties.Get(target,Engine.Properties.Get(target,'allowsPassage',context,false)?'allowText':'blockText',context,Engine.Properties.Get(target,'allowsPassage',context,false)?'':'You cannot pass.')); } } },
+        costume:{ properties:{ interactions:function () { return { use:'template:costume.use' }; }, transitiveUse:function () { return false; } }, actions:{ use:function (api,self,context) { var item=context.target; var spriteId=Engine.Properties.Get(item,'costumeSpriteId',context,Engine.Properties.Get(item,'playerSpriteId',context,null)); if (!spriteId && Engine.Properties.Get(item,'baseClothes',context,false)) { spriteId=Engine.CurrentGame.player.spriteId; } if (!spriteId) { Engine.Templates.SayIfText(api,'player',Engine.Properties.Get(item,'costumeNoSpriteText',context,'I cannot wear that.')); return; } Engine.State.player.spriteId=spriteId; Engine.ScopedVariables.Set('item',item.id,'worn',1); if (item.replacesItem) { api.RemoveItem(item.replacesItem); } if (item.returnItem && !api.HasItem(item.returnItem)) { api.AddItem(item.returnItem); } Engine.Templates.SayIfText(api,'player',Engine.Properties.Get(item,'wearText',context,'')); } } },
+        toolTarget:{ properties:{ interactions:function () { return { use:'template:toolTarget.use' }; } }, actions:{ use:function (api,self,context) { var target=context.target; var source=Engine.Templates.GetSubject((context.command||{}).inventoryItemId); if (!source) { Engine.Templates.SayIfText(api,'player',Engine.Properties.Get(target,'toolNeedItemText',context,'I need to use something with it.')); return; } var rule=Engine.Templates.GetRule(Engine.Properties.Get(target,'toolUses',Object.assign({},context,{source:source}),{}),source.id); var check=Engine.Templates.CheckRequirements(rule,source,target,context); if (!check.ok) { Engine.Templates.SayIfText(api,'player',check.text||Engine.Properties.Get(target,'toolRefusalText',context,'That tool is no help here.')); return; } Engine.Templates.ApplyEffects(api,rule,source,target,context); Engine.Templates.SayIfText(api,rule.speakerId||'player',rule.text||'Done.'); } } },
+        clueUnlocker:{ properties:{ interactions:function () { return { lookAt:'template:clueUnlocker.unlock', use:'template:clueUnlocker.unlock' }; } }, actions:{ unlock:function (api,self,context) { var target=context.target; if (Engine.Properties.Get(target,'unlockBlocked',context,false)) { Engine.Templates.SayIfText(api,'player',Engine.Properties.Get(target,'unlockBlockedText',context,'I cannot make that out yet.')); return; } (Engine.Properties.Get(target,'unlocksPlaces',context,[])||[]).forEach(function (placeId) { api.SetItemVariable(target.mapItemId||target.id,'place_'+placeId+'_unlocked',1); }); Engine.Templates.SayIfText(api,'player',Engine.Properties.Get(target,'unlockText',context,'')); } } },
+        distractible:{ properties:{ interactions:function () { return { use:'template:distractible.distract', give:'template:distractible.distract' }; } }, actions:{ distract:function (api,self,context) { var target=context.target; var source=Engine.Templates.GetSubject((context.command||{}).inventoryItemId); var rule=Engine.Templates.GetRule(Engine.Properties.Get(target,'distractions',Object.assign({},context,{source:source}),{}),source?source.id:'default'); var check=Engine.Templates.CheckRequirements(rule,source,target,context); if (!check.ok) { Engine.Templates.SayIfText(api,target.id,check.text||Engine.Properties.Get(target,'distractionRefusalText',context,'That will not distract me.')); return; } self.SetBool('distracted',true); Engine.Templates.ApplyEffects(api,rule,source,target,context); Engine.Templates.SayIfText(api,rule.speakerId||target.id,rule.text||'I shall just look over here for a moment.'); } } },
 
+        openableBox:{ properties:{ interactions:function () { return { open:'template:openableBox.open', use:'template:openableBox.open' }; }, transitiveUse:function () { return false; } }, actions:{ open:function (api,self,context) { var target=context.target; if (self.GetBool('opened',false)) { Engine.Templates.SayIfText(api,'player',Engine.Properties.Get(target,'alreadyOpenText',context,'')); return; } self.SetBool('opened',true); var rule=Engine.Properties.Get(target,'openEffect',context,{}); if (!rule.addItem && Engine.Properties.Get(target,'revealsItem',context,null)) { rule=Object.assign({},rule,{addItem:Engine.Properties.Get(target,'revealsItem',context,null)}); } Engine.Templates.ApplyEffects(api,rule,null,target,context); Engine.Templates.SayIfText(api,Engine.Properties.Get(target,'openSpeakerId',context,'player'),Engine.Properties.Get(target,'openText',context,'')); } } },
         // TEMPLATE: door
         // --------------
         // Use for: ordinary doors, gates, hatches, trapdoors and any object that
@@ -2457,7 +2541,7 @@
                 metadata:['GetEngineApiVersion','GetSaveDataVersion','GetPublicCapabilities','GetDiagnostics','CopyDiagnosticsToClipboard'],
                 scriptApi:['Say','Narrate','StartDialogue','ShowDialogue','AskText','AskNumber','AddItem','RemoveItem','HasItem','SetFlag','GetFlag','SetVariable','GetVariable','ChangeRoom','MoveCharacter','SetAnimation','ClearAnimation','SetObjectAnimation','ClearObjectAnimation','SetObjectState','GetObjectState','SetObjectVariable','GetObjectVariable','AddObjectVariable','ShowOverlay','CloseOverlay','PlaySound','StartCutscene','QueueCutscene','MakeActionResult','EndGame','ShowEnding','Save','Load'],
                 getterApi:['HasItem','GetFlag','GetVariable','GetRoomVariable','GetCharacterVariable','GetItemVariable','GetObjectVariable','GetProperty'],
-                templates:['door','key','map','pickup','container','switch','readable','device','furniture','barrier']
+                templates:['door','key','map','pickup','container','switch','readable','device','furniture','barrier','combine','openableBox','exchange','multiRequirement','gatekeeper','costume','toolTarget','clueUnlocker','distractible']
             });
         }
     });
@@ -3933,6 +4017,16 @@
             command.targetType='inventory';
             this.RunTargetInteraction(command,target);
         },
+        IsTransitiveUseTarget: function (target) { if (!target) { return true;
+            } return Engine.Properties.Get(target,'transitiveUse',{target:target,purpose:'command'},true) !== false;
+        },
+        GetCommandSubjectName: function (subjectId) { if (!subjectId) { return '';
+            } var item=Engine.CurrentGame && Engine.CurrentGame.items ? Engine.CurrentGame.items[subjectId] : null;
+            if (item) { return Engine.Properties.Get(item,'name',{purpose:'command'},item.name||subjectId);
+            } var target=this.GetTarget(subjectId);
+            if (target) { return Engine.Properties.Get(target,'name',{purpose:'command'},target.name||subjectId);
+            } return subjectId;
+        },
         RunTargetInteraction: function (command, target) {
             var context={ command:command, target:target };
             var interactions=Engine.Properties.Get(target,'interactions',context,undefined) || target.interactions || {};
@@ -3941,7 +4035,12 @@
             var key=command.verbId;
             if (command.inventoryItemId) { key=command.verbId+':'+command.inventoryItemId;
             }
-            var scriptName=interactions[key] || interactions[command.verbId] || linkedInteractions[key] || linkedInteractions[command.verbId];
+            var subject=command.inventoryItemId ? Engine.Templates.GetSubject(command.inventoryItemId) : null;
+            var subjectInteractions=subject ? (Engine.Properties.Get(subject,'interactions',context,undefined) || subject.interactions || {}) : {};
+            var subjectLinked=this.GetLinkedInventoryTarget(subject);
+            var subjectLinkedInteractions=subjectLinked ? (Engine.Properties.Get(subjectLinked,'interactions',context,undefined) || subjectLinked.interactions || {}) : {};
+            var reverseKey=subject ? command.verbId+':'+target.id : null;
+            var scriptName=interactions[key] || linkedInteractions[key] || (reverseKey ? subjectInteractions[reverseKey] : null) || (reverseKey ? subjectLinkedInteractions[reverseKey] : null) || interactions[command.verbId] || linkedInteractions[command.verbId];
             if (scriptName && typeof scriptName === 'string' && scriptName.indexOf('template:')===0) { Engine.Templates.RunAction(scriptName.slice(9),command,target);
                 Engine.Verbs.FinishCommand(command);
                 return;
@@ -5045,13 +5144,21 @@ Engine.Input = {
                     return;
                 } if (Engine.State.selectedVerbId === 'use' || Engine.State.selectedVerbId === 'give') { if (Engine.State.selectedInventoryItemId) { Engine.Interactions.ResolveInventoryCommand(Engine.State.selectedVerbId,itemId,Engine.State.selectedInventoryItemId);
                         Engine.State.selectedInventoryItemId=null;
-                    } else { Engine.State.selectedInventoryItemId=itemId;
+                    } else { var inventoryTarget=Engine.Interactions.GetInventoryTarget(itemId);
+                        if (Engine.State.selectedVerbId === 'use' && !Engine.Interactions.IsTransitiveUseTarget(inventoryTarget)) { Engine.Interactions.ResolveInventoryCommand('use',itemId,null);
+                        } else { Engine.State.selectedInventoryItemId=itemId;
+                        }
                     } } else { Engine.Interactions.ResolveInventoryCommand(Engine.State.selectedVerbId,itemId,null);
                 } return;
             } return;
         }
         var targetId=Engine.Interactions.HitTest(p.x,p.y);
         var verbId=event.button === 1 ? 'lookAt' : ((event.button === 2 || event.altKey) ? 'walkTo' : Engine.State.selectedVerbId);
+        if ((verbId === 'use' || verbId === 'give') && targetId && !Engine.State.selectedInventoryItemId) { var selectedTarget=Engine.Interactions.GetTarget(targetId);
+            if (verbId === 'give' || Engine.Interactions.IsTransitiveUseTarget(selectedTarget)) { Engine.State.selectedInventoryItemId=targetId;
+                return;
+            }
+        }
         var command=Engine.Interactions.BuildCommand(verbId,targetId,p.x,p.y);
         Engine.Verbs.Execute(command);
         if (command.inventoryItemId && (verbId === 'use' || verbId === 'give')) { Engine.State.selectedInventoryItemId=null;
@@ -5708,7 +5815,7 @@ Engine.Renderer = {
             } this.DrawInventoryIcon(item,x,y);
         }
         var command=Engine.Verbs.GetLabel(Engine.State.selectedVerbId);
-        if (Engine.State.selectedInventoryItemId) { command += ' ' + Engine.CurrentGame.items[Engine.State.selectedInventoryItemId].name + (Engine.State.selectedVerbId === 'give' ? ' to' : ' with');
+        if (Engine.State.selectedInventoryItemId) { command += ' ' + Engine.Interactions.GetCommandSubjectName(Engine.State.selectedInventoryItemId) + (Engine.State.selectedVerbId === 'give' ? ' to' : ' with');
         } if (Engine.State.hoveredTargetId) { var t=(Engine.Overlays && Engine.Overlays.IsActive()) ? Engine.Overlays.HitTest(Engine.State.pointerX,Engine.State.pointerY) : Engine.Interactions.GetTarget(Engine.State.hoveredTargetId);
             if (t) { command += ' ' + Engine.Properties.Get(t,'name',{purpose:'command'},t.name||'');
             } } else if (Engine.State.hoveredInventoryItemId && Engine.State.selectedInventoryItemId && Engine.CurrentGame.items[Engine.State.hoveredInventoryItemId]) { command += ' ' + Engine.CurrentGame.items[Engine.State.hoveredInventoryItemId].name;
