@@ -588,6 +588,7 @@ items:{
 EXAMPLE_END
 
 Map places may be supplied as `item.map.places`, `item.map.hotspots`, an effective item property `places`, or an effective item property `mapPlaces`. Map place fields: `id`, `name`, `rect`, `roomId`, `targetRoomId`, `targetX`, `targetY`, `targetFacing`, `description`, `defaultText`, `alwaysVisible`, `visibleFlag`, `hiddenFlag`, `blockedFlag`, `blockedScript`, `blockedText`, `script`. `targetRoomId` is preferred for the travel destination; `roomId` is also accepted as a destination alias when `targetRoomId` is omitted, and both fields are used for visited-room visibility checks. `visibleFlag`, `hiddenFlag`, and `blockedFlag` are global flags. A place is shown only if `visibleFlag` is absent or true, `hiddenFlag` is absent or false, and either `alwaysVisible` is true, no `roomId`/`targetRoomId` is present, or the destination room has been visited. Entering a room sets room scoped variable `visited=1` for that room. `blockedScript` is a getter-style script called with `(query,self,context)` and should return truthy when travel is blocked.
+Functional map and overlay legibility rule: map, closeup, terminal, diagram, sign, puzzle-panel, and UI-like overlay images must communicate their gameplay information visually. A map used for travel should show recognisable places, routes, labels, icons, or other visible affordances corresponding to its hotspots/places. Invisible hotspots may refine interaction, but the graphic must not be effectively blank or navigable only by blind hotspot discovery unless that is an intentional, signposted puzzle.
 
 Sprite syntax:
 
@@ -1299,6 +1300,10 @@ Authoring checklist before validation:
 - Do major NPCs, gatekeepers, companions, antagonists, clue sources, and recurring characters use dialogue trees or equivalent state-aware canonical systems rather than one-line scripts?
 - Do critical-path puzzles, gates, and clues have sufficient signposting, feedback, refusal/hint escalation, and post-state reactions for their role?
 - Do important descriptions, refusals, dialogue, visual/audio assets, endings, and puzzle payoffs feel specific to this game world, tone, and character set rather than generic first-draft filler?
+- Does every transition have spatial continuity between source exit affordance, destination arrival affordance, target position, and target facing, without unintuitive fourth-wall exits unless intentionally signposted?
+- Does every required walkthrough step map to an implemented command path with verb, source item where applicable, target, preconditions, effects, and early/incorrect-attempt feedback?
+- Do functional visual assets such as maps, diagrams, terminals, signs, closeups, and puzzle panels communicate their gameplay information visually rather than relying only on invisible hotspots?
+- Does each non-trivial puzzle have a clue gradient that avoids both missing clues and over-explicit solution statements before the player has earned or requested them?
 
 Validation workflow:
 
@@ -1306,7 +1311,13 @@ Validation workflow:
 2. Quality/depth validation: review the package against the general quality and depth contract. Confirm that each major content role has adequate authored depth, state awareness, clueing, feedback, tone, and payoff; revise low-effort but technically valid content before running the validator.
 3. Visual semantic validation: compare runtime images, asset manifest visual acceptance notes, and `style_reference_sheet.png`. Check that important visuals are specific, coherent, and readable in their engine context.
 - Audio semantic validation: check that every room, title/menu/ending screen, and music-relevant cutscene has either a mapped music cue with filename and generator prompt, a reused cue with justification, or explicitly intentional silence. Temporary silence for missing binaries must be documented as pending audio generation.
-4. Run validator. For the canonical layout `gameId/gameId.js` with assets below `gameId/`, the validator infers `gameId/` as the asset root for existence checks:
+- Player-experience semantic validation: check spatial continuity, walkthrough command coverage, functional visual legibility, clue gradients, and first-play dry-run behaviour before handoff. These checks are required because content can be structurally valid yet still be unintuitive, undiscoverable, or poorly signposted.
+  - Transition continuity: every room transition must preserve adventure-game spatial logic. Each transition should have a visible or clearly implied exit affordance in the source room, a matching visible or implied arrival affordance in the destination room, and plausible targetX, targetY, and targetFacing values. Avoid exits that require walking into the fourth wall or toward the player unless the GDD intentionally establishes and visually signposts that convention. Re-entry should not contradict exit direction or place the player as if entering through an unrelated side of the destination room.
+  - Walkthrough command coverage: every required walkthrough step must map to an implemented command path. For each step identify roomId, verbId, source item id if any, target id, implementation path such as direct interaction key or template rule, preconditions, state/inventory effects, early/incorrect-attempt feedback, and validation status. If a walkthrough says to use or give an item to a target, the implementation must include the corresponding transitive interaction path or template rule, not merely the item and target as separate objects.
+  - Functional visual legibility: any image that carries gameplay information, including maps, diagrams, terminal screens, signs, labels, closeups, puzzle panels, overlays, UI-like screens, and clue images, must visually communicate its gameplay function at runtime size. Hotspots may augment these images, but invisible hotspot discovery must not be the only way to understand the graphic unless that is an intentional, signposted puzzle.
+  - Clue gradient: every non-trivial puzzle must have clueing that progresses from subtle setup, to clearer optional inspection/dialogue/refusal information, to post-failure or repeated-attempt hints where appropriate. Avoid both un-signposted solutions and premature solution statements. Explicit solution-level hints should normally appear only after relevant player action, failure, optional help, or late-game gating.
+  - First-play dry run: dry-run the shortest intended path and at least one plausible wrong attempt per major puzzle. Confirm that movement, transitions, visible affordances, clue discovery, refusals, state changes, and payoffs make sense to a player who has not read the implementation.
+4. Run validator when the validator and engine file are available. Ordinary authoring from the API and GDD alone must still perform API-contract self-validation, but must mark external validator execution as not run if those files are not supplied. For the canonical layout `gameId/gameId.js` with assets below `gameId/`, the validator infers `gameId/` as the asset root for existence checks:
 
 EXAMPLE_START
 python validator.py gameId/gameId.js --engine index.html --check-assets --report validation_report.txt
@@ -1342,7 +1353,8 @@ When an AI is asked to create a game from this API reference and the completed G
 
 Required deliverables:
 
-1. Implementation notes: game id, title, intended `assetPath`, engine API version, assumptions, requested engine extensions, and the declared asset tier: production-quality first pass, readable prototype, or placeholder-only. Default to production-quality first pass unless the user or workflow says otherwise.
+1. Implementation notes: game id, title, intended assetPath, engine API version, assumptions, requested engine extensions, and the declared asset tier: production-quality first pass, readable prototype, or placeholder-only. Default to production-quality first pass unless the user or workflow says otherwise.
+2. Workflow status ledger: current workflow state, approved plan version, generated file versions, known assumptions, unresolved blockers, pending assets/audio, registry status, validation status, and the recommended next human command. This must be updated at every handoff or interruption.
 2. Style reference sheet first: before producing the full runtime asset set, create `style_reference_sheet.png` and the accompanying visual style brief. The sheet is the visual contract for all later runtime assets.
 3. Registry output: if existing `games.json`/`games.js` files are supplied, provide uniquely named merged registry files preserving existing entries. If they are not supplied, provide registry entry snippets and explicitly ask the human to upload the current registry files next turn for merging. Only provide standalone harness registry files under unique standalone names when requested or clearly useful for isolated testing.
 4. Game script: one `gameId/gameId.js` script that calls `PointClickEngine.RegisterGame({...})` exactly once and uses only the public authoring contract in this document.
@@ -1350,9 +1362,13 @@ Required deliverables:
 6. Music cue manifest: a concise list of every required music cue, filename, rooms/screens/endings using it, purpose/mood, style/instrumentation, tempo/energy, looping notes, and an AI music-generator prompt of 1000 characters or fewer. This is required even if audio binaries are not generated in the package.
 7. Generated assets: assets should be placed under the canonical role folders below `gameId/`. If binary image generation is unavailable, provide exact filenames, sizes, transparency requirements, content descriptions, and visual acceptance notes instead; do not present such a package as visually production-ready.
 8. Puzzle dependency graph or walkthrough: the shortest intended solution path, optional branches, failure/refusal paths, and all required inventory/state dependencies.
+- Walkthrough command coverage matrix: every required solution step, optional branch needed for completion, and critical failure/retry case mapped to roomId, verbId, source item id if any, target id, implementation path, preconditions, effects, refusal/early feedback, and coverage status.
+- Transition continuity matrix: every room-to-room transition with source room, visible/implied source affordance, destination room, visible/implied arrival affordance, targetX/targetY/targetFacing, direction-continuity notes, and any justified exception.
+- Clue gradient audit: every non-trivial puzzle with required inference, clue channels, escalation triggers, post-failure hints, spoiler/overtness risk, and final verdict.
+- Functional visual legibility audit: every map, diagram, terminal, sign, closeup, puzzle panel, overlay, and UI-like image that carries gameplay information, with its gameplay reading, visible affordances/labels, hotspot relationship, and runtime-size readability verdict.
 9. Quality/depth validation report: a concise review of the major content roles, how each is supported by authored depth, and any deliberately terse/minimal elements with justification. This report must be completed before structural validator handoff.
-10. Validation report: the validator command used, including `--asset-root` if needed, and the resulting errors/warnings. Errors must be fixed before handoff. Warnings must be fixed or explicitly justified.
-11. Runtime test plan: every room transition, dialogue branch, inventory action, template puzzle, cutscene, save/load case, ending, custom script, and visual readability check that a human tester should exercise.
+10. Validation report: API-contract self-validation results, and, when validator/engine files are available, the validator command used, including `--asset-root` if needed, and the resulting errors/warnings. If the external validator was not run because it was not supplied, say so explicitly and provide the command to run. Errors must be fixed before handoff. Warnings must be fixed or explicitly justified.
+- Runtime test plan: every room transition, dialogue branch, inventory action, walkthrough command, template puzzle, cutscene, save/load case, ending, custom script, visual readability check, functional map/overlay check, clue-gradient check, and plausible wrong-attempt feedback path that a human tester should exercise.
 
 Output rules for game scripts:
 
@@ -1377,10 +1393,92 @@ The completed Game Design Document is the design source of truth. The authoring 
 5. For each named character, build a voice brief from the GDD and, where helpful, research the character's role, profession, period, region, genre archetype, motives, and comparable public examples. Capture personality, diction, idiom, rhythm, humour style, and motives without copying protected dialogue or imitating a real person so closely that the output becomes non-original.
 - Map the design to content roles and required depth: identify critical-path gates, puzzle/clue carriers, major characters, minor characters, ambience, rewards/payoffs, endings, and deliberately incidental elements. State which elements require substantial authored depth and which may remain concise.
 6. Map the design to engine systems: rooms to `game.rooms`, room travel to `transitionZones`, standard object behaviour to templates, branching conversation to `dialogueTrees`, staged presentation to cutscenes, persistent state to public flags/variables/scoped variables/object variables, and endings to `game.endings`.
+- Build a transition continuity matrix before implementation: every planned room transition must identify the source affordance, destination affordance, target coordinates, facing, and any exception to ordinary adventure-game spatial logic.
+- Build a walkthrough command coverage matrix before implementation: every required solution step must be expressible as a concrete implemented command path, including verb, source item if any, target, preconditions, effects, and feedback for incorrect or early attempts.
+- Build a clue gradient audit before finalising puzzles: each non-trivial puzzle must have clue channels and escalation that are neither absent nor prematurely solution-giving.
+- Build a functional visual legibility audit for maps, diagrams, terminals, signs, closeups, puzzle panels, overlays, and UI-like images that carry gameplay information.
 7. Establish the visual contract before generating the full asset set: derive a concise art direction from the GDD and research, create `style_reference_sheet.png`, then use it to guide all runtime room, character, object, inventory, overlay, and UI assets.
 - Establish the audio plan before final script handoff: derive the music cue manifest from the GDD and room/cutscene/ending moods, map every room/screen/ending to a cue or intentional silence, and document any temporary silence caused only by missing binary audio files.
 8. Prefer the smallest implementation that satisfies the GDD. Use declarative data and templates before custom scripts. If the GDD asks for behaviour outside this contract, list a requested engine extension instead of inventing a private API.
-- Produce the required deliverables from the Authoring AI Output Contract, including implementation notes, manifest, game script, asset manifest, style reference sheet, walkthrough/dependency graph, quality/depth validation report, validator report, and runtime test plan.
+- Produce the required deliverables from the Authoring AI Output Contract, including implementation notes, workflow status ledger, registry output/snippets, game script, asset manifest, music cue manifest, style reference sheet, walkthrough/dependency graph, quality/depth validation report, validation report, and runtime test plan.
+
+
+### 20A. Stateful multi-pass workflow driver
+
+This section controls ordinary authoring in both a human-driven chat interface and an automated AI harness. The human should not need to remember the detailed process in this document. When asked to create a game from a GDD, the authoring AI must run this workflow itself and treat simple human instructions such as "continue", "next", "move to the next step", "revise", or "proceed" as workflow commands.
+
+Default input assumption:
+- Ordinary authoring input is the API reference and the completed GDD. The authoring AI should not require `index.html` or the validator for ordinary game authoring. This API reference is the public engine contract. Ask for engine source, `index.html`, validator output, or diagnostics only when debugging a concrete engine/API mismatch, validating an implementation in an environment where those files are available, or responding to a human-supplied failure report.
+
+Workflow states:
+1. Intake and assumptions.
+2. Pre-implementation plan.
+3. Plan review and revision.
+4. Asset, visual, and audio planning.
+5. Implementation generation.
+6. Self-validation and quality/depth review.
+7. Handoff and next-file requests.
+8. Optional registry merge.
+9. Optional debug/fix loop.
+
+State output rule:
+- At the end of every workflow response, output a short `Workflow status` block containing current state, completed states, blockers, files needed next if any, whether implementation files have been generated, and the recommended next human command. This status block is part of the contract and is intended to prevent context rot.
+
+Human command handling:
+- If the human says "start", begin at state 1.
+- If the human says "continue", "next", "move to the next step", or similar, advance to the next unblocked workflow state.
+- If the human says "revise" with notes, revise only the current state artefact unless the notes explicitly require returning to an earlier state.
+- If the human reports a bug or uploads a validation report during any state, enter the optional debug/fix loop, make the minimal necessary fix, update the workflow status, and then return to the interrupted state rather than restarting or losing the original plan.
+- If required files for a later state are missing, do not improvise unsafe replacements. Produce the safe partial artefact, list the missing files, and ask for them in the next turn.
+
+State 1 - Intake and assumptions:
+- Parse the GDD and identify missing or ambiguous information under the clarification rules.
+- State any assumptions needed to proceed.
+- Do not generate the game script unless the human has explicitly waived planning, and even then still produce a compact workflow status block.
+
+State 2 - Pre-implementation plan:
+- Produce the normalized design plan, content-role/depth plan, room graph, puzzle dependency graph, dialogue plan, transition continuity matrix, walkthrough command coverage matrix, clue gradient audit, functional visual legibility plan, state model, registry strategy, and initial asset/audio requirements.
+- The plan must identify major content roles and required depth before implementation.
+- End by asking the human either to approve with "continue" or to give revision notes.
+
+State 3 - Plan review and revision:
+- Apply human notes to the plan.
+- Check the revised plan against the general quality/depth contract, clueing expectations, registry workflow, and audio cue requirements.
+- Do not generate implementation until the plan is approved or the human explicitly instructs the AI to proceed with stated assumptions.
+
+State 4 - Asset, visual, and audio planning:
+- Produce or specify `style_reference_sheet.png` first when image generation is available, plus the visual style brief and visual acceptance notes.
+- Produce the music cue manifest and sound-effect manifest if relevant.
+- Map every room, title/menu/ending screen, and music-relevant cutscene to a cue, reused cue, intentional silence, or temporary pending-audio fallback.
+- For functional visual assets, specify visible labels, icons, routes, diagrams, states, or other affordances that make hotspots and puzzle information discoverable at runtime size.
+
+State 5 - Implementation generation:
+- Generate the game script and package artefacts from the approved plan.
+- Do not output replacement `games.json` or `games.js` unless the current registry files were supplied and merged. Otherwise output registry snippets and request the current registry files for a later merge state.
+- Use unique filenames for generated files and reports.
+
+State 6 - Self-validation and quality/depth review:
+- Perform API-contract validation using this reference even when no engine or validator is supplied.
+- If a validator or validation report is supplied, also use it. If not supplied, provide the validator command that should be run by a human or harness, and mark validator execution as not run rather than pretending it passed.
+- Perform structural-semantic validation, quality/depth validation, visual semantic validation, audio semantic validation, and player-experience semantic validation before handoff.
+- Any low-effort but technically valid content found in this state must be revised before final handoff unless the human explicitly accepts it.
+
+State 7 - Handoff and next-file requests:
+- Provide implementation notes, generated files, manifests, walkthrough, walkthrough command coverage matrix, transition continuity matrix, clue gradient audit, functional visual legibility audit, validation reports, runtime test plan, registry snippets, and a concise list of pending human actions.
+- If existing registry files are needed but were not supplied, ask the human to upload current `games.json` and `games.js` next. Do not ask for `index.html` unless engine validation/debugging is specifically required.
+
+State 8 - Optional registry merge:
+- When `games.json` and/or `games.js` are supplied, merge the new game entry into them while preserving existing entries and avoiding duplicates.
+- Output uniquely named merged registry files for review.
+
+State 9 - Optional debug/fix loop:
+- When fixing a failure, use the exact uploaded files or logs from the current turn.
+- Make minimal changes unless a broader change is explicitly approved.
+- After the fix, update the workflow status and return to the previously interrupted state or next blocked state.
+
+Context-rot prevention:
+- Maintain a concise project ledger in implementation notes and workflow status: approved plan version, generated file versions, known assumptions, unresolved blockers, pending assets/audio, registry status, and validation status.
+- If conversation context appears inconsistent with the uploaded files, trust the uploaded files and explicitly restate the current ledger before proceeding.
 
 ### 21. Clarification rules
 
@@ -1418,6 +1516,10 @@ For serious games, keep jokes sparse or absent and use atmosphere, mystery, musi
 - Title and game id -> manifest entry and top-level `id`/`title`.
 - Setting, style, motifs -> room descriptions, asset prompts, music/sound notes, text tone, and title/end screens.
 - Plot shape -> room order, puzzle dependency graph, cutscenes, dialogue reveals, and endings.
+- Room graph and navigation logic -> transition continuity matrix, visible exit/arrival affordances, target positions, and facing values that match adventure-game spatial expectations.
+- Walkthrough solution steps -> concrete command coverage matrix mapping each step to implemented verb/source/target paths, state effects, and failure feedback.
+- Clue design -> clue gradient audit balancing subtle setup, optional hints, post-failure feedback, and avoiding premature solution statements.
+- Functional visual assets -> visible information design for maps, diagrams, terminals, signs, overlays, and closeups, with hotspots matching visible affordances.
 - Room count/range -> number of `rooms`, room graph, transition zones, and map design if needed.
 - Main characters -> `game.characters`, room placements, sprites, dialogue trees, dialogue colours, interaction/refusal text, and state variables.
 - Specific puzzles -> templates first, then effective properties/getters, dialogue actions, cutscenes, and only then custom scripts.
