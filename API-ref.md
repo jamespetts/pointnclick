@@ -201,6 +201,12 @@ Asset size and image authoring constraints:
 - Ending animation images are PNG spritesheets in `objects/` because the engine resolves `ending.animation.image` with the hotspot/object image role.
 - Dynamic image constraint: the engine preloads only images referenced in documented image fields of the game definition. If a script, getter, template effect, or `SetObjectState` can ever switch to an image path, that path must also be referenced in a preloaded field such as `sprite`, `closedSprite`, `openSprite`, `emptySprite`, `fullSprite`, `onSprite`, `offSprite`, `worldSprite`, `icon`, overlay `image`, map `image`, or ending animation `image`. Otherwise the image may not render at runtime.
 
+Visual asset quality contract:
+- For a playable first pass, runtime art is expected to be production-intent prototype art, not merely validation art. Each gameplay-relevant room, character, object, inventory icon, overlay, and UI element must be designed from its narrative function, material, scale, interaction role, and visual style. It must be recognisable at the size and context in which the engine displays it.
+- Visual parsimony means using the smallest number of well-designed assets that communicate the game clearly. It does not mean substituting undifferentiated marks, arbitrary tokens, or mechanically varied shapes for authored visual design.
+- Placeholder assets are allowed only when the workflow or user explicitly requests placeholders, or when binary image generation is genuinely unavailable. They must be labelled as placeholders in the asset manifest and implementation notes, and the package must state that it is not a production-quality visual first pass.
+- Every important visual asset must have a short visual acceptance note in the asset manifest covering intended reading, distinguishing features, scale/readability context, transparency/background needs, and consistency with the style reference sheet.
+
 Audio:
 
 - Music resolves under `music/`; sound and voice resolve under `sounds/`.
@@ -1268,7 +1274,8 @@ Authoring checklist before validation:
 Validation workflow:
 
 1. LLM semantic validation: check all ids, scripts, templates, assets, hooks, dialogue forms, cutscene steps, save-state use, and template-vs-custom-script choices.
-2. Run validator. For the canonical layout `gameId/gameId.js` with assets below `gameId/`, the validator infers `gameId/` as the asset root for existence checks:
+2. Visual semantic validation: compare runtime images, asset manifest visual acceptance notes, and `style_reference_sheet.png`. Check that important visuals are specific, coherent, and readable in their engine context.
+3. Run validator. For the canonical layout `gameId/gameId.js` with assets below `gameId/`, the validator infers `gameId/` as the asset root for existence checks:
 
 EXAMPLE_START
 python validator.py gameId/gameId.js --engine index.html --check-assets --report validation_report.txt
@@ -1286,7 +1293,7 @@ EXAMPLE_START
 python validator.py --check-assets --report validation_report.txt
 EXAMPLE_END
 
-3. Human runtime test: start game, test every room transition, dialogue branch, inventory action, template puzzle, cutscene, save/load, ending, and custom script. For failures, retrieve `PointClickEngine.GetDiagnostics()` or `PointClickEngine.CopyDiagnosticsToClipboard()`.
+4. Human runtime test: start game, test every room transition, dialogue branch, inventory action, template puzzle, cutscene, save/load, ending, and custom script. For failures, retrieve `PointClickEngine.GetDiagnostics()` or `PointClickEngine.CopyDiagnosticsToClipboard()`.
 
 Validator interpretation:
 
@@ -1304,14 +1311,15 @@ When an AI is asked to create a game from this API reference and the completed G
 
 Required deliverables:
 
-1. Implementation notes: game id, title, intended `assetPath`, engine API version, assumptions, and any requested engine extensions.
-2. Manifest output: either a complete `games.json` file or a clearly labelled `games.json` entry with `id`, `title`, `script`, `assetPath`, and `engineApi`.
-3. Game script: one `gameId/gameId.js` script that calls `PointClickEngine.RegisterGame({...})` exactly once and uses only the public authoring contract in this document.
-4. Asset manifest: every image, music, sound, and voice asset needed by the game, with canonical path, role folder, expected dimensions, spritesheet frame size where applicable, and a note for any placeholder asset.
-5. Generated or placeholder assets: assets should be placed under the canonical role folders below `gameId/`. If the AI cannot create the binary assets, it must still provide exact filenames, sizes, transparency requirements, and content descriptions.
-6. Puzzle dependency graph or walkthrough: the shortest intended solution path, optional branches, failure/refusal paths, and all required inventory/state dependencies.
-7. Validation report: the validator command used, including `--asset-root` if needed, and the resulting errors/warnings. Errors must be fixed before handoff. Warnings must be fixed or explicitly justified.
-8. Runtime test plan: every room transition, dialogue branch, inventory action, template puzzle, cutscene, save/load case, ending, and custom script that a human tester should exercise.
+1. Implementation notes: game id, title, intended `assetPath`, engine API version, assumptions, requested engine extensions, and the declared asset tier: production-quality first pass, readable prototype, or placeholder-only. Default to production-quality first pass unless the user or workflow says otherwise.
+2. Style reference sheet first: before producing the full runtime asset set, create `style_reference_sheet.png` and the accompanying visual style brief. The sheet is the visual contract for all later runtime assets.
+3. Manifest output: either a complete `games.json` file or a clearly labelled `games.json` entry with `id`, `title`, `script`, `assetPath`, and `engineApi`.
+4. Game script: one `gameId/gameId.js` script that calls `PointClickEngine.RegisterGame({...})` exactly once and uses only the public authoring contract in this document.
+5. Asset manifest: every image, music, sound, and voice asset needed by the game, with canonical path, role folder, expected dimensions, spritesheet frame size where applicable, asset tier, and visual acceptance notes for important runtime images.
+6. Generated assets: assets should be placed under the canonical role folders below `gameId/`. If binary image generation is unavailable, provide exact filenames, sizes, transparency requirements, content descriptions, and visual acceptance notes instead; do not present such a package as visually production-ready.
+7. Puzzle dependency graph or walkthrough: the shortest intended solution path, optional branches, failure/refusal paths, and all required inventory/state dependencies.
+8. Validation report: the validator command used, including `--asset-root` if needed, and the resulting errors/warnings. Errors must be fixed before handoff. Warnings must be fixed or explicitly justified.
+9. Runtime test plan: every room transition, dialogue branch, inventory action, template puzzle, cutscene, save/load case, ending, custom script, and visual readability check that a human tester should exercise.
 
 Output rules for game scripts:
 
@@ -1334,8 +1342,9 @@ The completed Game Design Document is the design source of truth. The authoring 
 4. Do not copy any puzzle, room layout, joke, character, dialogue, image, music, or prose exactly from the research. Use research to synthesize original patterns and genre flavour.
 5. For each named character, build a voice brief from the GDD and, where helpful, research the character's role, profession, period, region, genre archetype, motives, and comparable public examples. Capture personality, diction, idiom, rhythm, humour style, and motives without copying protected dialogue or imitating a real person so closely that the output becomes non-original.
 6. Map the design to engine systems: rooms to `game.rooms`, room travel to `transitionZones`, standard object behaviour to templates, branching conversation to `dialogueTrees`, staged presentation to cutscenes, persistent state to public flags/variables/scoped variables/object variables, and endings to `game.endings`.
-7. Prefer the smallest implementation that satisfies the GDD. Use declarative data and templates before custom scripts. If the GDD asks for behaviour outside this contract, list a requested engine extension instead of inventing a private API.
-8. Produce the required deliverables from the Authoring AI Output Contract, including implementation notes, manifest, game script, asset manifest, style reference sheet, walkthrough/dependency graph, validation report, and runtime test plan.
+7. Establish the visual contract before generating the full asset set: derive a concise art direction from the GDD and research, create `style_reference_sheet.png`, then use it to guide all runtime room, character, object, inventory, overlay, and UI assets.
+8. Prefer the smallest implementation that satisfies the GDD. Use declarative data and templates before custom scripts. If the GDD asks for behaviour outside this contract, list a requested engine extension instead of inventing a private API.
+9. Produce the required deliverables from the Authoring AI Output Contract, including implementation notes, manifest, game script, asset manifest, style reference sheet, walkthrough/dependency graph, validation report, and runtime test plan.
 
 ### 21. Clarification rules
 
@@ -1383,15 +1392,26 @@ For serious games, keep jokes sparse or absent and use atmosphere, mystery, musi
 
 ### 24. Art asset workflow from the GDD
 
-In addition to actual runtime assets, the AI must create one style reference sheet named `style_reference_sheet.png` unless the human explicitly disables it. This file is not referenced by the game script. It is a reusable visual brief for future asset-generation sessions.
+The AI must create the visual style reference before the full runtime asset set unless the human explicitly disables image generation. Create one style reference sheet named `style_reference_sheet.png`. This file is not referenced by the game script; it is the visual contract for this package and a reusable brief for future asset-generation sessions.
 
 The sheet must contain:
-- one or two representative room backgrounds;
+- one or two representative room backgrounds or background crops;
 - two or three characters, including the player character where possible;
 - two or three important objects or inventory items;
-- all examples in the intended final style, palette, lighting, proportions, and line/pixel treatment.
+- examples of the intended final style, palette, lighting, proportions, shape language, material treatment, and line/pixel treatment.
 
-The asset manifest must say that future sessions creating graphical assets should be given the GDD, asset manifest, and `style_reference_sheet.png` so that new assets remain stylistically coherent.
+Runtime asset generation must then follow the style reference sheet. For each important runtime image, the asset manifest must include a visual acceptance note describing what the asset must read as, the interaction or story purpose it serves, the features that distinguish it from similar assets, and the engine context in which it must remain readable. Do not rely on validation success alone as evidence of asset quality.
+
+For a production-quality first pass, all gameplay-relevant assets must be intentionally designed and mutually coherent. They may be simple, but they must be specific to the game world and readable in use. Placeholder-quality assets are acceptable only when explicitly requested or when binary image generation is unavailable; in that case the asset manifest and implementation notes must label the visual tier clearly and provide replacement specifications.
+
+Recommended asset order:
+1. visual style brief and `style_reference_sheet.png`;
+2. representative room and player-character assets;
+3. key gameplay objects and inventory icons;
+4. remaining rooms, characters, overlays, UI, title, and ending assets;
+5. visual QA pass against the asset manifest and runtime test plan.
+
+The asset manifest must say that future sessions creating graphical assets should be given the GDD, asset manifest, visual style brief, and `style_reference_sheet.png` so that new assets remain stylistically coherent.
 
 #### 25. GDD defaults and invariant workflow rules
 
@@ -1409,7 +1429,7 @@ The GDD template intentionally contains only game-specific design choices. Apply
 - Where the AI authoring the game cannot produce music itself, inform the human of this and give the human style prompts in 1,000 characters or less for an AI music generator for each piece of music required, specifying the file name that the resulting music from each style prompt should have.
 - Cutscene default: extra AI-added cutscenes should be limited to intro, major reveal, puzzle completion, and ending moments unless the GDD allows for more.
 - Technical default: standard engine save/load only; custom scripts only when templates, dialogue trees, cutscenes, and effective properties cannot express the behaviour.
-- Asset default: create all needed runtime assets, or exact placeholder specifications if binary generation is unavailable (see above on music).
-- Style-reference default: create `style_reference_sheet.png` unless the GDD explicitly disables it.
+- Asset default: create all needed runtime assets as a production-quality first pass. If binary image generation is unavailable, provide exact replacement specifications and label the package as not visually production-ready.
+- Style-reference default: create `style_reference_sheet.png` first, before the full runtime asset set, unless the GDD explicitly disables image generation or the human explicitly disables the style-reference workflow.
 
 The AI must still produce all deliverables listed in the Authoring AI Output Contract and must still follow the validation workflow and runtime test expectations in this API reference.
