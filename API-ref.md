@@ -297,6 +297,7 @@ Top-level fields read by the engine:
 - `ui:object`: UI styling.
 - `rendering:{imageSmoothing:false}object`: rendering configuration.
 - `imageSmoothing:boolean`: alias for `rendering.imageSmoothing`.
+- `characterScale` or `perspectiveScale`: optional game-level actor perspective scaling fallback; see geometry section.
 - `titleBackground:string`: PNG in `rooms/`.
 - `endBackground:string`: PNG in `rooms/`.
 - `titleMusic:array`, `menuMusic:array`, `endMusic:array`: music source lists; use arrays, normally with one filename.
@@ -317,7 +318,7 @@ rooms:{
     background:'start_room.png',
     music:['start_theme.ogg'],
     walkableArea:{x:0,y:80,w:320,h:56},
-    walkBoxes:[{id:'floor',x:0,y:80,w:320,h:56}],
+    walkBoxes:[{id:'floor',x:0,y:80,w:320,h:56,links:['doorNode']}],
     blockers:[{id:'crateBlocker',rect:{x:120,y:92,w:32,h:20},onBump:'bumpCrate'}],
     walkGraph:{nodes:[{id:'a',x:40,y:112},{id:'b',x:220,y:112}],edges:[['a','b']]},
     characterScale:{farY:86,nearY:134,farScale:0.72,nearScale:1.15},
@@ -341,11 +342,12 @@ Room fields:
 - `music:array`: room music source list; use an array, normally with one filename.
 - `start:{x:number,y:number,facing:string}`: content-defined default start point for authoring/scripts; the engine does not automatically apply it on room entry.
 - `playerStart:{x:number,y:number,facing:string}`: content pattern for scripts; room entry uses the current player coordinates unless `api.ChangeRoom()` or a transition zone passes target coordinates. Initial new-game position comes from `game.player.x/y/facing`.
-- `walkableArea:{x:number,y:number,w:number,h:number}`: broad validation and reachable-point area.
-- `walkBoxes:array`: walkable shapes; entries may be bare rectangles or objects with `shape`/`rect`; entries may use `links` or `connects` to build graph edges when explicit edges absent.
-- `blockers:array`: movement blockers; each may have `id`, `shape`, `rect`, `onCollide`, `onBump`.
-- `walkGraph.nodes:array`: `{id:string,x:number,y:number}`.
-- `walkGraph.edges:array`: `[fromId,toId]` or `{from:string,to:string}`.
+- `walkableArea:{x:number,y:number,w:number,h:number}`: fallback walk rectangle and validation area. If no `walkBoxes`/`walkAreas` are supplied, the engine creates one walk box from `walkableArea`; if `walkableArea` is also absent, the fallback is `{x:0,y:80,w:320,h:56}`.
+- `walkBoxes:array`: preferred walkable shapes. Entries may be bare rectangles, `{rect:{x,y,w,h}}`, or `{shape:shape}`. Entries may have `id` and may use `links` or `connects` arrays to build graph edges when explicit `walkGraph.edges` are absent.
+- `walkAreas:array`: supported alias for `walkBoxes`. Prefer `walkBoxes` for new content.
+- `blockers:array`: room-level movement blockers; each may have `id`, `shape` or `rect`, `onCollide`, `onBump`. `onCollide` is preferred when both collision script names are present.
+- `walkGraph.nodes:array`: `{id:string,x:number,y:number}`. If omitted or empty, the engine derives one node at the centre of each walk box.
+- `walkGraph.edges:array`: `[fromId,toId]` or `{from:string,to:string}`. Edges are treated as bidirectional path links. If omitted, walk box `links`/`connects` are used; if those are also absent, all graph nodes are connected to all other graph nodes.
 - `hotspots:array`: room objects; see next section.
 - `characters:array`: room-local characters; see actors section.
 - `transitionZones:array`: exits/room transitions.
@@ -360,34 +362,68 @@ Geometry shapes accepted where shape is used:
 - `{rect:{x:number,y:number,w:number,h:number}}`.
 - `{circle:{x:number,y:number,radius:number}}`.
 
+Geometry and pathfinding semantics:
+
+- The only public geometry controls are declarative room/object/character/transition/trigger fields, effective properties/getters that compute those fields, and public movement APIs such as `api.ChangeRoom()` and `api.MoveCharacter()`. There is no public script API for querying paths, graph nodes, collision tests, or reachable points.
+- Player movement pipeline: requested x/y is first clamped to the current room's reachable walkable geometry, then a path is built through walk graph nodes, then each frame advances toward the next path point, checks blockers/collisions, checks trigger zones, and checks transition zones.
+- Walkable geometry: a point is walkable if it is inside any `walkBoxes`/`walkAreas` shape. If no `walkBoxes`/`walkAreas` exist, `walkableArea` supplies a single rectangular walk box. If neither exists, the fallback rectangle is `{x:0,y:80,w:320,h:56}`.
+- Destination clamping: when a requested point is outside all walk boxes, the engine chooses the nearest point in the rectangular bounds of the nearest walk box. For circle shapes, hit-testing is circular, but clamping and some path/blocker tests use the circle's bounding rectangle; do not rely on true circular navigation for precise path constraints.
+- Graph nodes: explicit `walkGraph.nodes` are used when present. Otherwise, one node is derived at the centre of each walk box. If a node id is absent, its array index string is used.
+- Graph edges: explicit `walkGraph.edges` are used when present. Otherwise, each walk box's `links` or `connects` array creates edges from that box id to listed ids. If neither explicit edges nor links/connects exist, the engine connects every graph node to every other graph node.
+- Edge blocking: graph edges, and temporary start-to-node and node-to-target links, are ignored if the straight line segment intersects any current blocker rectangle. Rect blockers are exact rectangles; circle blockers are reduced to their bounding rectangle for segment-blocking.
+- Fallback path: if no graph route can be found, the engine falls back to a direct path to the clamped target. Author walk boxes/graphs/blockers so this fallback is harmless, or provide enough graph connectivity that routes are found.
+- Player collision: if the player steps into a blocker, the walk is blocked, the blocker `onCollide`/`onBump` script is run, and the walk callback/action result reports status `blocked` with reason `collision` and `blockerId`.
+- Room blockers: `room.blockers` are always blockers while their room is active. Object blockers are generated from room hotspots whose effective `blocksMovement` is true.
+- Object collision shape fallback: for blocking hotspots, `collisionShape` is used if present; otherwise `rect` is used; otherwise `x`/`y`/`frameW`/`frameH` form a rectangle. Hidden objects do not block unless effective `blocksWhenHidden` is true.
+- Walk-to interaction positioning: when an interaction target has effective `walkTo:{x,y}`, the player walks there before running the interaction. If absent, the interaction runs immediately after the click command is accepted. The validator warns if authored `walkTo` is outside `walkableArea`, but runtime uses the reachable-point system.
+- Walk-through behaviour: if the command verb is `walkTo` and the target's effective `walkThrough` is true, the engine walks to effective `walkThroughTo`, falling back to `target.walkThroughPoint`, then to the clicked command point. Use this for open doors/passages where clicking the object should walk through rather than merely walk to it.
+- Transitions: transition zones are checked against the player's foot point after movement updates. In this engine version transition zones use `rect` only; `shape` is not checked for transitions. A transition zone may either run a script or call the normal room-change path.
+- Trigger zones: trigger zones may be room-level or hotspot-level. They use `rect` or `shape`, test an actor's x/y foot point, and keep saved active membership so `onEnter` fires once on entry, `onExit` fires once on exit, and `onStay` fires while inside.
+- NPC movement: `api.MoveCharacter()` and cutscene `moveCharacter` steps move room characters directly toward x/y; they do not build a `walkGraph` path and do not use player destination clamping. Author NPC move targets inside sensible walkable space yourself.
+- Followers: room characters with `followPlayer:true` are placed and updated from the player's recent trail rather than via `walkGraph` pathfinding. `followDistance` controls trail distance; if absent, followers use 18 plus 10 times their index among followers. `followTarget` is runtime state, not an authored destination.
+- Actor avoidance: visible player and non-hidden room characters participate unless `avoidanceDisabled` is true. Non-player characters are pushed unless `avoidanceLocked` is true. Radius uses `avoidanceRadius`, then `personalSpace`, then `hitW`/`rectW`, then sprite `frameW`, then a default. Avoidance is local separation only, not path planning.
+- Perspective scale: actor `scale` is multiplied by an interpolated scale from `characterScale`/`perspectiveScale` unless `fixedScale` is true, `scaleWithPerspective` is false, or `perspectiveScale` is false. Actor-level `characterScale`/`perspectiveScale` overrides room-level `characterScale`/`perspectiveScale`, which overrides game-level `characterScale`/`perspectiveScale`. `farY`/`backY` and `nearY`/`frontY` default to the primary walk area top/bottom; `farScale`/`backScale` and `nearScale`/`frontScale` default to 1.
+- Rendering depth: draw order sorts by `zIndex` first and then drawable y. For hotspots, drawable y is `baseline` when numeric; otherwise if `walkBehind` is true, it is the bottom of `collisionShape` or `rect`; otherwise it is `y` or rect bottom. Use `baseline`/`zIndex`/`walkBehind` for foreground objects the player can pass behind.
+- Reserved/no-op geometry properties in this engine version: `blocksActors`, `occluderShape`, and `walkBehinds` are accepted/validated as effective properties but are not used by the current movement or renderer. Do not rely on them for gameplay or rendering effects unless the engine is extended.
+- This engine does not support polygon navmeshes, weighted/one-way graph edges, public path queries, true circular segment navigation, graph-routed NPC movement, or per-pixel collision. Express such requirements as engine-extension needs.
+
+
 Transition zone syntax:
 
 EXAMPLE_START
 transitionZones:[
   {id:'toHall',rect:{x:300,y:88,w:20,h:44},targetRoomId:'hall',targetX:20,targetY:112,targetFacing:'right'},
-  {id:'doorExit',rect:{x:150,y:70,w:30,h:60},targetRoomId:'study',targetX:160,targetY:120,enabledObjectId:'studyDoor',enabledProperty:'open'}
+  {id:'doorExit',rect:{x:150,y:70,w:30,h:60},targetRoomId:'study',targetX:160,targetY:120,enabledObjectId:'studyDoor',enabledProperty:'open'},
+  {id:'flagExit',rect:{x:0,y:90,w:10,h:40},targetRoomId:'garden',targetX:300,targetY:112,enabledFlag:'gateUnlocked'}
 ]
 EXAMPLE_END
 
 Transition zone fields:
 
 - `id:string` optional.
-- `rect` or `shape`: geometry.
-- `targetRoomId:string`: destination room.
-- `targetX:number`, `targetY:number`, `targetFacing:string`: player destination.
-- `script:string`: if supplied, runs instead of normal room change.
-- `enabledObjectId:string`, `enabledProperty:string`: zone enabled only when the object's effective property is truthy.
+- `rect:{x:number,y:number,w:number,h:number}`: required geometry for runtime transition checks. In this engine version, transition zones are rect-only; a `shape` field is not used for transition hit-testing.
+- `targetRoomId:string`: destination room for normal room changes.
+- `targetX:number`, `targetY:number`, `targetFacing:string`: player destination in the target room. If omitted, the player keeps the current coordinate/facing values that are not supplied.
+- `script:string`: if supplied, runs instead of normal room change. It receives hook-style context through the script runner: `{transition,fromRoomId,toRoomId,player}`. It may call `api.ChangeRoom()` or `api.ShowEnding()`, and may return an action result.
+- `enabledFlag:string`: zone enabled only when this global flag is true.
+- `disabledFlag:string`: zone disabled when this global flag is true.
+- `enabledObjectId:string`, `enabledProperty:string`: zone enabled only when the object's effective property is truthy; `enabledProperty` defaults to `open`.
 - Transition hooks: `beforeTransition`, `afterTransition`.
 
-A transition zone must have a valid `targetRoomId` or a `script`.
+A transition zone must have a valid `targetRoomId` or a `script`. If both `script` and `targetRoomId` are supplied, `script` takes precedence.
 
 Trigger zone fields:
 
-- `id:string` optional.
-- `rect` or `shape`.
-- `onEnter:string` or `script:string`.
-- `onExit:string`.
-- `onStay:string`.
+- `id:string` optional. Runtime trigger membership key is actor id + current room id + zone id. Hotspot trigger zones are automatically id-prefixed with object id when no explicit unique id is supplied.
+- `rect` or `shape`: trigger geometry tested against actor x/y foot point.
+- `enabledFlag:string`: trigger is active only while this global flag is true.
+- `disabledFlag:string`: trigger is inactive while this global flag is true.
+- `actorId:string`: if supplied, only this actor id can fire the trigger. Use `player` for the player.
+- `once:boolean`: after the first `onEnter`/`script` fire, the engine sets an internal disabled flag `__used_<zoneId>` and the trigger will not fire again in that play state.
+- `onEnter:string` or `script:string`: runs when actor enters.
+- `onExit:string`: runs when actor exits.
+- `onStay:string`: runs on movement/update ticks while actor remains inside.
+Trigger scripts receive `(api, context)` with context `{actor,zone,room,roomId,object}`. `object` is the source hotspot for hotspot trigger zones, otherwise null.
 
 
 ## 6. Room Hotspots/Objects and Object Animation
@@ -422,7 +458,18 @@ Hotspot/object fields read by the engine:
 - Text/behaviour: `defaultText`, `description`, `interactions`, `refusals`, `properties`, getter maps, `callbackStatus`, `callbackResult`, `callbackResults`.
 - Rendering: `x`, `y`, `frameW`, `frameH`, `sprite`, `closedSprite`, `openSprite`, `emptySprite`, `fullSprite`, `onSprite`, `offSprite`, `animation`, `animations`, `animationCompleteScripts`.
 - Visibility/hit: `hidden`, `renderHidden`, `hitDisabled`, `interactionDisabled`, `rect`, `hitRect`, `priority`, `hitPriority`, `zIndex`, `baseline`.
-- Movement/geometry: `walkTo`, `walkThrough`, `walkThroughTo`, `blocksMovement`, `blocksActors`, `blocksWhenHidden`, `collisionShape`, `occluderShape`, `walkBehind`, `walkBoxes`, `blockers`, `triggerZones`, `onCollide`, `onBump`, `onStay`.
+- Movement/geometry: `walkTo`, `walkThrough`, `walkThroughTo`, `walkThroughPoint`, `blocksMovement`, `blocksWhenHidden`, `collisionShape`, `walkBehind`, `baseline`, `zIndex`, `triggerZones`, `onCollide`, `onBump`, `onStay`. Reserved/no-op in this engine version: `blocksActors`, `occluderShape`, `walkBoxes`, `blockers`, `walkBehinds`.
+
+Object geometry semantics:
+
+- `hitRect` overrides `rect` for pointer hit-testing. If `hitRect` is absent, `rect` is used; otherwise `x`/`y`/`frameW`/`frameH` may be used by rendering/collision fallbacks where applicable.
+- `priority` or `hitPriority` controls click target precedence among overlapping scene targets; `hitPriority` is preferred when numeric, otherwise `priority`, otherwise 0. Later room targets win ties.
+- `hidden` removes an object from hit-testing and rendering. `renderHidden` also hides rendering. `hitDisabled`, `disableHit`, or `interactionDisabled` disables hit-testing/interaction without necessarily hiding rendering.
+- `blocksMovement:true` turns a hotspot into an object blocker. If `collisionShape` is absent, `rect` is used; if `rect` is absent, `x`/`y`/`frameW`/`frameH` are used. Hidden blockers are ignored unless `blocksWhenHidden:true`.
+- `walkBehind:true` affects drawable sorting by using `collisionShape`/`rect` bottom as the object's drawable y when `baseline` is absent. It does not by itself create collision; use `blocksMovement`/`collisionShape` for blocking.
+- `baseline:number` overrides the object's drawable y for sorting. `zIndex:number` sorts before y and is useful for forcing foreground/background ordering.
+- `onCollide`/`onBump` on a blocking hotspot run when the player collides with it. Context is `{actor,blocker,object,room,roomId}`.
+- Hotspot `triggerZones` are added to the room trigger list while the hotspot's room is active. They may use the same trigger fields as room trigger zones.
 
 Object animation spec:
 
@@ -523,8 +570,7 @@ EXAMPLE_END
 
 Sprite fields: `image`, `frameW`, `frameH`, `directional`, `rows`, `animations`, `idleFrames`, `idleFps`, `walkFrames`, `walkFps`. `frameW` and `frameH` are required for actor spritesheets. Directional row order is down, left, right, up. An animation entry may define `frames`, `fps`, `frame`, `rowOffset`, and `directional:false`. For directional sprites, `rowOffset` is added before the facing row is applied. `talk` is used automatically by `api.Say()` if present.
 
-Actor/player/room character fields: `id`, `name`, `displayName`, `spriteId`, `x`, `y`, `facing`, `visible`, `hidden`, `controllable`, `speed`, `scale`, `scaleWithPerspective`, `perspectiveScale`, `fixedScale`, `followPlayer`, `dialogueColor`, `walkTo`, `rect`, `hitW`, `hitH`, `rectW`, `rectH`, `interactions`, `refusals`, effective property maps. Top-level `game.characters` supplies reusable character metadata such as names/dialogue colours and scoped-variable existence; NPCs that should appear, move, or be clicked must also be placed in `room.characters`. If a room character lacks `rect`, the engine derives it from `x`/`y` using `hitW`/`hitH` or `rectW`/`rectH`, default 16x16, with `x` centred and `y` as the foot point.
-
+Actor/player/room character fields: `id`, `name`, `displayName`, `spriteId`, `x`, `y`, `facing`, `visible`, `hidden`, `controllable`, `speed`, `scale`, `scaleWithPerspective`, `perspectiveScale`, `characterScale`, `fixedScale`, `followPlayer`, `followDistance`, `avoidanceRadius`, `personalSpace`, `avoidanceDisabled`, `avoidanceLocked`, `dialogueColor`, `walkTo`, `rect`, `hitW`, `hitH`, `rectW`, `rectH`, `interactions`, `refusals`, effective property maps. Top-level `game.characters` supplies reusable character metadata such as names/dialogue colours and scoped-variable existence; NPCs that should appear, move, or be clicked must also be placed in `room.characters`. If a room character lacks `rect`, the engine derives it from `x`/`y` using `hitW`/`hitH` or `rectW`/`rectH`, default 16x16, with `x` centred and `y` as the foot point. `api.MoveCharacter()` moves NPCs directly to `x`/`y` and does not use `walkGraph` pathfinding. `followTarget`, `lastMoveX`, `lastMoveY`, `moveTarget` and animation timing fields are runtime state; do not author them except in saved-state restoration generated by the engine.
 
 ## 8. Interactions, Refusals, Effective Properties, and Getter API
 
@@ -626,11 +672,11 @@ Const getters must not mutate state, call `api`, move actors, change rooms, narr
 
 Validated effective property types:
 
-- Booleans: `visible`, `hidden`, `hitDisabled`, `walkThrough`, `renderHidden`, `blocksWhenHidden`, `interactionDisabled`, `blocksMovement`, `blocksActors`, `walkBehind`.
+- Booleans: `visible`, `hidden`, `hitDisabled`, `walkThrough`, `renderHidden`, `blocksWhenHidden`, `interactionDisabled`, `blocksMovement`, `blocksActors`, `walkBehind`. `blocksActors` is reserved/no-op in this engine version.
 - Points: `walkTo`, `walkThroughTo` are null/undefined or `{x:number,y:number}`.
 - Rectangles: `hitRect`, `rect` are `{x:number,y:number,w:number,h:number}`.
-- Arrays: `walkBoxes`, `blockers`, `walkBehinds`, `triggerZones`.
-- Objects: `collisionShape`, `occluderShape`.
+- Arrays: `walkBoxes`, `blockers`, `walkBehinds`, `triggerZones`. On hotspots, `walkBoxes`/`blockers`/`walkBehinds` are reserved/no-op in this engine version; room `walkBoxes`/`blockers` and hotspot `triggerZones` are used.
+- Objects: `collisionShape`, `occluderShape`. `occluderShape` is reserved/no-op in this engine version.
 - Numbers: `baseline`, `zIndex`.
 - Callback values: `callbackStatus:string`, `callbackResult:string|object`, `callbackResults:object`.
 
@@ -639,7 +685,7 @@ Common properties worth making dynamic with effective properties or getters:
 - `hidden`, `hitDisabled`, `interactionDisabled`, `renderHidden` for whether a target appears or can be clicked.
 - `defaultText` and `description` for state-dependent Look At text.
 - `sprite`, `closedSprite`, `openSprite`, `onSprite`, `offSprite`, `emptySprite` for state-dependent graphics.
-- `blocksMovement`, `walkThrough`, `walkThroughTo`, `collisionShape`, `walkBehind`, `baseline`, `zIndex` for state-dependent navigation/rendering.
+- `blocksMovement`, `blocksWhenHidden`, `walkTo`, `walkThrough`, `walkThroughTo`, `walkThroughPoint`, `collisionShape`, `triggerZones`, `walkBehind`, `baseline`, `zIndex` for state-dependent navigation/rendering.
 - `interactions` and `refusals` when available verbs or failure text depend on state.
 - Template-specific properties such as `open`, `locked`, `on`, `powered`, `allowsPassage`, `travelBlocked`, `unlockBlocked`, and `requirements`.
 
@@ -925,7 +971,7 @@ Enters room through the central room system. Missing room shows a missing-room l
 
 #### `api.MoveCharacter(characterId:string, x:number, y:number, options?:object) -> undefined`
 
-Moves non-player room character. Options: `speed:number`, `hideOnComplete:boolean`, `onComplete:function(result)`.
+Moves a non-player room character in the current room directly toward `x`/`y`. It does not use the player's `walkGraph` pathfinder, destination clamping, blockers, or transition zones; author the target inside the room's sensible walkable space. Options: `speed:number`, `hideOnComplete:boolean`, `onComplete:function(result)`. Replacing an active character move calls the previous `onComplete` with status `superseded`. Missing characters call `onComplete` with status `cancelled`.
 
 #### `api.SetAnimation(actorId:string, animationName:string, options?:object) -> undefined`
 
@@ -1190,6 +1236,7 @@ Authoring checklist before validation:
 - Are all branching conversations dialogue trees?
 - Are all staged sequences cutscenes rather than timers?
 - Are room changes represented as transition zones unless a custom script genuinely needs to call `api.ChangeRoom()`?
+- Are all `walkTo` points, transition target points, graph nodes, NPC move targets, blockers, and trigger/transition zones consistent with the room's walkable geometry and the documented player/NPC movement differences?
 - Are all refusals data-driven unless they require distinctive game logic?
 
 Validation workflow:
