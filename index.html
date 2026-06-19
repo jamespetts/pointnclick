@@ -14,432 +14,22 @@
         the Free Software Foundation, either version 3 of the License, or
         (at your option) any later version.
 
-        DEPLOYMENT MODEL
+        MAINTAINER NOTES
         ----------------
-        - index.html contains the generic engine and bootloader.
-        - games.json lists compatible games when running from a web server.
-        - games.js is a direct-file fallback for browsers that block local JSON fetches.
-        - Each game should normally live in its own <gameid>/ folder.
-        - Each game should normally have one content script named <gameid>/<gameid>.js.
-        - Each game manifest entry gives both the script path and the assetPath.
-        - The assetPath should normally be <gameid>/ and is the base for game assets.
-        - All manifest paths must be relative to this index.html file.
-        - Image assets are external .png files under canonical game subdirectories.
-          Game scripts must not embed data:image URIs or use remote image URLs.
-          Asset directory names are implicit from asset role: room/title/end
-          backgrounds resolve under rooms/, actor spritesheets under characters/,
-          inventory/world/hotspot/overlay/map images under objects/, and interface
-          chrome under ui/. Music resolves under music/ and sound effects under
-          sounds/. Content scripts should normally specify only the filename, such
-          as player.png, start_room.png or intro.mp3; explicit canonical paths
-          such as characters/player.png remain accepted for compatibility.
-        - No login, database, server-side code, or build step is required.
-        PUBLIC AUTHORING API REFERENCE
-        ------------------------------
-        This in-code API reference is deliberately written for content-authoring
-        AIs and human designers. While the engine is still changing, keep this
-        section in sync with the actual public API; later it will be broken out
-        into a separate document. The intended authoring workflow is that an AI
-        receives this public reference plus a completed Game Design Document, not
-        the engine internals. Therefore, the public surface must stay small,
-        explicit and difficult to misuse.
+        The public authoring API has been moved to PointClickEngine_API_Reference.
+        Keep code comments here limited to engine architecture and maintenance
+        constraints. Do not reintroduce long authoring/API documentation here.
 
-        Public browser global:
-        - window.PointClickEngine is a frozen public facade. It is not the
-          internal engine object.
-        - PointClickEngine.RegisterGame(gameDefinition) is the only normal way
-          for a game content script to register a game.
-        - PointClickEngine.RegisterManifest(manifestDefinition) is only for the
-          games.js direct-file manifest fallback.
-        - PointClickEngine.GetEngineApiVersion() returns the required engineApi
-          value for game definitions.
-        - PointClickEngine.GetPublicCapabilities() returns read-only descriptive
-          metadata for documentation and tooling. It must not be used as a
-          gameplay state store.
-        - PointClickEngine.GetDiagnostics() returns a concise plain-text report
-          for human testers to copy into an AI debugging session.
-        - PointClickEngine.CopyDiagnosticsToClipboard() tries to copy the same
-          report to the clipboard and also returns it as text.
-        - No other PointClickEngine properties are public. In particular, game
-          scripts must not read PointClickEngine.State, PointClickEngine.Rooms,
-          PointClickEngine.Renderer, PointClickEngine.Templates or any other
-          internal subsystem. Those names are intentionally not exposed.
+        Deployment remains deliberately simple: index.html is the generic engine
+        and bootloader; games.json lists games for web-server use; games.js is the
+        direct-file fallback; each game normally lives in <gameid>/ with assets
+        below rooms/, characters/, objects/, ui/, music/ and sounds/.
 
-        Game definition contract:
-        - A game script calls PointClickEngine.RegisterGame({ ... }) once.
-        - The game object contains declarative data: id, title, author,
-          engineApi, startRoomId, player, sprites, characters, items, rooms,
-          dialogueTrees, scripts, hooks, defaultRefusals, endings and UI/audio
-          metadata.
-        - Asset paths are simple relative filenames in the canonical asset
-          folders described above. Do not use remote URLs, absolute paths,
-          data: URLs or paths containing "..".
-        - Room objects/hotspots have globally unique ids. They are persistent
-          object identities, not room-local labels.
-        - Prefer templates, declarative interactions, dialogue trees and cutscene
-          steps over imperative script. Use custom scripts only for story logic
-          that cannot be expressed declaratively.
-
-        Script function API:
-        - Ordinary named scripts receive (api, context). They must use api.* for
-          every state change, room change, dialogue line, cutscene, movement,
-          sound effect, overlay and ending.
-        - Lifecycle hook scripts also receive (api, context), but context is a
-          frozen read-only snapshot. Hook scripts must never try to edit context;
-          use api methods for intentional state changes.
-        - Boolean hooks are the only hooks with a meaningful return value. They
-          are all named before... and may return false to cancel the operation.
-          Returning anything other than false allows the operation to continue.
-        - Void hooks are notifications. They must not return a value. The engine
-          runs all scripts listed for a void hook and warns if any script returns
-          a value, so AIs are not encouraged to infer hidden return semantics.
-        - Cutscene script steps receive (api, step, previousResult) and should
-          return api.MakeActionResult(...) when success/failure matters.
-        - Property getter scripts receive (query, self, context). propertyGetters
-          are const by default and must inspect state only. Use
-          nonConstPropertyGetters or mutablePropertyGetters only where deriving a
-          property genuinely has to update saved state.
-
-        Ordinary script api methods currently include:
-        - Dialogue/input: Say, Narrate, StartDialogue, ShowDialogue, AskText,
-          AskNumber.
-        - Inventory/flags/variables: AddItem, RemoveItem, HasItem, SetFlag,
-          GetFlag, SetVariable, GetVariable.
-        - Scoped variables: Set/Get/Has/Clear/Add/Subtract/Multiply/Divide/
-          CompareScopedVariable, plus Room/Character/Item-specific helper
-          variants.
-        - Room and actor control: ChangeRoom, MoveCharacter, SetAnimation,
-          ClearAnimation.
-        - Object control: SetObjectAnimation, ClearObjectAnimation,
-          SetObjectState, GetObjectState, SetObjectVariable, GetObjectVariable,
-          AddObjectVariable.
-        - Presentation and flow: ShowOverlay, CloseOverlay, PlaySound,
-          StartCutscene, QueueCutscene, MakeActionResult, EndGame, ShowEnding,
-          Save and Load.
-        - RunScript exists for calling another named content script. There is no
-          public RunHook API; lifecycle hooks are invoked only by the engine.
-
-        Diagnostics for human testers:
-        - If the game fails to boot, copy the red boot-error panel text.
-        - If the game boots but behaves incorrectly, open the browser console and
-          run PointClickEngine.GetDiagnostics(). Copy the returned text and send
-          it to the debugging AI with the game script and the relevant GDD part.
-        - The diagnostics report is intentionally concise: engine/game identity,
-          current mode/room and recent engine messages only. It is not a saved
-          game dump and should not be used as gameplay state.
-
-        Getter query/self APIs:
-        - query exposes read-only HasItem, GetFlag, GetVariable,
-          GetRoomVariable, GetCharacterVariable, GetItemVariable,
-          GetObjectVariable and GetProperty.
-        - const self exposes Id, Type, RoomId, Entity, Context, Get, GetBool,
-          GetNumber, GetString, GetBaseProperty and GetProperty.
-        - non-const self additionally exposes Set, SetBool, SetNumber,
-          SetString and Add. Use this only through nonConstPropertyGetters or
-          mutablePropertyGetters, and only when mutation is genuinely necessary.
-
-
-        INSTRUCTIONS FOR FUTURE AIS AND MAINTAINERS
-        -------------------------------------------
-        - Do not modify this engine when merely writing a new adventure script or creating assets.
-        - If a requested adventure action cannot be implemented through the public content API,
-          flag the engine shortcoming for human review.
-        - Do not reach into private engine state or duplicate engine systems in a game script.
-          The public PointClickEngine global intentionally exposes only the
-          small registration/version facade documented above; all story/runtime
-          changes must go through the api object passed to script functions.
-        - Spaghetti code is forbidden.
-        - ENGINE FORMATTING RULE: each statement that properly ends with a semicolon
-          must be on its own physical line with a carriage return immediately after
-          the semicolon. Do not put another statement, loop body, callback body or
-          unrelated expression after a semicolon on the same line. The only exception
-          is the semicolons inside a for (...) header. This rule is mandatory because
-          dense one-line code hides lifecycle, callback and movement bugs.
-
-        ARCHITECTURAL CONSTRAINTS
-        -------------------------
-        - There is exactly one canonical runtime state object.
-        - There is exactly one player inventory.
-        - There is exactly one player actor representation.
-        - There is exactly one movement controller and one movement code path.
-        - There is exactly one interaction dispatcher and one interaction path.
-        - There is exactly one dialogue/text/voice presentation path.
-        - There is exactly one registered handler function per verb.
-        - The renderer reads state. It does not own narrative logic.
-        - Game content scripts define data and content actions only.
-        - Game content scripts must use the public script api object to mutate
-          state. The browser global is for registration only.
-        - Engine code must remain narrative-agnostic.
-        - Dynamic story text uses the built-in readable bitmap text path, not raw
-          canvas fillText. The glyphs are deliberately one-pixel-stroke,
-          variable-width shapes with visible counters at 320x200 scale. Verbs
-          use the same readable glyphs with light UI chrome treatment; do not
-          replace this with tiny anti-aliased browser fonts without a legibility
-          simulation at logical resolution.
-        - Do not add ellipses to wrapped text unless a line is actually truncated
-          to fit a fixed-size text box.
-        - Spoken character dialogue is rendered above the relevant actor and the
-          renderer nudges the whole text block horizontally where possible so it
-          does not sit on top of nearby actors. All lines in the same speech block
-          share one horizontal origin, so multi-line speech does not zig-zag across
-          different horizontal planes. Spoken text is not prefixed with the speaker
-          name because the actor-relative position identifies the speaker. While
-          any dialogue line is active, the existing lower-panel renderer suppresses
-          the verb and inventory controls; dialogue choices and narration still use
-          the lower UI panel. Non-speaker narration and object descriptions,
-          including Look At responses, are rendered in the lower UI panel so that
-          they cannot run off the scene area or obscure characters. During cutscenes,
-          the lower command UI is blocked in the same visual manner as during
-          actor-spoken dialogue, so verbs and inventory cannot appear active while
-          the player is not in control. Future scripts
-          should use api.Say(...) for spoken character dialogue and api.Narrate(...)
-          for descriptive interface text.
-        - Dialogue choices are selected from the lower UI panel, but a chosen line
-          is then spoken by the player actor using the normal api.Say('player', ...)
-          path before the selected response script runs. This keeps player speech,
-          text placement and talking animation on the same canonical dialogue path
-          as NPC speech.
-        - Missing verb/object interactions use the central refusal-text resolver.
-          Refusals may be overridden per object with target.refusals, or per game
-          with game.defaultRefusals. Object refusals take precedence over game
-          refusals, which take precedence over engine defaults.
-        - Room transitions are data-defined by each room's transitionZones array.
-          Door templates do not own room transitions; doors only expose open/closed
-          state, collision, animation and walk-through permission. The transition
-          zone remains the canonical authority for changing rooms or ending the game.
-          Transition checks run through the room system and are triggered from the
-          single movement update path when the canonical player position enters a
-          zone. Game scripts must not implement their own movement or transition
-          loops for ordinary room exits. If an interactive object covers a doorway
-          but the player should be able to walk through it when a script permits,
-          set walkThrough:true and walkThroughTo:{x,y} on that object. For Walk To
-          only, the interaction dispatcher then walks to that through-point instead
-          of the object's ordinary approach point; other verbs such as Open and
-          Close still use walkTo as normal. A transition zone may set
-          enabledObjectId:'doorId' and enabledProperty:'open' to read the object's
-          template-backed variable state, so an open door can enable a canonical
-          transition without duplicating a separate global flag. A walkTo
-          interaction script may still decide whether passage is allowed, while
-          transition zones remain the canonical way to perform the room change or
-          ending.
-        - Inventory items are also interaction targets. Single-target inventory
-          actions such as Look At, Open and Close go through the same interaction
-          dispatcher as world objects. Use and Give remain two-target verbs: first
-          click the inventory item, then click the world or inventory target. This
-          supports inventory-object-with-inventory-object interactions without a
-          second inventory command path.
-        - A room hotspot/object that represents a pickupable inventory item may set
-          itemId:'inventoryItemId'. The room target keeps its own walkTo, visibility,
-          pickup and room-specific behaviour, but unhandled interactions, default
-          text and refusal text may inherit from the linked inventory item. Future
-          game-writing AIs should use itemId for a world instance of the same item,
-          and should only override text/interactions on the room target when the
-          room context genuinely differs. For graphics, item.icon is the inventory
-          graphic. A room target may set sprite for a room-specific appearance; if
-          it does not, the renderer falls back to item.worldSprite and then item.icon.
-          This lets the same object be drawn differently in a room and in inventory
-          without creating duplicate gameplay objects.
-        - Room object runtime state is owned by Engine.RoomObjects and stored in
-          Engine.State.objectStates, keyed by globally unique room-object ids.
-          A room hotspot/object id must be unique across the whole game, not just
-          within its room, because objects can be picked up, moved between rooms,
-          or otherwise retain identity outside their original room. Use
-          api.SetObjectState(...) for stateful room-object behaviour such as
-          disabling a door's hotspot after opening, changing a hotspot rectangle,
-          or hiding a room object. Do not duplicate hit testing or movement in a
-          game script for this.
-        - Overlapping click targets are resolved by hitPriority or priority, with higher values winning. Render order uses effective zIndex first, then baseline/depth y. Pickup template objects receive a higher default zIndex than furniture so small takeable items sitting on surfaces render in front unless content explicitly overrides zIndex.
-        - Inventory scrolling is owned by the central inventory system. The UI
-          renders a fixed visible window with up/down arrows and resolves clicks
-          through Engine.Inventory.GetItemAtPoint(). Game scripts must not render
-          or scroll inventory themselves. Inventory icons are scaled down by the
-          renderer to fit the visible inventory slot. Inventory item names are
-          shown by the central renderer as hover tooltip text; game scripts must
-          not implement a second inventory tooltip or icon rendering path. Taking
-          an item from the inventory uses the central already-have message; game
-          scripts should not add duplicate take refusals merely to say that the
-          item is already carried.
-        - The lower command interface can be styled through game.ui. A game may set
-          verbInventoryBackground, verbColor, verbSelectedColor, textColor and
-          per-character dialogueColor values. The themed
-          verb/inventory background is shown only during normal command UI and must
-          be hidden behind narration panels and dialogue choices for readability.
-        - Pathfinding is owned by the single movement controller. Rooms may define
-          a walkGraph with nodes and edges; the movement controller builds a route
-          from the player to the requested destination and then advances through
-          the resulting waypoints. Game scripts must not move the player by
-          creating separate movement loops.
-        - Pathfinding chooses routes; character avoidance is a separate central
-          room-system concern. The room system applies active NPC avoidance between
-          the player and all visible room characters, and between visible room
-          characters themselves, from the same single movement update path. Game
-          scripts must not implement local collision/avoidance loops.
-        - Followers must follow the player's movement trail, not a fixed screen-side
-          offset. A follower waits until the player has opened a configurable gap,
-          then moves towards an older point on the player trail so that the follower
-          naturally follows behind the player's direction of travel. Active NPC
-          avoidance may move NPCs locally out of the way, but the follower trail is
-          the canonical target for followPlayer characters.
-        - The intro, main menu and options screens are engine states, not game
-          script loops. They use game-defined titleBackground, titleMusic and
-          author metadata. ESC opens the main menu during play and resumes from
-          the main menu whenever Resume Game is available. Audio failures
-          must fail silently so missing optional music or sound files do not
-          produce crashes or boot errors.
-        - Save/load uses browser localStorage through the central SaveLoad
-          system. Saving is deliberately allowed only during ordinary play and from
-          the normal play menu; it is blocked during dialogue, cutscenes, input
-          prompts and modal sequences. The main-menu Save Game entry must be greyed
-          out whenever SaveLoad.CanSaveNow() would refuse to save. Saves must
-          capture the canonical game state, including room,
-          player, inventory, flags, variables, object/room/character states and
-          mutable runtime room characters. Menus list compatible saved games and
-          show clear default text when no saved games are available. Save data has
-          its own SAVE_DATA_VERSION, separate from ENGINE_API_VERSION. Any breaking
-          save-format change must increment SAVE_DATA_VERSION and add a migration
-          or a clear incompatibility path in SaveLoad.MigrateSaveData().
-        - IMPORTANT FOR FUTURE MAINTAINERS AND AIS: if any new gameplay state is
-          added anywhere in the engine, it must be added to SaveLoad.BuildData()
-          and SaveLoad.Load() at the same time. Do not add mutable state without
-          adding save/load support for it in the same change.
-        - The same new gameplay state must also be reset by
-          Engine.Private.ResetGameData(), so New Game always starts from a clean
-          canonical runtime session. Do not add mutable state without adding both
-          save/load and reset support in the same change.
-        - If PlayMusic is asked to play the same track that is already playing,
-          it must not restart the Audio object. This preserves seamless music
-          across adjacent rooms with the same room.music value. If the same Audio
-          object is paused because autoplay was blocked, PlayMusic may retry it.
-        - The end screen may use game-defined endBackground and endMusic fields.
-          Clicking the end screen returns to the main menu and clears the
-          in-memory active game session, so Resume Game is disabled after
-          completion.
-        - Secondary pointer activation, including right-click and option/alt-click,
-          is always interpreted as Walk To in the scene, regardless of the selected
-          verb. Middle-click is always interpreted as Look At for scene, overlay
-          and inventory targets, regardless of the selected verb. Do not implement
-          a second movement or inspection path for these shortcuts.
-        - NPC followers are ordinary room characters with followPlayer:true. They
-          are advanced from the single movement update path and are re-positioned
-          by the room system when the player enters a new room. Do not create a
-          second NPC movement loop in game scripts.
-        - Non-following NPCs can also move through api.MoveCharacter(). Character
-          movement is advanced from the same movement update path as the player
-          and followers. Game scripts should request movement; they should not
-          create their own character animation or movement loops.
-        - Character sprites may use directional rows in the same order as the
-          player sprite: down, left, right, up. Character sprite image filenames
-          resolve implicitly under characters/, so scripts should normally use
-          image:'player.png' rather than image:'characters/player.png'. Set
-          directional:true, or rows:4, in the sprite definition. Single-row sprites
-          remain supported. Idle
-          animations are supported through sprite.animations.idle with frames and
-          fps, or through sprite.idleFrames and sprite.idleFps when no explicit
-          idle animation is defined. Idle animation timing is per actor, so a room
-          full of characters does not have to bob in perfect synchronisation.
-        - Character perspective scaling is owned by the renderer. To make actors
-          smaller at the back of a room and larger at the front, set a room-level
-          scale profile such as characterScale:{ farY:86, nearY:134,
-          farScale:0.72, nearScale:1.15 }. The aliases perspectiveScale,
-          backY/frontY and backScale/frontScale are also accepted. Actor scale is
-          still honoured as a base multiplier; set scaleWithPerspective:false or
-          fixedScale:true on an actor to opt out. Game scripts must not resize
-          sprites directly. Image smoothing is controlled by exactly one global
-          renderer switch: set rendering:{ imageSmoothing:false } or
-          imageSmoothing:false on the game for hard-edged pixel art, or true for
-          painted/anti-aliased art. There are no per-sprite or per-actor smoothing
-          overrides. All image drawing goes through the renderer's central image
-          draw path, which applies the single setting. When smoothing is off, the
-          renderer disables smoothing on both the visible canvas and its temporary
-          scaled-image canvas, then copies the already-scaled result to the visible
-          canvas at 1:1. Browser presentation of the final canvas is also forced to
-          nearest-neighbour/pixelated, so the engine has one smoothing switch and
-          the browser does not apply a second presentation smoothing pass.
-        - Talking animation is a built-in dialogue presentation feature: if the
-          speaking actor's sprite defines an animation named talk, api.Say(...)
-          uses it automatically for that spoken line. Other named animations are
-          content-defined and must be triggered through api.SetAnimation(...)
-          and api.ClearAnimation(...). The engine must not contain narrative-
-          specific animation names such as tail wagging.
-        - Lifecycle hooks are central engine extension points, not replacement
-          game loops. Game scripts may define game.hooks entries such as
-          beforeRoomEnter, afterRoomEnter, beforeRoomExit, afterRoomExit,
-          beforeTransition, afterTransition, beforeCommand, afterCommand,
-          onInventoryChanged, beforeCutscene, afterCutscene, onMenuEnter and
-          onMenuExit. Rooms may define beforeEnter, afterEnter, beforeExit and
-          afterExit. Transition zones may define beforeTransition and
-          afterTransition. Legacy hook aliases such as room.onEnter,
-          onBeforeEnter and onBeforeTransition are intentionally unsupported.
-          Boolean before... hooks may return false to cancel the operation; all
-          other hooks are void notification hooks and must not return values.
-          Hook contexts are frozen read-only snapshots. Scripts must use api
-          methods for any intended state change rather than mutating context.
-        - Deferred work is lifecycle-guarded by the engine. Game scripts should
-          use engine APIs such as api.Say(), api.StartCutscene(),
-          api.MoveCharacter() and api.SetObjectAnimation() rather than raw
-          browser timers or private callbacks. New Game, Load Game, End Game,
-          room entry, new dialogue, new cutscenes and replacement movement
-          invalidate stale engine callbacks so old delayed work cannot mutate a
-          newer session or room. If a story action needs delayed sequencing,
-          express it through the engine systems instead of setTimeout or custom
-          loops.
-        - Rich cutscenes are data-defined step queues. They may sequence and
-          nest say, narrate, wait, player walks, NPC movement, object animation,
-          state changes, scripts, sound, conditionals and parallel groups. Every
-          asynchronous cutscene step must report a standard action result and the
-          sequencer must continue only from explicitly successful terminal states.
-          Do not implement cutscene timing with browser timers or private loops.
-        - Deferred callbacks receive a standard action result object with fields
-          such as status, action, reason, reached, actorId, targetId, blockerId,
-          roomId and continueCutscene. Status values include completed, blocked,
-          cancelled, superseded, transitioned and ended. Game scripts should test
-          result.status rather than assuming that a callback means success.
-        - Callback result properties are effective properties. Objects and
-          templates may define callbackStatus, callbackResult or callbackResults;
-          getters may use the read-only property API and object variables to vary
-          the result without mutating state. This lets common template behaviours
-          such as furniture blockers and doors standardise callback outcomes while
-          individual objects override messages or statuses declaratively.
-        - Per-object variables are stored centrally in Engine.State.scopedVariables
-          and must be accessed through the public API. Use room, character and
-          item variable helpers for puzzle state that belongs to a specific
-          entity, rather than inventing parallel state objects in game scripts.
-          Scoped variables are saved, loaded and reset by the engine. Values must
-          be strings or finite numbers. Arithmetic helpers validate types and
-          write clear debug warnings for invalid operations such as adding to a
-          string or dividing by zero.
-        - Multiple endings are supported through game.endings and api.ShowEnding().
-          A game may define game.endings.good, game.endings.bad, etc. Each ending
-          may set title, text, background or endBackground, music or endMusic,
-          sound or sfx, and animation. The animation is drawn on top of the ending
-          background by the central renderer. Do not implement separate ending
-          screens in game scripts. Use api.ShowEnding('endingId') for data-defined
-          endings, or api.EndGame(title, text, options) for a one-off ending.
-          Ending animations use the same lightweight sprite-sheet convention as
-          room object animations: image, x, y, frameW, frameH, frames, fps, loop.
-          Optional sound effects are one-shot and use the normal audio settings.
-          If an ending or one-off api.EndGame() call omits music/endMusic, the
-          engine falls back to game.endMusic so older games keep their existing
-          end music. To deliberately end in silence, set music:[] on that ending.
-        - Dialogue trees are data-defined in game.dialogueTrees and started with
-          api.StartDialogue(treeId). This is deliberately more declarative than
-          hand-written branching scripts so future AIs can author conversations
-          reliably. Nodes contain speakerId, text and choices. Choices may define
-          id, text, playerText, response, next, script, conditions, actions and
-          persistence. By default, a choice with an id is hidden after use; set
-          repeat:true, stay:true or hideAfterUse:false to keep it. Use conditions
-          to show choices only when flags, inventory or variables match. Use
-          templates such as {{var:playerName}}, {{flag:doorOpen}},
-          {{room:kitchen.visits}}, {{character:guard.mood}} and
-          {{item:key.label}} in player text, NPC text and choices. Use
-          api.AskText() or api.AskNumber() for player input such as naming the
-          protagonist; store that input in a normal variable or scoped variable
-          and refer to it through placeholders. Dialogue choices are word-wrapped
-          by the central renderer and pointer hit-testing uses the same wrapped
-          layout, so long AI-authored choices must not draw their own choice UI.
-          Dialogue actions may also addItem/removeItem, so a dialogue option can
-          perform the same inventory exchange as a Give command while keeping the
-          ordinary Give path available.
+        Core architectural rule: there is one canonical runtime state, one player
+        actor, one inventory, one movement path, one interaction dispatcher, one
+        dialogue/presentation path and one save/load/reset path. Game content must
+        mutate state through the public script api object, not by reaching into
+        private engine structures.
     -->
 
     <style>
@@ -1272,131 +862,11 @@
 
     // ENTITY PROPERTY, TEMPLATE AND OVERLAY SYSTEMS
     // --------------------------------------------
-    // This section is the object-oriented public behaviour layer for AI-authored
-    // adventure content. It exists so game scripts can describe common objects in
-    // compact data, while the engine still keeps exactly one interaction path,
-    // one renderer path and one canonical save/load state.
-    //
-    // IMPORTANT CONCEPT: EFFECTIVE PROPERTIES
-    // ---------------------------------------
-    // A room object, inventory item, character or room may expose any behaviour as
-    // a property. The property can be a plain data value, or it can be computed by
-    // a named getter script. This deliberately resembles a C# property: normally
-    // the public value is just the stored field, but a getter may override it.
-    //
-    // Example:
-    //   {
-    //       id:'cabinet',
-    //       template:'container',
-    //       closedSprite:'cabinet_closed.png',
-    //       openSprite:'cabinet_open.png',
-    //       propertyGetters:{ defaultText:'cabinetText' }
-    //   }
-    //
-    // Getter script shape:
-    //   cabinetText:function (query,self,context) {
-    //       return self.GetBool('open') ? 'The cabinet is open.' : 'It is closed.';
-    //   }
-    //
-    // Getter scripts receive:
-    //   query   read-only API. It has HasItem, GetFlag, GetVariable,
-    //           GetRoomVariable, GetCharacterVariable, GetItemVariable,
-    //           GetObjectVariable and GetProperty. It deliberately has no
-    //           mutation, movement, dialogue, sound or timer methods.
-    //   self    const entity facade by default. It has Id, Type, RoomId,
-    //           Entity, Context, Get, GetBool, GetNumber, GetString,
-    //           GetBaseProperty and GetProperty. Const getter facades deliberately
-    //           do not permit mutation.
-    //   context context object supplied by the caller. For interactions this
-    //           normally contains {command,target}. For rendering/hit testing it
-    //           contains a purpose string such as {purpose:'render'}.
-    //
-    // Const and non-const getters:
-    //   - propertyGetters and getters are const by default and are the normal
-    //     authoring path. They must only inspect state and return a value.
-    //   - nonConstPropertyGetters, or the alias mutablePropertyGetters, opt a
-    //     property into receiving a mutating self facade with Set, SetBool,
-    //     SetNumber, SetString and Add. Use non-const getters where and only
-    //     where deriving a property genuinely must update saved state.
-    //
-    // Getter rules for future AIs:
-    //   - Const getters must be query-only. Do not call api.Narrate, api.Say,
-    //     api.AddItem, api.RemoveItem, api.ChangeRoom, api.MoveCharacter,
-    //     api.SetObjectAnimation or browser timers from a getter.
-    //   - Store mutable puzzle state in self variables or scoped variables, not in
-    //     ad-hoc JavaScript objects. Object variables are saved in objectStates.
-    //     Room hotspot/object ids must therefore be globally unique across the
-    //     whole game; they are object identities, not room-local names.
-    //   - Prefer local state: object getters should normally read self variables;
-    //     item getters should normally read item variables; room getters should
-    //     normally read room variables. Global flags are allowed but couple the
-    //     object to wider plot state.
-    //   - If a getter returns an invalid value, the property resolver warns and
-    //     falls back to the base value where possible.
-    //
-    // Properties commonly consumed by the engine:
-    //   name, displayName, defaultText, description, sprite, worldSprite, x, y,
-    //   frameW, frameH, animation, hidden, renderHidden, blocksWhenHidden,
-    //   hitDisabled, interactionDisabled, hitRect, rect, hitPriority, priority,
-    //   zIndex,
-    //   walkTo, walkThrough, walkThroughTo, interactions, refusals, walkBoxes,
-    //   blockers, collisionShape, blocksMovement, walkBehind, occluderShape,
-    //   baseline, triggerZones, onCollide, onBump, callbackStatus,
-    //   callbackResult and callbackResults.
-    //
-    // Resolution order:
-    //   1. Runtime object state override in Engine.State.objectStates, where
-    //      applicable.
-    //   2. entity.properties[propertyName].
-    //   3. legacy entity[propertyName].
-    //   4. entity.nonConstPropertyGetters[propertyName] script, if defined, or
-    //      otherwise entity.propertyGetters[propertyName] script. The getter is
-    //      passed the base value as fallback and may replace it.
-    //   5. template default property, if the entity has template:'...'.
-    //   6. supplied caller default.
-    // For interactions, refusals and callbackResults, template maps are merged
-    // with entity maps so content can override or add individual verbs/statuses
-    // without copying the whole template table. callbackResults supports keys
-    // such as '*', 'blocked', 'walkTo' and 'walkTo:blocked'. callbackStatus and
-    // callbackResult may also be computed by const property getters; use
-    // nonConstPropertyGetters for them only where state mutation is genuinely
-    // necessary.
-    //
-    // TEMPLATE SUMMARY
-    // ----------------
-    // Templates capture common early-1990s adventure-game object patterns:
-    // doors and keys, pickupable items, containers, switches/levers, readable
-    // documents/maps, and simple machines/devices. These correspond to common
-    // object-interaction, inventory, switch/combo, exploration and machine-fixing
-    // puzzle categories, and reduce repeated AI-authored boilerplate.
-    //
-    // Available templates in this engine:
-    //   door       A lockable open/closed passage object.
-    //   key        An inventory item listing the door/container/device ids it fits.
-    //   map        Inventory map overlay with visited-location hotspots.
-    //   pickup     A world object that adds itemId to inventory and hides itself.
-    //   container  Openable/closable optional locked holder; may reveal or give
-    //              contents when opened.
-    //   switch     Toggle, lever or button with on/off state and optional scripts.
-    //   readable   Book, note, sign, plaque or document; can narrate text or open
-    //              a close-up overlay.
-    //   device     Simple machine/contraption requiring optional power and/or a
-    //              required inventory item before use.
-    //   furniture  Solid scene furnishing with look text, take/open/close refusals,
-    //              collision geometry, optional invisible/background-integrated
-    //              behaviour, walk-behind baseline and z sorting.
-    //   barrier    Generic visible or invisible impassable scene boundary.
-    //   combine/openableBox/exchange/multiRequirement/gatekeeper/costume/toolTarget/
-    //              clueUnlocker/distractible declaratively cover common
-    //              early adventure inventory, access and NPC puzzle patterns.
-    //
-    // Template action names are internal strings such as template:door.open. Game
-    // scripts should not call Engine.Templates directly; define template:'door'
-    // and let the normal interaction dispatcher route verbs to template actions.
-    //
-    // Engine.Overlays owns full-scene modal overlays for inventory close-ups and
-    // maps. The lower verb UI remains available; scene clicks are resolved against
-    // overlay hotspots while an overlay is active. Press Escape to close an overlay.
+    // Effective properties let data, getter scripts and templates share one
+    // behaviour path. Keep getters query-only by default; mutable getters are an
+    // explicit exception for saved state updates that cannot be represented more
+    // simply. Templates must remain data-driven and must route through the normal
+    // interaction dispatcher, not through parallel gameplay paths.
     Engine.Entities = {
         DetectType: function (entity, fallback) {
             if (!entity) { return fallback || 'object';
@@ -1607,14 +1077,9 @@
         }
     };
     Engine.Templates = {
-        // TEMPLATE ACTION DISPATCH
-        // ------------------------
-        // The interaction resolver accepts script names beginning with
-        // "template:". For example, template:door.open dispatches here to
-        // Engine.Templates.door.actions.open(api,self,context). This keeps
-        // template behaviours on the same single command path as ordinary game
-        // scripts, so beforeCommand/afterCommand hooks, lifecycle guards and
-        // refusal fallbacks still work normally.
+        // Template actions are invoked only by the central interaction resolver.
+        // This keeps template behaviour on the same hook, lifecycle and refusal
+        // path as ordinary game scripts.
         RunAction:function (actionName, command, target) {
             var parts=String(actionName||'').split('.');
             if (parts.length!==2 || !this[parts[0]] || !this[parts[0]].actions || !this[parts[0]].actions[parts[1]]) { Engine.Debug.Warn('Template action '+actionName+' is missing.');
@@ -1736,32 +1201,6 @@
         distractible:{ properties:{ interactions:function () { return { use:'template:distractible.distract', give:'template:distractible.distract' }; } }, actions:{ distract:function (api,self,context) { var target=context.target; var source=Engine.Templates.GetSubject((context.command||{}).inventoryItemId); var rule=Engine.Templates.GetRule(Engine.Properties.Get(target,'distractions',Object.assign({},context,{source:source}),{}),source?source.id:'default'); var check=Engine.Templates.CheckRequirements(rule,source,target,context); if (!check.ok) { Engine.Templates.SayIfText(api,target.id,check.text||Engine.Properties.Get(target,'distractionRefusalText',context,'That will not distract me.')); return; } self.SetBool('distracted',true); Engine.Templates.ApplyEffects(api,rule,source,target,context); Engine.Templates.SayIfText(api,rule.speakerId||target.id,rule.text||'I shall just look over here for a moment.'); } } },
 
         openableBox:{ properties:{ interactions:function () { return { open:'template:openableBox.open', use:'template:openableBox.open' }; }, transitiveUse:function () { return false; } }, actions:{ open:function (api,self,context) { var target=context.target; if (self.GetBool('opened',false)) { Engine.Templates.SayIfText(api,'player',Engine.Properties.Get(target,'alreadyOpenText',context,'')); return; } self.SetBool('opened',true); var rule=Engine.Properties.Get(target,'openEffect',context,{}); if (!rule.addItem && Engine.Properties.Get(target,'revealsItem',context,null)) { rule=Object.assign({},rule,{addItem:Engine.Properties.Get(target,'revealsItem',context,null)}); } Engine.Templates.ApplyEffects(api,rule,null,target,context); Engine.Templates.SayIfText(api,Engine.Properties.Get(target,'openSpeakerId',context,'player'),Engine.Properties.Get(target,'openText',context,'')); } } },
-        // TEMPLATE: door
-        // --------------
-        // Use for: ordinary doors, gates, hatches, trapdoors and any object that
-        // has an open/closed state and may be locked. The template owns object
-        // variables named open and locked. Static defaults can also be supplied
-        // with open:true/false and locked:true/false.
-        //
-        // Core fields:
-        //   template:'door'
-        //   locked:true                 optional initial locked state
-        //   open:false                  optional initial open state
-        //   closedSprite/openSprite     optional graphics resolved by sprite
-        //   transitionAnimation         optional animation played forward on open
-        //                               and reverse on close
-        //   unlockAnimation/lockAnimation optional key-turn animations
-        //   walkThroughTo:{x,y}         destination point for Walk To when open
-        //   onOpen/onClose/onUnlock/onLock optional script names
-        //
-        // Text fields:
-        //   lockedText, unlockedText, openText, lockedOpenText, openActionText,
-        //   closeActionText, alreadyOpenText, alreadyClosedText, unlockText,
-        //   lockText, wrongKeyText, closedWalkText.
-        //
-        // Key use:
-        //   Inventory items with template:'key' and unlocks:['doorId'] toggle the
-        //   locked variable when used on the door. unlocks:['*'] is a skeleton key.
         door:{
             properties:{
                 interactions:function () { return { lookAt:'template:door.lookAt', open:'template:door.open', close:'template:door.close', use:'template:door.useKey', walkTo:'template:door.walkTo' };
@@ -1844,35 +1283,8 @@
             }
         },
 
-        // TEMPLATE: key
-        // -------------
-        // Use for: keys, keycards, passes, tokens or any inventory item that
-        // authorises a lock. It has no actions of its own. Its purpose is to carry
-        // an unlock target list used by door/container/device templates.
-        //
-        // Fields:
-        //   template:'key'
-        //   unlocks:['doorId','boxId']  ids this key unlocks
-        //   unlocks:['*']              skeleton key for all template locks
         key:{ properties:{} },
 
-        // TEMPLATE: map
-        // -------------
-        // Use for: world maps, town maps, travel screens and fast-travel diagrams.
-        // Looking at the inventory item opens a scene overlay. Its places become
-        // active only after their target rooms have room variable visited=1, unless
-        // a place sets alwaysVisible:true.
-        //
-        // Fields:
-        //   template:'map'
-        //   map:{ image:'map.png', places:[...] }
-        //   propertyGetters:{ travelBlocked:'scriptName' } optional global block
-        //   travelBlockedText:'...' optional default blocked text
-        //
-        // Place fields:
-        //   id, name, rect:{x,y,w,h}, targetRoomId, targetX, targetY,
-        //   targetFacing, description, alwaysVisible, visibleFlag, hiddenFlag,
-        //   blockedFlag, blockedScript, blockedText, script.
         map:{
             properties:{ interactions:function () { return { lookAt:'template:map.show' };
                 } },
@@ -1897,18 +1309,6 @@
             }
         },
 
-        // TEMPLATE: pickup
-        // ----------------
-        // Use for: coins, tools, papers, loose inventory items and other room
-        // objects that should be taken into inventory. Prefer this over bespoke
-        // take scripts unless the pickup has unusual story logic.
-        //
-        // Fields:
-        //   template:'pickup'
-        //   itemId:'inventoryItemId'    item to add; defaults to object id
-        //   hiddenFlag:'flagName'       optional flag set on take
-        //   takeText:'Taken.'           narration after pickup
-        //   onTake:'scriptName'         optional script after pickup
         pickup:{
             properties:{ interactions:function () { return { lookAt:'template:pickup.lookAt', take:'template:pickup.take' };
                 }, callbackResults:function () { return { blocked:{status:'blocked',reason:'pickupBlocked',continueCutscene:false}, completed:{status:'completed',reason:'pickupReached'} };
@@ -1929,21 +1329,6 @@
             }
         },
 
-        // TEMPLATE: container
-        // -------------------
-        // Use for: boxes, drawers, cabinets, cupboards, chests, lockers and safes.
-        // It owns object variables open, locked and emptied. It may reveal/give
-        // contents when opened. For purely visible contents, use onOpen to unhide a
-        // room hotspot; for inventory contents, set contents:['itemId'].
-        //
-        // Fields:
-        //   template:'container'
-        //   locked:true/false, open:true/false
-        //   contents:'itemId' or contents:['itemA','itemB']
-        //   closedSprite/openSprite/emptySprite
-        //   transitionAnimation, unlockAnimation, lockAnimation
-        //   onOpen/onClose/onUnlock/onLock/onEmpty optional scripts
-        //   lockedText, closedText, openText, emptyText, openActionText, etc.
         container:{
             properties:{
                 interactions:function () { return { lookAt:'template:container.lookAt', open:'template:container.open', close:'template:container.close', use:'template:container.useKey' };
@@ -2000,19 +1385,6 @@
             }
         },
 
-        // TEMPLATE: switch
-        // ----------------
-        // Use for: switches, levers, buttons, valves and pull-cords. It owns an on
-        // variable. Use actionText/onText/offText for feedback. onToggle, onOn and
-        // onOff optional scripts can change the world, reveal items or power
-        // devices.
-        //
-        // Fields:
-        //   template:'switch'
-        //   on:true/false
-        //   onSprite/offSprite
-        //   onToggle/onOn/onOff optional scripts
-        //   onText/offText/actionOnText/actionOffText/alreadyOnText/alreadyOffText
         switch:{
             properties:{
                 interactions:function () { return { lookAt:'template:switch.lookAt', use:'template:switch.toggle', open:'template:switch.turnOn', close:'template:switch.turnOff' };
@@ -2045,12 +1417,6 @@
             }
         },
 
-        // TEMPLATE: readable
-        // ------------------
-        // Use for: books, letters, signs, plaques, labels, newspapers and any
-        // object whose main behaviour is being read. If closeupOverlay/lookOverlay
-        // is present, Look At opens the overlay. Otherwise it narrates readText or
-        // defaultText. Inventory items and room hotspots can both use it.
         readable:{
             properties:{ interactions:function () { return { lookAt:'template:readable.read', use:'template:readable.read' };
                 } },
@@ -2063,22 +1429,6 @@
                 } }
         },
 
-        // TEMPLATE: device
-        // ----------------
-        // Use for: machines, panels, pumps, radios, generators, lifts and other
-        // simple contraptions. It checks optional power and optional requiredItem.
-        // If requiredItem is set, the Use verb must be used with that item selected.
-        // A successful use sets used=1 and optionally fixed=1.
-        //
-        // Fields:
-        //   template:'device'
-        //   powered:true/false or powerFlag:'flagName'
-        //   requiredItem:'itemId'
-        //   consumeRequiredItem:true/false
-        //   setsFlag:'flagName'
-        //   fixedOnUse:true/false
-        //   onUse:'scriptName'
-        //   noPowerText, wrongItemText, successText, alreadyUsedText
         device:{
             properties:{ interactions:function () { return { lookAt:'template:device.lookAt', use:'template:device.use' };
                 } },
@@ -2105,30 +1455,6 @@
                 }
             }
         },
-        // TEMPLATE: furniture
-        // -------------------
-        // Use for: tables, counters, cupboards, desks, beds, sofas and other solid
-        // scene furnishings. Furniture is a scene object, not an inventory item. It
-        // may be visible as a separate object sprite, or invisible/background-
-        // integrated when the painted furniture is already part of the room
-        // background. A background-integrated object with no sprite cannot occlude
-        // actors by draw order, so the template defaults to preventing routes
-        // behind its full rect unless allowWalkBehindWithoutSprite:true is set.
-        // Compose with the container template for furniture with drawers,
-        // cupboards or doors.
-        //
-        // Fields:
-        //   template:'furniture'
-        //   rect:{x,y,w,h} or collisionShape:{rect:{...}}
-        //   baseline:number             draw-order threshold for walk-behinds
-        //   walkBehind:true/false       defaults true for sprite furniture, false for
-        //                                no-sprite background-integrated furniture
-        //   allowWalkBehindWithoutSprite:true/false
-        //                                opt-in for special cases where no-sprite
-        //                                furniture may be walked behind safely
-        //   zIndex:number               secondary sort value for same baseline
-        //   defaultText:'...'
-        //   onCollide:'scriptName'      optional script when actor bumps it
         furniture:{
             properties:{
                 interactions:function () { return { lookAt:'template:furniture.lookAt' };
@@ -2169,12 +1495,6 @@
             actions:{ lookAt:function (api,self,context) { api.Narrate(Engine.Properties.Get(context.target,'defaultText',context,'It is an ordinary piece of furniture.'));
                 } }
         },
-        // TEMPLATE: barrier
-        // -----------------
-        // Use for: railings, hedges, fences, low walls, invisible blockers and
-        // other impassable scene boundaries. A barrier blocks movement and may be
-        // looked at, but it does not imply walk-behind rendering. Use furniture for
-        // solid foreground props that need baseline sorting.
         barrier:{
             properties:{
                 interactions:function () { return { lookAt:'template:barrier.lookAt' };
@@ -3999,13 +3319,8 @@
             target._entityType='item';
             return target;
         },
-        // CONTENT AUTHORING NOTE FOR FUTURE AIS:
-        // If a room hotspot/object represents the same physical thing as an
-        // inventory item, set itemId on the room target. The room target remains
-        // responsible for room-specific data such as rect, sprite, hiddenFlag,
-        // walkTo and pickup scripts, but missing interactions/refusals/default
-        // text inherit from the linked inventory item. Override on the room
-        // target only when the context genuinely differs.
+        // Linked inventory inheritance keeps world instances and carried items on
+        // the same interaction/refusal/default-text path.
         GetLinkedInventoryTarget: function (target) { if (!target || !target.itemId || target.isInventoryItem) { return null;
             } return this.GetInventoryTarget(target.itemId);
         },
@@ -4085,12 +3400,8 @@
             if (typeof value === 'number') { return value;
             } return 0;
         },
-        // CONTENT AUTHORING NOTE FOR FUTURE AIS:
-        // HitTest deliberately supports hitPriority/priority/zIndex for overlapping
-        // targets. Use a higher value for a small thing that visually sits on top of
-        // a larger hotspot, for example a coin on a table. Equal priorities preserve
-        // the historic last-defined-wins behaviour, so existing games are not
-        // changed unless they opt into explicit priority values.
+        // Overlapping targets are resolved centrally by effective priority; equal
+        // priorities preserve last-defined-wins compatibility.
         HitTest: function (x, y) { var room=Engine.Rooms.GetCurrentRoom();
             var candidates=(room.hotspots||[]).concat(room.characters||[]);
             var best=null;
@@ -4279,25 +3590,8 @@
     }
 };
 Engine.DialogueTrees = {
-    // DATA AUTHORING SUMMARY
-    // ----------------------
-    // Define conversations in game.dialogueTrees. A minimal tree is:
-    // dialogueTrees:{ guard:{ speakerId:'guard', start:'start', nodes:{
-    //   start:{ text:'Hello {{var:playerName}}.', choices:[
-    //     { id:'askJob', text:'What do you do?', response:'I guard this door.', once:true },
-    //     { id:'bye', text:'Goodbye.', response:'Farewell.', end:true, repeat:true }
-    //   ]}
-    // }}}
-    // Conditions are arrays or single objects. Common forms are:
-    // {flag:'doorOpen'}, {notFlag:'doorOpen'}, {hasItem:'key'},
-    // {missingItem:'key'}, {var:'score', op:'>=', value:3},
-    // {roomVar:['kitchen','visits'], op:'>', value:1},
-    // {characterVar:['guard','mood'], op:'==', value:'angry'},
-    // {itemVar:['key','label'], op:'contains', value:'brass'},
-    // {script:'customConditionScript'} where the script returns truthy/falsey.
-    // Actions use the same compact form: {setFlag:'x', value:true},
-    // {setVar:'name', value:'Ada'}, {addVar:'score', value:1}, or
-    // {script:'scriptName'}. For complex logic, use a script action.
+    // Dialogue trees are the single central branching-conversation system. Keep
+    // condition/action evaluation here rather than in parallel dialogue code.
     GetTree: function (treeId) { return Engine.CurrentGame && Engine.CurrentGame.dialogueTrees ? Engine.CurrentGame.dialogueTrees[treeId] : null;
     },
     MemoryKey: function (treeId, choiceId) { return treeId+'.'+choiceId;
@@ -4788,20 +4082,7 @@ Engine.Cutscenes = {
     }
 };
 Engine.EndGame = {
-    // Multiple-ending support.
-    // ------------------------
-    // Content authors should prefer api.ShowEnding('endingId') with data in
-    // game.endings. Example:
-    // endings:{ good:{ title:'Home', text:'You made it.', background:'good.png',
-    //                  music:['good.ogg'], sound:['cheer.ogg'],
-    //                  animation:{ image:'flag.png', x:140, y:60, frameW:32,
-    //                              frameH:32, frames:4, fps:6, loop:true } } }
-    // api.EndGame(title,text,options) remains for one-off endings and may use
-    // the same option names. If an ending spec omits music/endMusic, the
-    // engine falls back to game.endMusic for compatibility with older games.
-    // Set music:[] on an ending only when the intended ending music is silence.
-    // Ending animation data is stored in Engine.State so save/load and
-    // rendering stay on the canonical engine path.
+    // End screens are data-driven and rendered by the central renderer.
     ResolveEndingMusic: function (spec) {
         if (Object.prototype.hasOwnProperty.call(spec,'music')) { return spec.music||[];
         }
@@ -5752,12 +5033,7 @@ Engine.Renderer = {
     GetInventoryIconMaxSize: function () { var ui=this.GetUIConfig();
         return { w:ui.inventoryIconMaxW||16, h:ui.inventoryIconMaxH||16 };
     },
-    // CONTENT AUTHORING NOTE FOR FUTURE AIS:
-    // Inventory icons may re-use world-object art and can therefore be larger
-    // than the inventory slot. Do not require every game to create separate
-    // tiny icon art. The central renderer scales icons down, preserving aspect
-    // ratio, so they fit inside the fixed inventory grid. It never scales small
-    // icons up, which avoids blurred or chunky enlargement artefacts.
+    // Inventory icon scaling and hover labels are renderer-owned.
     DrawInventoryIcon: function (item, x, y) { if (!item || !item.icon) { return;
         } var img=Engine.Assets.GetImage(item.icon,'itemIcon');
         if (!img) { return;
@@ -5772,9 +5048,7 @@ Engine.Renderer = {
         var dy=y+Math.floor((Engine.Inventory.cell-dh)/2);
         this.DrawImage(img,dx,dy,dw,dh);
     },
-    // CONTENT AUTHORING NOTE FOR FUTURE AIS:
-    // Inventory item names are displayed here as a hover tooltip. Game scripts
-    // should set item.name and should not draw their own inventory labels.
+    // Inventory hover labels are renderer-owned.
     RenderInventoryHoverLabel: function () { if (Engine.State.mode!=='play' || Engine.State.dialogue.active || !Engine.State.hoveredInventoryItemId) { return;
         } var item=Engine.CurrentGame.items[Engine.State.hoveredInventoryItemId];
         if (!item) { return;
