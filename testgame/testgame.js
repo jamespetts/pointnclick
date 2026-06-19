@@ -3,7 +3,7 @@
 
     This file is narrative/content logic only. It must not create a second
     renderer, inventory, player, movement system, interaction system, dialogue
-    system, or main loop. Use only PointClickEngine.API for state changes.
+    system, or main loop. Use only the api object passed to scripts for state changes.
 */
 'use strict';
 PointClickEngine.RegisterGame({

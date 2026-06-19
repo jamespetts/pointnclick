@@ -80,8 +80,15 @@
         - Ordinary named scripts receive (api, context). They must use api.* for
           every state change, room change, dialogue line, cutscene, movement,
           sound effect, overlay and ending.
-        - Hook scripts also receive (api, context). Returning false from a
-          before hook cancels that operation.
+        - Lifecycle hook scripts also receive (api, context), but context is a
+          frozen read-only snapshot. Hook scripts must never try to edit context;
+          use api methods for intentional state changes.
+        - Boolean hooks are the only hooks with a meaningful return value. They
+          are all named before... and may return false to cancel the operation.
+          Returning anything other than false allows the operation to continue.
+        - Void hooks are notifications. They must not return a value. The engine
+          runs all scripts listed for a void hook and warns if any script returns
+          a value, so AIs are not encouraged to infer hidden return semantics.
         - Cutscene script steps receive (api, step, previousResult) and should
           return api.MakeActionResult(...) when success/failure matters.
         - Property getter scripts receive (query, self, context). propertyGetters
@@ -105,8 +112,8 @@
         - Presentation and flow: ShowOverlay, CloseOverlay, PlaySound,
           StartCutscene, QueueCutscene, MakeActionResult, EndGame, ShowEnding,
           Save and Load.
-        - RunScript exists for calling another named content script. RunHook is
-          legacy/diagnostic and must not be used for ordinary story flow.
+        - RunScript exists for calling another named content script. There is no
+          public RunHook API; lifecycle hooks are invoked only by the engine.
 
         Getter query/self APIs:
         - query exposes read-only HasItem, GetFlag, GetVariable,
@@ -346,12 +353,14 @@
           beforeRoomEnter, afterRoomEnter, beforeRoomExit, afterRoomExit,
           beforeTransition, afterTransition, beforeCommand, afterCommand,
           onInventoryChanged, beforeCutscene, afterCutscene, onMenuEnter and
-          onMenuExit. Rooms may define beforeEnter/onBeforeEnter,
-          afterEnter/onAfterEnter, beforeExit/onBeforeExit and
-          afterExit/onAfterExit. Transition zones may define beforeTransition,
-          onBeforeTransition, afterTransition and onAfterTransition. Hook
-          scripts receive (api, context). Returning false from a before hook
-          cancels that operation.
+          onMenuExit. Rooms may define beforeEnter, afterEnter, beforeExit and
+          afterExit. Transition zones may define beforeTransition and
+          afterTransition. Legacy hook aliases such as room.onEnter,
+          onBeforeEnter and onBeforeTransition are intentionally unsupported.
+          Boolean before... hooks may return false to cancel the operation; all
+          other hooks are void notification hooks and must not return values.
+          Hook contexts are frozen read-only snapshots. Scripts must use api
+          methods for any intended state change rather than mutating context.
         - Deferred work is lifecycle-guarded by the engine. Game scripts should
           use engine APIs such as api.Say(), api.StartCutscene(),
           api.MoveCharacter() and api.SetObjectAnimation() rather than raw
@@ -637,10 +646,12 @@
     //
     // Engine.Hooks is the single lifecycle-hook dispatcher. Hook scripts are
     // normal game scripts looked up by name in game.scripts. They receive
-    // (api, context) and may return false from "before" hooks to cancel the
-    // current operation. Hook entries may be a single script name or an array of
-    // script names. Missing hook scripts do not crash the game; they produce a
-    // clear debug warning and the operation continues.
+    // (api, context), where context is a frozen read-only snapshot. Hook entries
+    // may be a single script name or an array of script names. Boolean hooks are
+    // the before... hooks; only they may return false to cancel the operation.
+    // Void hooks are notifications, must not return values, and always run every
+    // listed script. Missing hook scripts are validation errors; runtime dispatch
+    // also fails safe for boolean hooks.
     //
     // Engine.ScopedVariables stores per-room, per-character and per-item variables
     // in Engine.State.scopedVariables. Game scripts must use the public API
@@ -892,23 +903,39 @@
         }
     };
     Engine.Scripts = {
-        Run: function (scriptName, context, label) {
-            if (!scriptName) { return null;
+        Call: function (scriptName, args, label) {
+            if (!scriptName) { return { ok:false, result:null };
             }
             if (typeof scriptName !== 'string') { Engine.Debug.Warn((label||'Script')+' ignored because script name is not a string.');
-                return null;
+                return { ok:false, result:null };
             }
             if (!Engine.CurrentGame || !Engine.CurrentGame.scripts || !Engine.CurrentGame.scripts[scriptName]) { Engine.Debug.Warn((label||'Script')+' references missing script "'+scriptName+'".');
-                return null;
+                return { ok:false, result:null };
             }
-            try { return Engine.CurrentGame.scripts[scriptName](Engine.API, context||{});
+            try { return { ok:true, result:Engine.CurrentGame.scripts[scriptName].apply(null,args||[]) };
             }
             catch (err) { Engine.Debug.Error((label||scriptName)+' failed: '+(err && err.message ? err.message : err));
-                return null;
+                return { ok:false, result:null };
             }
+        },
+        RunWithArgs: function (scriptName, args, label) {
+            return this.Call(scriptName,args,label).result;
+        },
+        Run: function (scriptName, context, label) {
+            return this.RunWithArgs(scriptName,[Engine.API,context||{}],label||'Script');
+        },
+        RunTemplate: function (scriptName, self, context, label) {
+            return this.RunWithArgs(scriptName,[Engine.API,self,context||{}],label||('template optional script '+scriptName));
+        },
+        RunGetter: function (scriptName, query, self, context, label) {
+            return this.RunWithArgs(scriptName,[query,self,context||{}],label||('property getter '+scriptName));
         }
     };
     Engine.Hooks = {
+        GameHookTypes:{ beforeRoomEnter:'boolean', afterRoomEnter:'void', beforeRoomExit:'boolean', afterRoomExit:'void', beforeTransition:'boolean', afterTransition:'void', beforeCommand:'boolean', afterCommand:'void', onInventoryChanged:'void', beforeCutscene:'boolean', afterCutscene:'void', onMenuEnter:'void', onMenuExit:'void' },
+        RoomHookTypes:{ beforeEnter:'boolean', afterEnter:'void', beforeExit:'boolean', afterExit:'void' },
+        TransitionHookTypes:{ beforeTransition:'boolean', afterTransition:'void' },
+        LegacyHookNames:{ onBeforeEnter:true, onAfterEnter:true, onBeforeExit:true, onAfterExit:true, onBeforeTransition:true, onAfterTransition:true, onEnter:true, onExit:true },
         NormaliseList: function (scripts) {
             if (!scripts) { return [];
             }
@@ -916,46 +943,89 @@
             }
             return [scripts];
         },
-        RunScript: function (scriptName, context, label) {
-            if (!scriptName) { return true;
+        CloneForContext: function (value, seen) {
+            if (value === null || typeof value !== 'object') { return value;
             }
-            if (label === 'api.RunHook') { Engine.Debug.Warn('api.RunHook cannot run ordinary scripts. Use api.RunScript("'+scriptName+'") for named content scripts.');
-                return true;
+            seen=seen||[];
+            if (seen.indexOf(value) >= 0) { return '[Circular]';
             }
-            if (typeof scriptName !== 'string') { Engine.Debug.Warn('Hook '+(label||'unknown')+' ignored because script name is not a string.');
-                return true;
+            seen.push(value);
+            if (Array.isArray(value)) { return value.map(function (entry) { return Engine.Hooks.CloneForContext(entry,seen.slice(0));
+                });
             }
-            if (!Engine.CurrentGame || !Engine.CurrentGame.scripts || !Engine.CurrentGame.scripts[scriptName]) { Engine.Debug.Warn('Hook '+(label||'unknown')+' references missing script "'+scriptName+'".');
-                return true;
-            }
-            try { return Engine.CurrentGame.scripts[scriptName](Engine.API, context||{}) !== false;
-            }
-            catch (err) { Engine.Debug.Error('Hook '+(label||scriptName)+' failed: '+(err && err.message ? err.message : err));
-                return true;
-            }
+            var copy={};
+            Object.keys(value).forEach(function (key) {
+                if (typeof value[key] !== 'function') { copy[key]=Engine.Hooks.CloneForContext(value[key],seen.slice(0));
+                }
+            });
+            return copy;
         },
-        RunList: function (scripts, context, label) {
-            var list=this.NormaliseList(scripts);
-            for (var i=0;i<list.length;i++) { if (this.RunScript(list[i],context,label) === false) { return false;
-                } }
+        DeepFreeze: function (value) {
+            if (!value || typeof value !== 'object' || Object.isFrozen(value)) { return value;
+            }
+            Object.freeze(value);
+            Object.keys(value).forEach(function (key) { Engine.Hooks.DeepFreeze(value[key]);
+            });
+            return value;
+        },
+        ConstContext: function (context) {
+            return this.DeepFreeze(this.CloneForContext(context||{}));
+        },
+        RunScript: function (scriptName, context, label, contract) {
+            contract=contract||'void';
+            if (!scriptName) { return contract==='boolean';
+            }
+            if (typeof scriptName !== 'string') { Engine.Debug.Error('Hook '+(label||'unknown')+' ignored because script name is not a string.');
+                return contract==='boolean' ? false : true;
+            }
+            if (!Engine.CurrentGame || !Engine.CurrentGame.scripts || !Engine.CurrentGame.scripts[scriptName]) { Engine.Debug.Error('Hook '+(label||'unknown')+' references missing script "'+scriptName+'".');
+                return contract==='boolean' ? false : true;
+            }
+            var call=Engine.Scripts.Call(scriptName,[Engine.API,this.ConstContext(context)],label||('hook '+scriptName));
+            if (!call.ok) { return contract==='boolean' ? false : true;
+            }
+            if (contract === 'boolean') { return call.result !== false;
+            }
+            if (call.result !== undefined && call.result !== null) { Engine.Debug.Warn('Void hook '+(label||scriptName)+' returned a value. Void hook return values are invalid and were ignored.');
+            }
             return true;
+        },
+        RunList: function (scripts, context, label, contract) {
+            var list=this.NormaliseList(scripts);
+            var ok=true;
+            for (var i=0;i<list.length;i++) { var entryLabel=label+'['+i+']';
+                var entryOk=this.RunScript(list[i],context,entryLabel,contract);
+                if (contract === 'boolean' && entryOk === false) { return false;
+                }
+                ok=ok && entryOk;
+            }
+            return ok;
         },
         RunGameHook: function (name, context) {
+            var contract=this.GameHookTypes[name];
+            if (!contract) { Engine.Debug.Error('Unknown game hook "'+name+'".');
+                return false;
+            }
             var hooks=(Engine.CurrentGame && Engine.CurrentGame.hooks) ? Engine.CurrentGame.hooks : {};
-            return this.RunList(hooks[name],context,'game.hooks.'+name);
+            return this.RunList(hooks[name],context,'game.hooks.'+name,contract);
         },
-        RunRoomHook: function (room, names, context, label) {
+        RunRoomHook: function (room, name, context, label) {
             if (!room) { return true;
             }
-            for (var i=0;i<names.length;i++) { if (this.RunList(room[names[i]],context,label+'.'+names[i]) === false) { return false;
-                } }
-            return true;
+            var contract=this.RoomHookTypes[name];
+            if (!contract) { Engine.Debug.Error('Unknown room hook "'+name+'".');
+                return false;
+            }
+            return this.RunList(room[name],context,label||('room.'+name),contract);
         },
         RunTransitionHook: function (zone, name, context) {
-            var onName='on'+CapitaliseFirst(name);
+            var contract=this.TransitionHookTypes[name];
+            if (!contract) { Engine.Debug.Error('Unknown transition hook "'+name+'".');
+                return false;
+            }
             if (this.RunGameHook(name,context) === false) { return false;
             }
-            if (zone && this.RunList([zone[name],zone[onName]],context,'transition.'+name) === false) { return false;
+            if (zone && this.RunList(zone[name],context,'transition.'+name,contract) === false) { return false;
             }
             return true;
         }
@@ -1407,7 +1477,7 @@
                 return fallback;
             }
             try { var self=getterSpec.mutable ? Engine.Entities.CreateFacade(entity,Engine.Entities.DetectType(entity),{context:context||{}}) : Engine.Entities.CreateConstFacade(entity,Engine.Entities.DetectType(entity),{context:context||{}});
-                return this.Validate(propertyName,Engine.CurrentGame.scripts[getterName](this.GetReadAPI(),self,context||{}),fallback);
+                return this.Validate(propertyName,Engine.Scripts.RunGetter(getterName,this.GetReadAPI(),self,context||{},'property getter '+getterName),fallback);
             }
             catch (err) { Engine.Debug.Error('Property getter '+getterName+' for '+(entity && entity.id || 'unknown')+'.'+propertyName+' failed: '+(err && err.message ? err.message : err));
                 return fallback;
@@ -1462,11 +1532,9 @@
             return true;
         },
         RunOptionalScript:function (scriptName, self, context) {
-            if (scriptName && Engine.CurrentGame && Engine.CurrentGame.scripts && Engine.CurrentGame.scripts[scriptName]) { return Engine.CurrentGame.scripts[scriptName](Engine.API,self,context||{});
+            if (!scriptName) { return null;
             }
-            if (scriptName) { Engine.Debug.Warn('Template optional script '+scriptName+' is missing.');
-            }
-            return null;
+            return Engine.Scripts.RunTemplate(scriptName,self,context||{},'template optional script '+scriptName);
         },
         ListFromProperty:function (entity) {
             var list=entity.unlocks || entity.unlockDoors || entity.opens || entity.targets || entity.doorIds || entity.objectIds || [];
@@ -1644,11 +1712,11 @@
                     var itemFacade=Engine.Entities.CreateFacade(mapItem,'item',{context:context});
                     var blocked=!!Engine.Properties.Get(mapItem,'travelBlocked',Object.assign({},context,{place:place}),false);
                     if (place.blockedFlag && Engine.State.flags[place.blockedFlag]) { blocked=true;
-                    } if (place.blockedScript && Engine.CurrentGame.scripts && Engine.CurrentGame.scripts[place.blockedScript]) { blocked=!!Engine.CurrentGame.scripts[place.blockedScript](Engine.Properties.GetReadAPI(),itemFacade,Object.assign({},context,{place:place}));
+                    } if (place.blockedScript) { blocked=!!Engine.Scripts.RunGetter(place.blockedScript,Engine.Properties.GetReadAPI(),itemFacade,Object.assign({},context,{place:place}),'map place blockedScript '+place.blockedScript);
                     } if (blocked) { api.Narrate(place.blockedText || Engine.Properties.Get(mapItem,'travelBlockedText',context,'You cannot go there just now.'));
                         return;
                     } Engine.Overlays.Close();
-                    if (place.script && Engine.CurrentGame.scripts && Engine.CurrentGame.scripts[place.script]) { Engine.CurrentGame.scripts[place.script](api,itemFacade,Object.assign({},context,{place:place}));
+                    if (place.script) { Engine.Scripts.RunTemplate(place.script,itemFacade,Object.assign({},context,{place:place}),'map place script '+place.script);
                         return;
                     } if (place.targetRoomId) { api.ChangeRoom(place.targetRoomId,place.targetX,place.targetY,place.targetFacing);
                     } }
@@ -2060,6 +2128,46 @@
             if (!game.scripts || !game.scripts[scriptName]) { this.Warn(where+' references missing script "'+scriptName+'".');
             }
         },
+        ValidateRequiredScriptName: function (game, scriptName, where) {
+            if (!scriptName) { return;
+            }
+            if (typeof scriptName !== 'string') { this.Error(where+' references a non-string script name.');
+                return;
+            }
+            if (scriptName.indexOf('template:')===0) { return;
+            }
+            if (!game.scripts || !game.scripts[scriptName]) { this.Error(where+' references missing script "'+scriptName+'".');
+            }
+        },
+        ValidateHookList: function (game, scripts, where) {
+            var self=this;
+            Engine.Hooks.NormaliseList(scripts).forEach(function (scriptName, index) {
+                self.ValidateRequiredScriptName(game,scriptName,where+'['+index+']');
+            });
+        },
+        ValidateHookContainer: function (game, container, allowed, where) {
+            var self=this;
+            Object.keys(container||{}).forEach(function (name) {
+                if (!allowed[name]) { self.Error(where+' contains unknown or legacy hook "'+name+'".');
+                    return;
+                }
+                self.ValidateHookList(game,container[name],where+'.'+name);
+            });
+        },
+        ValidateHookFields: function (game, container, allowed, where) {
+            var self=this;
+            Object.keys(allowed||{}).forEach(function (name) {
+                if (container && Object.prototype.hasOwnProperty.call(container,name)) { self.ValidateHookList(game,container[name],where+'.'+name);
+                }
+            });
+        },
+        ValidateLegacyHookAbsence: function (container, where) {
+            var self=this;
+            Object.keys(Engine.Hooks.LegacyHookNames).forEach(function (name) {
+                if (container && Object.prototype.hasOwnProperty.call(container,name)) { self.Error(where+' uses unsupported legacy hook "'+name+'".');
+                }
+            });
+        },
         ValidateGeometryShape: function (shape, where) { if (shape && Engine.Geometry && !Engine.Geometry.ShapeIsValid(shape)) { this.Warn(where+' has an invalid geometry shape.');
             } },
         ValidateTriggerZones: function (game, zones, where) { var self=this;
@@ -2151,6 +2259,7 @@
             }
             if (game.player && game.player.spriteId && game.sprites && !game.sprites[game.player.spriteId]) { this.Warn('Player references missing sprite "'+game.player.spriteId+'".');
             }
+            this.ValidateHookContainer(game,game.hooks||{},Engine.Hooks.GameHookTypes,'game.hooks');
             var self=this;
             var globalObjectIds={};
             Object.keys(game.items||{}).forEach(function (itemId) {
@@ -2171,6 +2280,8 @@
                 if (!room.background) { self.Warn(where+' has no background.');
                 } else { self.ValidateImagePath(room.background,'roomBackground',where+'.background');
                 }
+                self.ValidateLegacyHookAbsence(room,where);
+                self.ValidateHookFields(game,room,Engine.Hooks.RoomHookTypes,where);
                 (room.walkBoxes||[]).forEach(function (box,index) { self.ValidateGeometryShape(box.shape||box.rect||box,where+'.walkBoxes['+index+']');
                 });
                 (room.blockers||[]).forEach(function (blocker,index) { self.ValidateGeometryShape(blocker.shape||blocker.rect,where+'.blockers['+index+']');
@@ -2209,10 +2320,8 @@
                     if (!z.script && (!z.targetRoomId || !game.rooms[z.targetRoomId])) { self.Error(zwhere+' has no script and references missing targetRoomId "'+z.targetRoomId+'".');
                     }
                     self.ValidateScriptName(game,z.script,zwhere+'.script');
-                    self.ValidateScriptName(game,z.beforeTransition,zwhere+'.beforeTransition');
-                    self.ValidateScriptName(game,z.onBeforeTransition,zwhere+'.onBeforeTransition');
-                    self.ValidateScriptName(game,z.afterTransition,zwhere+'.afterTransition');
-                    self.ValidateScriptName(game,z.onAfterTransition,zwhere+'.onAfterTransition');
+                    self.ValidateLegacyHookAbsence(z,zwhere);
+                    self.ValidateHookFields(game,z,Engine.Hooks.TransitionHookTypes,zwhere);
                 });
                 var graph=room.walkGraph||{};
                 var nodeIds={};
@@ -2589,8 +2698,6 @@
             } return Engine.State.characterStates[characterId];
         },
         RunScript: function (scriptName, context) { return Engine.Scripts.Run(scriptName, context || {}, 'api.RunScript');
-        },
-        RunHook: function (scriptName, context) { return Engine.Hooks.RunScript(scriptName, context || {}, 'api.RunHook');
         },
         SetScopedVariable: function (scopeType, objectId, name, value) { return Engine.ScopedVariables.Set(scopeType, objectId, name, value);
         },
@@ -2979,8 +3086,7 @@
         },
         TriggerKey:function (actor, zone) { return (actor.id||'actor')+':'+Engine.State.currentRoomId+':'+zone.id;
         },
-        RunTriggerScript:function (scriptName, context) { if (scriptName && Engine.CurrentGame && Engine.CurrentGame.scripts && Engine.CurrentGame.scripts[scriptName]) { Engine.CurrentGame.scripts[scriptName](Engine.API,context||{});
-            } else if (scriptName) { Engine.Debug.Warn('Geometry trigger references missing script "'+scriptName+'".');
+        RunTriggerScript:function (scriptName, context) { if (scriptName) { Engine.Scripts.Run(scriptName,context||{},'geometry trigger script '+scriptName);
             } },
         UpdateTriggers:function (actor) {
             actor=actor||Engine.State.player;
@@ -3129,7 +3235,7 @@
                     state.animationOnComplete=null;
                     if (cb && Engine.Lifecycle.IsCurrent(state.lifecycleToken)) { cb(result);
                     }
-                    if (Engine.Lifecycle.IsCurrent(state.lifecycleToken) && object.animationCompleteScripts && object.animationCompleteScripts[completedAnimation] && Engine.CurrentGame.scripts[object.animationCompleteScripts[completedAnimation]]) { Engine.CurrentGame.scripts[object.animationCompleteScripts[completedAnimation]](Engine.API,result);
+                    if (Engine.Lifecycle.IsCurrent(state.lifecycleToken) && object.animationCompleteScripts && object.animationCompleteScripts[completedAnimation]) { Engine.Scripts.Run(object.animationCompleteScripts[completedAnimation],result,'object animation complete script '+object.animationCompleteScripts[completedAnimation]);
                     } } });
         }
     };
@@ -3145,15 +3251,15 @@
             var fromRoomId=Engine.State.currentRoomId;
             var fromRoom=fromRoomId ? Engine.CurrentGame.rooms[fromRoomId] : null;
             var context={ fromRoomId:fromRoomId, toRoomId:roomId, fromRoom:fromRoom, toRoom:room, x:x, y:y, facing:facing, transition:options.transition||null, options:options };
-            var skipHooks=!!(options.skipHooks || options.skipOnEnter);
+            var skipHooks=!!options.skipHooks;
             if (!skipHooks) {
                 if (fromRoom && Engine.Hooks.RunGameHook('beforeRoomExit',context) === false) { return false;
                 }
-                if (fromRoom && Engine.Hooks.RunRoomHook(fromRoom,['beforeExit','onBeforeExit'],context,'room.beforeExit') === false) { return false;
+                if (fromRoom && Engine.Hooks.RunRoomHook(fromRoom,'beforeExit',context,'room.beforeExit') === false) { return false;
                 }
                 if (Engine.Hooks.RunGameHook('beforeRoomEnter',context) === false) { return false;
                 }
-                if (Engine.Hooks.RunRoomHook(room,['beforeEnter','onBeforeEnter'],context,'room.beforeEnter') === false) { return false;
+                if (Engine.Hooks.RunRoomHook(room,'beforeEnter',context,'room.beforeEnter') === false) { return false;
                 }
             }
             if (Engine.Dialogue && Engine.State.dialogue && Engine.State.dialogue.active) { Engine.Dialogue.Cancel();
@@ -3183,13 +3289,11 @@
             } this.PlaceFollowers();
             this.ApplyActorAvoidance();
             Engine.Assets.PlayMusic(room.music || []);
-            if (!options.skipOnEnter && room.onEnter && Engine.CurrentGame.scripts[room.onEnter]) { Engine.CurrentGame.scripts[room.onEnter](Engine.API);
-            }
             if (!skipHooks) {
-                if (fromRoom) { Engine.Hooks.RunRoomHook(fromRoom,['afterExit','onAfterExit'],context,'room.afterExit');
+                if (fromRoom) { Engine.Hooks.RunRoomHook(fromRoom,'afterExit',context,'room.afterExit');
                     Engine.Hooks.RunGameHook('afterRoomExit',context);
                 }
-                Engine.Hooks.RunRoomHook(room,['afterEnter','onAfterEnter'],context,'room.afterEnter');
+                Engine.Hooks.RunRoomHook(room,'afterEnter',context,'room.afterEnter');
                 Engine.Hooks.RunGameHook('afterRoomEnter',context);
             }
             return true;
@@ -3433,7 +3537,7 @@
                     }
                 } if (z.rect && PointInRect(p.x,p.y,z.rect)) { var context={ transition:z, fromRoomId:Engine.State.currentRoomId, toRoomId:z.targetRoomId||null, player:Engine.State.player };
                     if (Engine.Hooks.RunTransitionHook(z,'beforeTransition',context) === false) { return this.MakeTransitionState('blocked',z,context,Engine.ActionResults.Blocked({action:'transition',reason:'beforeTransitionCancelled',targetId:z.id||null,roomId:Engine.State.currentRoomId}));
-                    } if (z.script && Engine.CurrentGame.scripts[z.script]) { var scriptResult=Engine.CurrentGame.scripts[z.script](Engine.API,context);
+                    } if (z.script) { var scriptResult=Engine.Scripts.Run(z.script,context,'transition script '+z.script);
                         var state=Engine.State.mode==='ended' ? 'ended' : 'scripted';
                         var fallback=state==='ended' ? Engine.ActionResults.Ended({action:'transition',reason:'scriptEndedGame',targetId:z.id||null,roomId:Engine.State.currentRoomId}) : Engine.ActionResults.Transitioned({action:'transition',reason:'scriptedTransition',targetId:z.id||null,roomId:Engine.State.currentRoomId});
                         var result=Engine.ActionResults.Normalise(scriptResult,fallback);
@@ -3746,8 +3850,8 @@
                 Engine.Verbs.FinishCommand(command);
                 return;
             }
-            if (scriptName && Engine.CurrentGame.scripts[scriptName]) { var self=Engine.Entities.CreateFacade(target,Engine.Entities.DetectType(target),{context:context});
-                Engine.CurrentGame.scripts[scriptName](Engine.API, command, target, self);
+            if (scriptName) { var self=Engine.Entities.CreateFacade(target,Engine.Entities.DetectType(target),{context:context});
+                Engine.Scripts.RunWithArgs(scriptName,[Engine.API,command,target,self],'interaction script '+scriptName);
                 Engine.Verbs.FinishCommand(command);
                 return;
             }
@@ -3887,7 +3991,7 @@
             } var choice=d.options[index];
             var run=function () { if (choice.onSelect) { choice.onSelect(choice);
                     return;
-                } if (choice.script && Engine.CurrentGame.scripts[choice.script]) { Engine.CurrentGame.scripts[choice.script](Engine.API);
+                } if (choice.script) { Engine.Scripts.Run(choice.script,{},'dialogue choice script '+choice.script);
                 } };
             this.Clear();
             var playerLine=(typeof choice.playerText === 'string') ? choice.playerText : choice.text;
@@ -4079,7 +4183,7 @@ Engine.DialogueTrees = {
         }
         if (condition.missingItem) { return !Engine.Inventory.HasItem(condition.missingItem);
         }
-        if (condition.script && Engine.CurrentGame.scripts && Engine.CurrentGame.scripts[condition.script]) { return !!Engine.CurrentGame.scripts[condition.script](Engine.API,context||{});
+        if (condition.script) { return !!Engine.Scripts.Run(condition.script,context||{},'dialogue condition script '+condition.script);
         }
         if (condition.var) { return this.Compare(Engine.State.variables[condition.var],condition.op||'==',condition.value);
         }
@@ -4127,7 +4231,7 @@ Engine.DialogueTrees = {
             } else { self.ShowNode(treeId,nodeId||tree.start||'start',context);
             } };
         var applyPostResponse=function () { self.ApplyActions(choice.actions||choice.action,context);
-            if (choice.script && Engine.CurrentGame.scripts && Engine.CurrentGame.scripts[choice.script]) { Engine.CurrentGame.scripts[choice.script](Engine.API,context);
+            if (choice.script) { Engine.Scripts.Run(choice.script,context,'dialogue choice script '+choice.script);
             } self.ApplyActions(choice.postResponseActions||choice.postResponseAction,context);
             continueTree();
         };
@@ -4179,7 +4283,7 @@ Engine.DialogueTrees = {
         if (action.itemVar) { Engine.ScopedVariables.Set('item',action.itemVar[0],action.itemVar[1],value);
             return;
         }
-        if (action.script && Engine.CurrentGame.scripts && Engine.CurrentGame.scripts[action.script]) { Engine.CurrentGame.scripts[action.script](Engine.API,context||{});
+        if (action.script) { Engine.Scripts.Run(action.script,context||{},'dialogue action script '+action.script);
             return;
         }
         Engine.Debug.Warn('Unknown dialogue action: '+JSON.stringify(action));
@@ -4212,7 +4316,7 @@ Engine.InputPrompt = {
         Engine.State.inputPrompt=null;
         Engine.State.mode=previousMode;
         Engine.State.previousMode=null;
-        if (scriptName && Engine.CurrentGame.scripts && Engine.CurrentGame.scripts[scriptName] && Engine.Lifecycle.IsCurrent(token)) { Engine.CurrentGame.scripts[scriptName](Engine.API,{ value:value, target:target, result:result });
+        if (scriptName && Engine.Lifecycle.IsCurrent(token)) { Engine.Scripts.Run(scriptName,{ value:value, target:target, result:result },'input prompt script '+scriptName);
         }
         if (cb && Engine.Lifecycle.IsCurrent(token)) { cb(value,result);
         }
@@ -4439,7 +4543,7 @@ Engine.Cutscenes = {
         done(this.RunImmediateStep(step,type,previousResult));
     },
     RunImmediateStep: function (step, type, previousResult) {
-        if (type==='script') { if (step.script && Engine.CurrentGame.scripts && Engine.CurrentGame.scripts[step.script]) { return Engine.ActionResults.Normalise(Engine.CurrentGame.scripts[step.script](Engine.API,step,previousResult),Engine.ActionResults.Completed({action:'script',script:step.script}));
+        if (type==='script') { if (step.script) { return Engine.ActionResults.Normalise(Engine.Scripts.RunWithArgs(step.script,[Engine.API,step,previousResult],'cutscene script '+step.script),Engine.ActionResults.Completed({action:'script',script:step.script}));
             } return Engine.ActionResults.Cancelled({action:'script',reason:'missingScript',script:step.script});
         }
         if (type==='setFlag') { Engine.State.flags[step.name||step.flag]=!!step.value;
