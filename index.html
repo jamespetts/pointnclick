@@ -1313,6 +1313,8 @@
         pickup:{
             properties:{ interactions:function () { return { lookAt:'template:pickup.lookAt', take:'template:pickup.take' };
                 }, callbackResults:function () { return { blocked:{status:'blocked',reason:'pickupBlocked',continueCutscene:false}, completed:{status:'completed',reason:'pickupReached'} };
+                }, hidden:function (entity) { if (Engine.Properties.GetRaw(entity,'hideOnTake',true) === false) { return false;
+                    } return Engine.Entities.CreateFacade(entity,'object').GetBool('taken',false);
                 }, zIndex:function (entity) { return Engine.Properties.GetRaw(entity,'zIndex',10);
                 } },
             actions:{
@@ -2117,7 +2119,15 @@
         }
         Engine.Animations.ClearDialogueAnimation();
         Engine.State.dialogue = { active:false, speakerId:null, speakerName:'', text:'', displayText:'', timer:0, duration:0, explicitDuration:null, options:[], onComplete:null, voiceAudio:null, lifecycleToken:null, color:null, textBlocks:[], textBlockIndex:0 };
-        Engine.State.player = DeepClone(game.player);
+        Engine.State.player = DeepClone(game.player || {});
+        if (Engine.State.player.visible === undefined) { Engine.State.player.visible = true;
+        }
+        if (Engine.State.player.controllable === undefined) { Engine.State.player.controllable = true;
+        }
+        if (typeof Engine.State.player.speed !== 'number') { Engine.State.player.speed = 48;
+        }
+        if (!Engine.State.player.facing) { Engine.State.player.facing = 'down';
+        }
         Engine.State.player.roomId = game.startRoomId;
         Engine.State.player.walkTarget = null;
         Engine.State.player.walkPath = [];
@@ -2674,7 +2684,15 @@
             } return !!(Engine.Properties.Get(object,'hitDisabled',{purpose:'hitTest'},false) || Engine.Properties.Get(object,'disableHit',{purpose:'hitTest'},false) || Engine.Properties.Get(object,'interactionDisabled',{purpose:'hitTest'},false));
         },
         GetHitRect: function (object) { if (!object) { return null;
-            } return Engine.Properties.Get(object,'hitRect',{purpose:'hitTest'},Engine.Properties.Get(object,'rect',{purpose:'hitTest'},object.rect||null));
+            }
+            var rect=Engine.Properties.Get(object,'hitRect',{purpose:'hitTest'},Engine.Properties.Get(object,'rect',{purpose:'hitTest'},object.rect||null));
+            if (rect) { return rect;
+            }
+            if (object.spriteId && typeof object.x==='number' && typeof object.y==='number') { var hitW=object.hitW||object.rectW||16;
+                var hitH=object.hitH||object.rectH||16;
+                return {x:Math.round(object.x-hitW/2),y:Math.round(object.y-hitH),w:hitW,h:hitH};
+            }
+            return null;
         },
         SetAnimation: function (objectId, animationName, options) { options=options||{};
             var state=this.GetState(objectId);
@@ -2954,7 +2972,7 @@
         GetAvoidanceActors: function () { var room=this.GetCurrentRoom();
             if (!room) { return [];
             } var actors=[];
-            if (Engine.State.player.visible && !Engine.State.player.avoidanceDisabled) { actors.push({ actor:Engine.State.player, isPlayer:true, movable:false, radius:this.GetActorAvoidanceRadius(Engine.State.player,true) });
+            if (Engine.State.player.visible !== false && !Engine.State.player.avoidanceDisabled) { actors.push({ actor:Engine.State.player, isPlayer:true, movable:false, radius:this.GetActorAvoidanceRadius(Engine.State.player,true) });
             } (room.characters||[]).forEach(function (c) { if (c.hidden || c.avoidanceDisabled) { return;
                 } actors.push({ actor:c, isPlayer:false, movable:!c.avoidanceLocked, radius:Engine.Rooms.GetActorAvoidanceRadius(c,false) });
             });

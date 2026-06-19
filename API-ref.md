@@ -469,7 +469,7 @@ Hotspot/object fields read by the engine:
 - Identity/template: `id`, `name`, `displayName`, `template`, `templateId`, `kind`, `templates`, `itemId`.
 - Text/behaviour: `defaultText`, `description`, `interactions`, `refusals`, `properties`, getter maps, `callbackStatus`, `callbackResult`, `callbackResults`.
 - Rendering: `x`, `y`, `frameW`, `frameH`, `sprite`, `closedSprite`, `openSprite`, `emptySprite`, `fullSprite`, `onSprite`, `offSprite`, `animation`, `animations`, `animationCompleteScripts`.
-- Visibility/hit: `hidden`, `renderHidden`, `hitDisabled`, `disableHit`, `interactionDisabled`, `rect`, `hitRect`, `priority`, `hitPriority`, `zIndex`, `baseline`.
+- Visibility/hit: `hidden`, `renderHidden`, `hitDisabled`, `disableHit`, `interactionDisabled`, `rect`, `hitRect`, `priority`, `hitPriority`, `zIndex`, `baseline`, `hideOnTake` for pickup-template objects.
 - Movement/geometry: `walkTo`, `walkThrough`, `walkThroughTo`, `walkThroughPoint`, `blocksMovement`, `blocksWhenHidden`, `collisionShape`, `walkBehind`, `baseline`, `zIndex`, `triggerZones`, `onCollide`, `onBump`, `onStay`. Reserved/no-op in this engine version: `blocksActors`, `occluderShape`, `walkBoxes`, `blockers`, `walkBehinds`.
 
 Object geometry semantics:
@@ -764,7 +764,7 @@ Adds `lookAt`. Fields: `map`, `map.image`, `map.places`, `travelBlocked`, `trave
 
 ### `pickup`
 
-Adds `lookAt`, `take`. Fields: `itemId`, `hiddenFlag`, `takenFlag`, `takeText`, `onTake`. Runtime variable: `taken`. The take action sets object variable `taken=1` and sets `hiddenFlag` if present, otherwise `takenFlag` if present. Only `hiddenFlag` is automatically checked by the generic visibility path; if a pickup should disappear after taking, set `hiddenFlag` to the flag that take will set, or provide a `hidden` getter that checks `taken`/`takenFlag`.
+Adds `lookAt`, `take`. Fields: `itemId`, `hideOnTake`, `hiddenFlag`, `takenFlag`, `takeText`, `onTake`. Runtime variable: `taken`. The `take` action adds the linked item to inventory, sets object variable `taken=1`, and sets `hiddenFlag` if present, otherwise `takenFlag` if present. By default, pickup-template objects hide themselves after they have been taken because the template contributes an effective `hidden` value from the `taken` runtime variable. Use `hideOnTake:false`, an explicit `hidden:false` field, or a `hidden` getter only for exceptional pickup-like objects that should remain visible after being taken. `hiddenFlag` and `takenFlag` remain available for story flags, map logic, compatibility, or custom visibility patterns, but ordinary pickup objects do not need either field merely to disappear after `Take`.
 
 ### `container`
 
@@ -1254,7 +1254,7 @@ State storage guidance:
 
 Authoring checklist before validation:
 
-- Does each standard puzzle use the appropriate template before any custom script?
+- Does each standard puzzle use the appropriate template before any custom script? For ordinary world pickups, use `template:'pickup'` and rely on the default hide-after-take behaviour; add `hideOnTake:false` only when the world object should deliberately remain visible.
 - Does every mutable value that matters after save/load use a public saved-state API?
 - Are dynamic text, visibility, blocking, sprites, and available interactions represented as effective properties/getters rather than custom scripts where possible?
 - Are all branching conversations dialogue trees?
