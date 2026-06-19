@@ -111,6 +111,8 @@ Presentation:
 - `api.Narrate()`, descriptions, dialogue choices, and non-speaker text use the lower UI panel.
 - Dialogue/cutscenes block command UI while active.
 - Inventory is engine-owned, scrollable, and centrally hit-tested.
+- Text is rendered by the engine bitmap font. Supported glyphs are letters A-Z and a-z, digits, space, and common punctuation: `.`, `,`, `:`, `;`, `!`, `?`, `-`, `+`, `%`, `/`, `(`, `)`, `>`, `<`, `*`, `_`, `'`, and double quote. Unsupported glyphs render as `?`. Prefer plain ASCII text unless the engine is extended.
+- Actor `x`/`y` coordinates are foot/baseline points; actor sprites draw centred on `x` and above `y`. Hotspot/object `x`/`y` coordinates are top-left drawing coordinates.
 
 
 ## 2. Files, Manifest, Assets, and Registration
@@ -190,9 +192,14 @@ Asset size and image authoring constraints:
 
 - All image assets must be PNG files. Use transparency for character, object, inventory icon, and overlay elements that should not cover their rectangular bounds.
 - Room backgrounds and ordinary overlay/map images are drawn in the scene area and should be 320x136.
-- Title and ending backgrounds are drawn on the full canvas and should be 320x200.
+- Title and ending backgrounds are drawn on the full canvas and should be 320x200. The title/menu renderer then covers `y=136..199` with the menu/UI panel colour, so keep essential title art in `y=0..135` unless it is meant to be hidden by menus.
 - UI verb/inventory background is drawn at y=136 and should be 320x64.
 - Character and object animations are spritesheets. Each frame is `frameW` x `frameH` pixels, arranged left to right.
+- Character spritesheets use `frameW`/`frameH` cells. Directional sprites use rows in this order: down, left, right, up; animation `rowOffset` adds rows before the facing row is applied. Character `x`/`y` is the foot point, so leave transparent space above/around the figure as needed.
+- Object/hotspot spritesheets use row 0 only for ordinary object animation; object `x`/`y` is the top-left of the drawn frame. Ending animations may use `animation.row`.
+- Inventory icons are drawn in 21x21 inventory cells and are scaled down, not up, to `ui.inventoryIconMaxW`/`ui.inventoryIconMaxH`, default 16x16. Author icons at or below 16x16 unless intentionally relying on downscaling.
+- Ending animation images are PNG spritesheets in `objects/` because the engine resolves `ending.animation.image` with the hotspot/object image role.
+- Dynamic image constraint: the engine preloads only images referenced in documented image fields of the game definition. If a script, getter, template effect, or `SetObjectState` can ever switch to an image path, that path must also be referenced in a preloaded field such as `sprite`, `closedSprite`, `openSprite`, `emptySprite`, `fullSprite`, `onSprite`, `offSprite`, `worldSprite`, `icon`, overlay `image`, map `image`, or ending animation `image`. Otherwise the image may not render at runtime.
 
 Audio:
 
@@ -332,8 +339,8 @@ Room fields:
 - `name:string`, `displayName:string`.
 - `background:string`: PNG in `rooms/`; warned if missing.
 - `music:array`: room music source list; use an array, normally with one filename.
-- `start:{x:number,y:number,facing:string}`: content-defined default start point.
-- `playerStart:{x:number,y:number,facing:string}`: content pattern for scripts; room entry uses passed coordinates.
+- `start:{x:number,y:number,facing:string}`: content-defined default start point for authoring/scripts; the engine does not automatically apply it on room entry.
+- `playerStart:{x:number,y:number,facing:string}`: content pattern for scripts; room entry uses the current player coordinates unless `api.ChangeRoom()` or a transition zone passes target coordinates. Initial new-game position comes from `game.player.x/y/facing`.
 - `walkableArea:{x:number,y:number,w:number,h:number}`: broad validation and reachable-point area.
 - `walkBoxes:array`: walkable shapes; entries may be bare rectangles or objects with `shape`/`rect`; entries may use `links` or `connects` to build graph edges when explicit edges absent.
 - `blockers:array`: movement blockers; each may have `id`, `shape`, `rect`, `onCollide`, `onBump`.
@@ -474,7 +481,7 @@ Overlay spec fields:
 
 - `image:string`: PNG in `objects/`, normally 320x136.
 - `itemId:string` optional.
-- `hotspots:array` optional; overlay targets use `id`, `name`, `rect`, `interactions`, `refusals`, and other ordinary target fields.
+- `hotspots:array` optional; overlay targets use `id`, `name`, `rect`, `interactions`, `refusals`, and other ordinary target fields. Overlay targets are clicked only while the overlay is open; their ids do not place persistent room objects, but if they use object variables they still share the object-variable namespace for that id.
 
 Map item syntax:
 
@@ -494,7 +501,7 @@ items:{
 }
 EXAMPLE_END
 
-Map place fields: `id`, `name`, `rect`, `targetRoomId`, `targetX`, `targetY`, `targetFacing`, `description`, `defaultText`, `alwaysVisible`, `visibleFlag`, `hiddenFlag`, `blockedFlag`, `blockedScript`, `blockedText`, `script`.
+Map place fields: `id`, `name`, `rect`, `targetRoomId`, `targetX`, `targetY`, `targetFacing`, `description`, `defaultText`, `alwaysVisible`, `visibleFlag`, `hiddenFlag`, `blockedFlag`, `blockedScript`, `blockedText`, `script`. A place is shown only if `visibleFlag` is absent or true, `hiddenFlag` is absent or false, and either `alwaysVisible` is true, no `roomId`/`targetRoomId` is present, or the destination room has been visited. `blockedScript` is a getter-style script called with `(query,self,context)` and should return truthy when travel is blocked.
 
 Sprite syntax:
 
@@ -516,7 +523,7 @@ EXAMPLE_END
 
 Sprite fields: `image`, `frameW`, `frameH`, `directional`, `rows`, `animations`, `idleFrames`, `idleFps`, `walkFrames`, `walkFps`. `frameW` and `frameH` are required for actor spritesheets. Directional row order is down, left, right, up. An animation entry may define `frames`, `fps`, `frame`, `rowOffset`, and `directional:false`. For directional sprites, `rowOffset` is added before the facing row is applied. `talk` is used automatically by `api.Say()` if present.
 
-Actor/player/room character fields: `id`, `name`, `displayName`, `spriteId`, `x`, `y`, `facing`, `visible`, `hidden`, `controllable`, `speed`, `scale`, `scaleWithPerspective`, `perspectiveScale`, `fixedScale`, `followPlayer`, `dialogueColor`, `walkTo`, `rect`, `interactions`, `refusals`, effective property maps. Top-level `game.characters` supplies reusable character metadata such as names/dialogue colours and scoped-variable existence; NPCs that should appear, move, or be clicked must also be placed in `room.characters`.
+Actor/player/room character fields: `id`, `name`, `displayName`, `spriteId`, `x`, `y`, `facing`, `visible`, `hidden`, `controllable`, `speed`, `scale`, `scaleWithPerspective`, `perspectiveScale`, `fixedScale`, `followPlayer`, `dialogueColor`, `walkTo`, `rect`, `hitW`, `hitH`, `rectW`, `rectH`, `interactions`, `refusals`, effective property maps. Top-level `game.characters` supplies reusable character metadata such as names/dialogue colours and scoped-variable existence; NPCs that should appear, move, or be clicked must also be placed in `room.characters`. If a room character lacks `rect`, the engine derives it from `x`/`y` using `hitW`/`hitH` or `rectW`/`rectH`, default 16x16, with `x` centred and `y` as the foot point.
 
 
 ## 8. Interactions, Refusals, Effective Properties, and Getter API
@@ -569,6 +576,7 @@ Refusal lookup order:
 Use/Give:
 
 - `use` and `give` are two-target verbs: select inventory item, then click target.
+- Set effective property `transitiveUse:false` on a target/item when `Use` should run its own intransitive `use` interaction immediately instead of selecting it as the first object for `Use X with Y`. The `costume` and `openableBox` templates do this.
 - `exchange`/barter is Give-only.
 - True symmetric `Use X with Y` uses `combine`.
 - Target-specific tools use `toolTarget`.
@@ -688,11 +696,11 @@ Fields: `unlocks`, `unlockDoors`, `opens`, `targets`, `doorIds`, `objectIds`; st
 
 ### `map`
 
-Adds `lookAt`. Fields: `map`, `map.image`, `map.places`, `travelBlocked`, `travelBlockedText`.
+Adds `lookAt`. Fields: `map`, `map.image`, `map.places`, `travelBlocked`, `travelBlockedText`. Map places are rendered as overlay targets and use `walkTo` for travel and `lookAt` for descriptions. Places without `alwaysVisible` normally appear only after their target room has been visited.
 
 ### `pickup`
 
-Adds `lookAt`, `take`. Fields: `itemId`, `hiddenFlag`, `takenFlag`, `takeText`, `onTake`. Runtime variable: `taken`.
+Adds `lookAt`, `take`. Fields: `itemId`, `hiddenFlag`, `takenFlag`, `takeText`, `onTake`. Runtime variable: `taken`. The take action sets object variable `taken=1` and sets `hiddenFlag` if present, otherwise `takenFlag` if present. Only `hiddenFlag` is automatically checked by the generic visibility path; if a pickup should disappear after taking, set `hiddenFlag` to the flag that take will set, or provide a `hidden` getter that checks `taken`/`takenFlag`.
 
 ### `container`
 
@@ -989,11 +997,11 @@ Shows named ending from `game.endings`.
 
 #### `api.Save(slot?:string) -> undefined`
 
-Saves slot; default `'1'`.
+Saves slot; default `'1'`. The built-in menus expose slots 1..5. Saving is blocked unless a game is in ordinary play/menu-from-play state and no dialogue, cutscene, input prompt, or other modal sequence is active. Saves use browser `localStorage` and may fail if browser storage is unavailable or full.
 
 #### `api.Load(slot?:string) -> undefined`
 
-Loads slot; default `'1'`.
+Loads slot; default `'1'`. Loads only compatible saves for the same game id and engine API/save-data version. Loading bumps lifecycle guards and cancels stale deferred callbacks.
 
 
 ## 11. Lifecycle Hooks
@@ -1045,7 +1053,7 @@ dialogueTrees:{
 }
 EXAMPLE_END
 
-Tree fields: `speakerId`, `start`, `nodes`. Node fields: `speakerId`, `text`, `choices`.
+Tree fields: `speakerId`, `start`, `nodes`, `emptyText`. Node fields: `speakerId`, `text`, `choices`, `emptyText`. `emptyText` supplies a single closing choice when a node has no visible choices.
 
 Choice fields: `id`, `text`, `playerText`, `skipPlayerLine`, `speakerId`, `response`, `next`, `end`, `repeat`, `stay`, `hideAfterUse`, `condition`, `conditions`, `showIf`, `preAction`, `preActions`, `action`, `actions`, `script`, `postResponseAction`, `postResponseActions`.
 
@@ -1092,7 +1100,7 @@ Action forms:
 
 Unknown dialogue condition warns and returns true. Unknown action warns and does nothing.
 
-Text placeholders: `{{var:name}}`, `{{flag:name}}`, `{{room:roomId.name}}`, `{{character:characterId.name}}`, `{{item:itemId.name}}`, `{{playerName}}`.
+Text placeholders: `{{var:name}}`, `{{flag:name}}`, `{{room:roomId.name}}`, `{{character:characterId.name}}`, `{{item:itemId.name}}`, `{{playerName}}`. Bare `{{name}}` is also accepted as shorthand for global variable `name`.
 
 
 ## 13. Cutscenes
@@ -1118,7 +1126,7 @@ Supported step types:
 - `{type:'sequence',steps:[...]}`.
 - `{type:'parallel',steps:[...]}`.
 - `{type:'if',condition:condition,then:[...],else:[...]}`; accepts `conditions`; true branch may use `steps`.
-- `{type:'wait',duration:number}`; accepts `seconds`; units are seconds; zero/negative completes immediately.
+- `{type:'wait',duration:number}` or `{type:'wait',seconds:number}`; units are seconds; zero/negative completes immediately.
 - `{type:'say',speakerId:'actorId',text:'...',duration?:number,voice?:string}`; accepts `actorId`.
 - `{type:'narrate',text:'...',duration?:number,voice?:string}`.
 - `{type:'walk',x:number,y:number,targetId?:string}`.
@@ -1137,7 +1145,7 @@ Supported step types:
 
 Cutscene condition forms: array means all pass; `{flag:'flagName',value?:boolean}` means flag equals `value !== false`; `{notFlag:'flagName'}`; `{hasItem:'itemId'}`; `{missingItem:'itemId'}`. Other condition forms return true; use a script step for complex conditions.
 
-There is no built-in cutscene `changeRoom` step. Use a script step calling `api.ChangeRoom()`.
+There is no built-in cutscene `changeRoom` step. Use a script step calling `api.ChangeRoom()`. Unknown cutscene step types are skipped and treated as completed, so validation should catch typos before runtime.
 
 
 ## 14. Endings, UI, Save/Load, and Validation
@@ -1157,9 +1165,9 @@ endings:{
 }
 EXAMPLE_END
 
-Ending fields: `title`, `text`, `background`, `endBackground`, `music`, `endMusic`, `sound`, `sfx`, `animation`. `music`/`endMusic`/`sound`/`sfx` must be source-list arrays. If ending music is omitted, engine falls back to `game.endMusic`; use `music:[]` for silence. `animation` may be `{image,x,y,frameW,frameH,frames,fps,loop,row}`; supported shorthand fields are `animationImage`, `animationX`, `animationY`, `animationFrameW`, `animationFrameH`, `animationFrames`, `animationFps`, and `animationLoop`.
+Ending fields: `title`, `text`, `background`, `endBackground`, `music`, `endMusic`, `sound`, `sfx`, `animation`. `music`/`endMusic`/`sound`/`sfx` must be source-list arrays. If ending music is omitted, engine falls back to `game.endMusic`; use `music:[]` for silence. `animation` may be `{image,x,y,frameW,frameH,frames,fps,loop,row}`; supported shorthand fields are `animationImage`, `animationX`, `animationY`, `animationFrameW`, `animationFrameH`, `animationFrames`, `animationFps`, and `animationLoop`. Ending background images resolve under `rooms/` and should be 320x200; ending animation images resolve under `objects/` and are drawn at `x`/`y`, default centred near `y=24`, using horizontal frames and optional `row`.
 
-UI fields: `verbInventoryBackground`, `verbColor`, `verbSelectedColor`, `textColor`, `dialogueColor`. Rendering: `rendering.imageSmoothing` or top-level `imageSmoothing`.
+UI fields: `verbInventoryBackground`, `verbColor`, `verbSelectedColor`, `verbSelectedBackColor`, `verbSelectedUnderlineColor`, `verbShadowColor`, `commandTextColor`, `choiceTextColor`, `narrationTextColor`, `hoverTextColor`, `inventorySelectedBackColor`, `textColor`, `textShadowColor`, `dialogueTextColor`, `playerDialogueColor`, `panelColor`, `panelTopLineColor`, `inventoryIconMaxW`, `inventoryIconMaxH`. Rendering: `rendering.imageSmoothing` or top-level `imageSmoothing`.
 
 The engine owns save/load. Do not serialize custom state yourself. Use public flags/variables/scoped variables/object state APIs.
 
