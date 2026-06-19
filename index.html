@@ -1126,6 +1126,43 @@
         SayIfText:function (api, speakerId, text, options) { if (text===undefined || text===null || text==='') { if (options && options.onComplete) { options.onComplete(); } return; }
             if (speakerId) { api.Say(speakerId,String(text),options||{}); } else { api.Narrate(String(text),options||{}); }
         },
+        GetLinkedTarget:function (target) { if (!Engine.Interactions || !Engine.Interactions.GetLinkedInventoryTarget) { return null; }
+            return Engine.Interactions.GetLinkedInventoryTarget(target);
+        },
+        GetExplicitProperty:function (target, propertyName, context) {
+            if (!target) { return undefined; }
+            var raw=Engine.Properties.GetRaw(target,propertyName,undefined);
+            var getterValue=Engine.Properties.RunGetter(target,propertyName,context||{},raw);
+            if (getterValue !== undefined) { return getterValue; }
+            return raw;
+        },
+        GetOwnOrLinkedProperty:function (target, propertyName, context, defaultValue) {
+            var value=this.GetExplicitProperty(target,propertyName,context);
+            if (value !== undefined && value !== null && value !== '') { return value; }
+            var linked=this.GetLinkedTarget(target);
+            if (linked) {
+                value=Engine.Properties.Get(linked,propertyName,context||{},undefined);
+                if (value !== undefined && value !== null && value !== '') { return value; }
+            }
+            value=Engine.Properties.Get(target,propertyName,context||{},undefined);
+            if (value !== undefined && value !== null && value !== '') { return value; }
+            return defaultValue;
+        },
+        GetLookText:function (target, context, defaultValue) {
+            var text=this.GetExplicitProperty(target,'defaultText',context);
+            if (text === undefined || text === null || text === '') { text=this.GetExplicitProperty(target,'description',context); }
+            if (text !== undefined && text !== null && text !== '') { return text; }
+            var linked=this.GetLinkedTarget(target);
+            if (linked) {
+                text=Engine.Properties.Get(linked,'defaultText',context||{},undefined);
+                if (text === undefined || text === null || text === '') { text=Engine.Properties.Get(linked,'description',context||{},undefined); }
+                if (text !== undefined && text !== null && text !== '') { return text; }
+            }
+            text=Engine.Properties.Get(target,'defaultText',context||{},undefined);
+            if (text === undefined || text === null || text === '') { text=Engine.Properties.Get(target,'description',context||{},undefined); }
+            if (text !== undefined && text !== null && text !== '') { return text; }
+            return defaultValue;
+        },
         SayPair:function (api, firstSpeaker, firstText, secondSpeaker, secondText, done) { if (firstText!==undefined && firstText!==null && firstText!=='') { this.SayIfText(api,firstSpeaker,firstText,{onComplete:function () { Engine.Templates.SayIfText(api,secondSpeaker,secondText,{onComplete:done}); }}); return; }
             this.SayIfText(api,secondSpeaker,secondText,{onComplete:done});
         },
@@ -1243,7 +1280,7 @@
                 }
             },
             actions:{
-                lookAt:function (api,self,context) { api.Narrate(Engine.Properties.Get(context.target,'defaultText',context,'The door is unremarkable.'));
+                lookAt:function (api,self,context) { api.Narrate(Engine.Templates.GetLookText(context.target,context,'The door is unremarkable.'));
                 },
                 open:function (api,self,context) { var target=context.target;
                     if (self.GetBool('open',!!Engine.Properties.GetRaw(target,'open',false))) { api.Narrate(Engine.Properties.GetRaw(target,'alreadyOpenText','It is already open.'));
@@ -1318,7 +1355,7 @@
                 }, zIndex:function (entity) { return Engine.Properties.GetRaw(entity,'zIndex',10);
                 } },
             actions:{
-                lookAt:function (api,self,context) { api.Narrate(Engine.Properties.Get(context.target,'defaultText',context,context.target.defaultText || 'You see nothing special.'));
+                lookAt:function (api,self,context) { api.Narrate(Engine.Templates.GetLookText(context.target,context,'You see nothing special.'));
                 },
                 take:function (api,self,context) { var target=context.target;
                     var itemId=Engine.Properties.GetRaw(target,'itemId',target.id);
@@ -1349,7 +1386,7 @@
                 }
             },
             actions:{
-                lookAt:function (api,self,context) { api.Narrate(Engine.Properties.Get(context.target,'defaultText',context,'It is unremarkable.'));
+                lookAt:function (api,self,context) { api.Narrate(Engine.Templates.GetLookText(context.target,context,'It is unremarkable.'));
                 },
                 open:function (api,self,context) { var target=context.target;
                     if (self.GetBool('open',!!Engine.Properties.GetRaw(target,'open',false))) { api.Narrate(Engine.Properties.GetRaw(target,'alreadyOpenText','It is already open.'));
@@ -1400,7 +1437,7 @@
                 }
             },
             actions:{
-                lookAt:function (api,self,context) { api.Narrate(Engine.Properties.Get(context.target,'defaultText',context,'It is unremarkable.'));
+                lookAt:function (api,self,context) { api.Narrate(Engine.Templates.GetLookText(context.target,context,'It is unremarkable.'));
                 },
                 toggle:function (api,self,context) { var target=context.target;
                     var now=!self.GetBool('on',!!Engine.Properties.GetRaw(target,'on',false));
@@ -1424,10 +1461,12 @@
             properties:{ interactions:function () { return { lookAt:'template:readable.read', use:'template:readable.read' };
                 } },
             actions:{ read:function (api,self,context) { var target=context.target;
-                    var overlay=Engine.Properties.Get(target,'lookOverlay',context,Engine.Properties.Get(target,'closeupOverlay',context,null));
+                    var overlay=Engine.Templates.GetOwnOrLinkedProperty(target,'lookOverlay',context,null) || Engine.Templates.GetOwnOrLinkedProperty(target,'closeupOverlay',context,null);
                     if (overlay) { api.ShowOverlay(overlay);
                         return;
-                    } api.Narrate(Engine.Properties.GetRaw(target,'readText',Engine.Properties.Get(target,'defaultText',context,'There is nothing useful written there.')));
+                    } var text=Engine.Templates.GetOwnOrLinkedProperty(target,'readText',context,null);
+                    if (text === undefined || text === null || text === '') { text=Engine.Templates.GetLookText(target,context,'There is nothing useful written there.'); }
+                    api.Narrate(text);
                     Engine.Templates.RunOptionalScript(Engine.Properties.GetRaw(target,'onRead',null),self,context);
                 } }
         },
@@ -1436,7 +1475,7 @@
             properties:{ interactions:function () { return { lookAt:'template:device.lookAt', use:'template:device.use' };
                 } },
             actions:{
-                lookAt:function (api,self,context) { api.Narrate(Engine.Properties.Get(context.target,'defaultText',context,'It is a machine of some kind.'));
+                lookAt:function (api,self,context) { api.Narrate(Engine.Templates.GetLookText(context.target,context,'It is a machine of some kind.'));
                 },
                 use:function (api,self,context) { var target=context.target;
                     if (self.GetBool('used',false) && Engine.Properties.GetRaw(target,'singleUse',false)) { api.Narrate(Engine.Properties.GetRaw(target,'alreadyUsedText','It has already done what it can.'));
@@ -1495,7 +1534,7 @@
                     return rect ? rect.y+rect.h : Engine.Properties.GetRaw(entity,'y',0);
                 }
             },
-            actions:{ lookAt:function (api,self,context) { api.Narrate(Engine.Properties.Get(context.target,'defaultText',context,'It is an ordinary piece of furniture.'));
+            actions:{ lookAt:function (api,self,context) { api.Narrate(Engine.Templates.GetLookText(context.target,context,'It is an ordinary piece of furniture.'));
                 } }
         },
         barrier:{
@@ -1514,7 +1553,7 @@
                     return rect ? {rect:rect} : null;
                 }
             },
-            actions:{ lookAt:function (api,self,context) { api.Narrate(Engine.Properties.Get(context.target,'defaultText',context,'You cannot get past it.'));
+            actions:{ lookAt:function (api,self,context) { api.Narrate(Engine.Templates.GetLookText(context.target,context,'You cannot get past it.'));
                 } }
         }
 

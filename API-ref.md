@@ -62,7 +62,7 @@ An entity is anything the engine can query for properties or interactions: rooms
 
 A room object or hotspot is an entry in `room.hotspots`. It is both a clickable target and, when it has geometry, a possible movement/rendering participant. Its `id` is globally scoped because saved object state is keyed by object id across the whole game.
 
-An inventory item is an entry in `game.items`. It can be carried in inventory and can also act as an interaction target. A room object may link to an inventory item with `itemId` so world and carried forms can share text, refusals, and behaviour.
+An inventory item is an entry in `game.items`. It can be carried in inventory and can also act as an interaction target. A room object may link to an inventory item with `itemId` so world and carried forms can share text, refusals, and behaviour. By default, general Look At/readable text for a world object linked by `itemId` is resolved from the world object first and then from the linked inventory item; authors override the shared text by giving the world object its own `defaultText`, `description`, relevant getter, `readText`, `lookOverlay`, or `closeupOverlay`.
 
 An overlay target is a clickable target inside an overlay or map. Overlay targets use ordinary interaction ideas, but they exist only while the overlay is active.
 
@@ -652,6 +652,12 @@ Interaction key lookup:
 - For ordinary verbs, use the verb id, such as `lookAt` or `open`.
 - For inventory-on-target `use`/`give`, the engine first checks `verbId:inventoryItemId` on the target, then on the target's linked item, then checks the reverse key `verbId:targetId` on the selected inventory item, then on that selected item's linked item, then falls back to `verbId` on the target or linked item. Use these specific keys for one-off transitive interactions; use `combine` or `toolTarget` for reusable patterns.
 
+
+Linked item look/read inheritance:
+- For a room hotspot or character target with `itemId`, general Look At text is automatically shared with the linked inventory item by default. Resolution order is: explicit world target `defaultText` or `description`, including getter-provided values; linked inventory item `defaultText` or `description`; template-generated target `defaultText`; then the template or engine fallback text.
+- A game script overrides the shared text by defining `defaultText`, `description`, `propertyGetters`/`getters` for `defaultText`/`description`, `readText`, `lookOverlay`, or `closeupOverlay` on the world target.
+- Templates that provide general inspection behaviour, including `pickup`, `readable`, `device`, `furniture`, and `barrier`, must use this linked look/read resolution rather than reading only the clicked target. Stateful templates such as `door`, `container`, and `switch` may still generate state-specific text, but an explicit world override or linked inventory item text takes precedence when `itemId` linkage is present.
+
 Refusal lookup order:
 
 1. Target `refusals[verbId:inventoryItemId]` when applicable.
@@ -780,6 +786,8 @@ Shared puzzle rule fields: `requiresFlag`, `requiresItem`, `allowProperty`, `sou
 
 ### `door`
 
+Linked look text: `lookAt` uses the same linked look-text resolution before falling back to the door template's state text. Ordinary doors normally do not need `itemId`; this rule exists for consistency with linked world/inventory authoring.
+
 Adds `lookAt`, `open`, `close`, `use`, `walkTo`. Runtime object variables: `open`, `locked`. Initial values come from authored `open`/`locked` if the runtime variables are absent. Effective defaults: `defaultText` varies by open/locked state; `sprite` selects `openSprite` or `closedSprite`, falling back to `sprite`; `walkThrough` is true when open; `blocksMovement` is true when not open; `collisionShape` falls back to `rect`; `baseline` falls back to rect bottom or `y`. Doors control open/closed/blocking; room transitions are still transition zones.
 Fields: `locked`, `open`, `sprite`, `closedSprite`, `openSprite`, `rect`, `collisionShape`, `baseline`, `walkThroughTo`, `transitionAnimation`, `openAnimation`, `unlockAnimation`, `lockAnimation`, `onOpen`, `onClose`, `onUnlock`, `onLock`.
 Text fields: `openText`, `lockedText`, `unlockedText`, `closedText`, `alreadyOpenText`, `lockedOpenText`, `openActionText`, `alreadyClosedText`, `closeActionText`, `wrongKeyText`, `unlockText`, `lockText`, `closedWalkText`.
@@ -794,9 +802,13 @@ Adds `lookAt`. Fields: `map`, `map.image`, `map.places`, `travelBlocked`, `trave
 
 ### `pickup`
 
+Linked look text: `lookAt` uses linked item look-text resolution. The world object's explicit `defaultText`/`description` or getter wins; otherwise the linked inventory item's `defaultText`/`description` is used; otherwise the pickup fallback is used.
+
 Adds `lookAt`, `take`. Fields: `itemId`, `hideOnTake`, `hiddenFlag`, `takenFlag`, `takeText`, `onTake`. Runtime variable: `taken`. The `take` action adds the linked item to inventory, sets object variable `taken=1`, and sets `hiddenFlag` if present, otherwise `takenFlag` if present. By default, pickup-template objects hide themselves after they have been taken because the template contributes an effective `hidden` value from the `taken` runtime variable. Use `hideOnTake:false`, an explicit `hidden:false` field, or a `hidden` getter only for exceptional pickup-like objects that should remain visible after being taken. `hiddenFlag` and `takenFlag` remain available for story flags, map logic, compatibility, or custom visibility patterns, but ordinary pickup objects do not need either field merely to disappear after `Take`.
 
 ### `container`
+
+Linked look text: `lookAt` uses the same linked look-text resolution before falling back to the container template's state text. Ordinary containers normally do not need `itemId`; this rule exists for consistency with linked world/inventory authoring.
 
 Adds `lookAt`, `open`, `close`, `use`. Runtime object variables: `open`, `locked`, `emptied`. Initial `open`/`locked` values come from authored fields if runtime variables are absent. Effective defaults: `defaultText` varies by open/locked/emptied state; `sprite` selects `emptySprite`, `openSprite`, `closedSprite`, or `sprite`.
 Fields: `locked`, `open`, `contents` or `contains` (string or array of item ids), `sprite`, `closedSprite`, `openSprite`, `emptySprite`, `transitionAnimation`, `openAnimation`, `unlockAnimation`, `lockAnimation`, `onOpen`, `onClose`, `onUnlock`, `onLock`, `onEmpty`. Opening an unlocked unopened container sets `open=1`, adds all contents to inventory once, then sets `emptied=1` if contents were present.
@@ -804,15 +816,21 @@ Text fields: `emptyText`, `openText`, `lockedText`, `closedText`, `alreadyOpenTe
 
 ### `switch`
 
+Linked look text: `lookAt` uses the same linked look-text resolution before falling back to the switch template's on/off text. Ordinary switches normally do not need `itemId`; this rule exists for consistency with linked world/inventory authoring.
+
 Adds `lookAt`, `use`, `open`, `close`. Runtime object variable: `on`. Initial value comes from authored `on` if the runtime variable is absent. `use` toggles; `open` turns on; `close` turns off. Effective defaults: `defaultText` varies by on/off state; `sprite` selects `onSprite` or `offSprite`, falling back to `sprite`.
 Fields: `on`, `sprite`, `onSprite`, `offSprite`, `onToggle`, `onOn`, `onOff`.
 Text fields: `onText`, `offText`, `actionOnText`, `actionOffText`, `alreadyOnText`, `alreadyOffText`.
 
 ### `readable`
 
+Linked read/look text: for `itemId`-linked world readables, `lookOverlay`, `closeupOverlay`, `readText`, `defaultText`, and `description` resolve from explicit world values first, then linked item values. This lets the linked item supply ordinary close-up/read text while the world object can override it where needed.
+
 Adds `lookAt`, `use`. Fields: `readText`, `lookOverlay`, `closeupOverlay`, `onRead`, `defaultText`. If `lookOverlay` or `closeupOverlay` exists, reading shows the overlay and returns immediately; `onRead` is only run on the text-reading path. Without an overlay, the template narrates `readText`, falling back to effective `defaultText`.
 
 ### `device`
+
+Linked look text: `lookAt` uses linked item look-text resolution for `itemId`-linked world targets. Device operation fields such as `requiredItem`, `powerFlag`, and `successText` remain properties of the clicked target unless deliberately authored there or handled by a custom script.
 
 Adds `lookAt`, `use`. Runtime object variables: `used`, `fixed`. `use` refuses if `singleUse` is true and `used` is already true; then checks `powerFlag` if present, otherwise authored `powered` defaulting to true; then checks `requiredItem` when supplied; then may `consumeRequiredItem`, set `fixed`, set `used`, set `setsFlag`, narrate `successText`, and run `onUse`.
 Fields: `powered`, `powerFlag`, `requiredItem`, `consumeRequiredItem`, `setsFlag`, `fixedOnUse`, `singleUse`, `onUse`.
@@ -820,9 +838,13 @@ Text fields: `defaultText`, `alreadyUsedText`, `noPowerText`, `wrongItemText`, `
 
 ### `furniture`
 
+Linked look text: `lookAt` uses linked item look-text resolution for `itemId`-linked world targets.
+
 Adds `lookAt`. Defaults to `blocksMovement:true`, provides take/open/close refusals, and uses `callbackResults` for blocked movement. Fields: `rect`, `collisionShape`, `baseline`, `walkBehind`, `allowWalkBehindWithoutSprite`, `zIndex`, `defaultText`, `onCollide`, `onBump`, `sprite`. `walkBehind` defaults to true only when a sprite exists, unless `allowWalkBehindWithoutSprite:true` is set. `collisionShape` falls back to `rect`, then `x`/`y`/`frameW`/`frameH`. `baseline` falls back to collision bottom or `y`.
 
 ### `barrier`
+
+Linked look text: `lookAt` uses linked item look-text resolution for `itemId`-linked world targets.
 
 Adds `lookAt`. Defaults to `blocksMovement:true`, provides take/open/close refusals, and uses `callbackResults` for blocked movement. Fields: `rect`, `collisionShape`, `defaultText`, `onCollide`, `onBump`. `collisionShape` falls back to `rect`. Use `barrier` for invisible or simple blocking geometry; use `furniture` for visible foreground/background objects with walk-behind behaviour.
 
@@ -1287,7 +1309,7 @@ State storage guidance:
 
 Authoring checklist before validation:
 
-- Does each standard puzzle use the appropriate template before any custom script? For ordinary world pickups, use `template:'pickup'` and rely on the default hide-after-take behaviour; add `hideOnTake:false` only when the world object should deliberately remain visible. For ordinary terminals, switches, kiosks, levers, readers, devices, and other one-click objects, provide a plain `use` interaction and rely on inferred intransitive use; set `transitiveUse:true` only when the object is deliberately meant to be the first subject in Use X with Y.
+- Does each standard puzzle use the appropriate template before any custom script? For ordinary world pickups, use `template:'pickup'` and rely on the default hide-after-take behaviour; add `hideOnTake:false` only when the world object should deliberately remain visible. A linked pickup may rely on the linked inventory item's `defaultText`/`description` for general Look At text, but author a world `defaultText` when the in-world description should differ from the carried item description. For ordinary terminals, switches, kiosks, levers, readers, devices, and other one-click objects, provide a plain `use` interaction and rely on inferred intransitive use; set `transitiveUse:true` only when the object is deliberately meant to be the first subject in Use X with Y.
 - Does every mutable value that matters after save/load use a public saved-state API?
 - Are dynamic text, visibility, blocking, sprites, and available interactions represented as effective properties/getters rather than custom scripts where possible?
 - Are all branching conversations dialogue trees?
