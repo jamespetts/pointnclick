@@ -89,8 +89,7 @@ Fix all validator errors before deployment. Treat warnings as issues unless they
 
 ### 1. Write the GDD
 
-Copy `GDD-template.md` and fill in as much or as little as needed. At minimum, provide:
-
+Copy GDD-template.md and fill in as much or as little as needed. At minimum, provide:
 - title;
 - setting;
 - one-sentence premise or objective;
@@ -99,34 +98,199 @@ Copy `GDD-template.md` and fill in as much or as little as needed. At minimum, p
 
 Use `default` where the AI should decide and `none` where something must not appear. Copy the repeating blocks for rooms, characters, puzzles, objects, cutscenes, and endings as needed.
 
-### 2. Give the AI the authoring pack
+### 2. Choose the authoring mode
 
-For game-script authoring, give the AI:
+PointClickEngine supports two practical AI authoring modes:
 
-- `API-ref.md`;
+1. **Coding-harness authoring**, for tools such as Codex that can read and edit the repository, run commands, run validator.py, and iterate on failures.
+2. **Manual staged chat authoring**, for chat environments where the human must ask for one authoring stage at a time.
+
+Do not assume that a chat model will reliably manage the whole multi-stage process by itself. In manual staged chat authoring, use the prompts below. In coding-harness authoring, use AGENTS.md and the repository validation commands.
+
+### 3. Give the AI the authoring pack
+
+For ordinary game-script authoring, give the AI:
+- API-ref.md;
 - the completed GDD;
-- `validator.py` or the validator report format/instructions.
+- validator.py, or the validator report format/instructions.
 
-Do **not** give the AI `index.html` unless you are asking it to modify the engine itself. Game authors should use only the public API described in `API-ref.md`.
+Do **not** give the AI index.html unless you are asking it to modify the engine itself or to run validation that needs the engine file. Game authors should use only the public API described in API-ref.md.
 
-### 3. Ask the AI for the standard deliverables
+### 4. Manual staged chat authoring
 
-The AI should produce:
+Use this section when working in a chat interface where the AI cannot reliably maintain its own multi-step authoring state. Ask for one stage at a time. Do not ask for the whole game in one prompt.
 
-- implementation notes and assumptions;
-- a `games.json` entry or complete manifest;
-- `gameId/gameId.js`;
-- an asset manifest;
-- actual assets or exact placeholder specifications;
-- `style_reference_sheet.png` for consistent future asset generation, unless disabled by the GDD;
-- a puzzle dependency graph or walkthrough;
-- the validator command and report;
-- a runtime test plan.
+At every stage, provide the latest relevant files or outputs from previous stages. If the AI starts generating later-stage files too early, stop and repeat the current stage prompt.
 
-### 4. Validate and test
+#### Stage 1 prompt - intake and assumptions
 
-Run `validator.py`, fix all errors, then test in the browser. Human testing should cover:
+```text
+You are authoring a PointClickEngine game. Use API-ref.md and the completed GDD.
 
+For this reply only, perform Stage 1: intake and assumptions.
+
+Do not generate game code, assets, registry files, or package archives.
+
+Output:
+1. GDD summary.
+2. Missing or ambiguous information.
+3. Assumptions that let you proceed without changing the GDD's intent.
+4. Any engine-extension needs.
+5. A concise list of files you will need in later stages.
+
+End by saying whether I should ask for Stage 2 or answer clarification questions.
+```
+
+#### Stage 2 prompt - pre-implementation plan
+
+```text
+Proceed to Stage 2: pre-implementation plan.
+
+Do not generate game code, assets, registry files, or package archives.
+
+Using the Stage 1 assumptions and the GDD, output:
+1. Normalised design plan.
+2. Content-role and required-depth plan.
+3. Room graph.
+4. Puzzle dependency graph.
+5. Dialogue plan.
+6. Transition continuity matrix.
+7. Walkthrough command coverage matrix.
+8. Clue gradient audit.
+9. Functional visual legibility plan.
+10. State model.
+11. Registry strategy.
+12. Initial asset and audio requirements.
+
+End by asking me to approve the plan or request revisions.
+```
+
+#### Stage 3 prompt - revise the plan, if needed
+
+```text
+Revise the Stage 2 plan using these notes:
+
+[insert notes]
+
+Do not generate game code, assets, registry files, or package archives.
+
+Output only the revised sections and a short list of consequences for later stages.
+```
+
+If the Stage 2 plan is acceptable, skip this revision prompt and proceed to Stage 4.
+
+#### Stage 4 prompt - asset, visual, and audio planning
+
+```text
+The Stage 2 plan is approved. Proceed to Stage 4: asset, visual, and audio planning.
+
+Do not generate the game script yet.
+
+Output:
+1. Visual style brief.
+2. style_reference_sheet specification or generated style reference if available.
+3. Asset manifest with visual acceptance notes.
+4. Music cue manifest.
+5. Sound-effect manifest.
+6. Notes on any assets that cannot be generated in this environment.
+7. Exact instructions for replacing temporary silence or placeholder assets later.
+
+End by asking me to approve the asset/audio plan or request revisions.
+```
+
+#### Stage 5 prompt - implementation
+
+```text
+The Stage 2 plan and Stage 4 asset/audio plan are approved.
+
+Proceed to Stage 5: implementation generation.
+
+Generate the game script and any files/assets that this environment can actually produce.
+
+Rules:
+- Use unique filenames for generated files.
+- Do not generate replacement games.json or games.js unless I supplied the current files.
+- If binary image/audio generation is unavailable, create specifications or clearly labelled prototype assets only.
+- Use templates and declarative data before custom scripts.
+- Keep all mutable game state in public engine state or template runtime variables.
+
+Output downloadable files plus implementation notes.
+```
+
+#### Stage 6 prompt - validation and fixes
+
+```text
+Proceed to Stage 6: self-validation and quality/depth review.
+
+Use the exact files generated in Stage 5.
+
+Run or simulate the required validation as far as this environment allows:
+1. API-contract validation.
+2. Structural validator, if validator.py and index.html are available.
+3. Walkthrough command coverage check.
+4. Transition continuity check.
+5. Dialogue escape check.
+6. Linked item look/read check.
+7. Clue gradient check.
+8. Functional visual legibility check.
+9. Quality/depth review.
+10. Runtime test plan.
+
+If any issue is found, fix it before handoff and regenerate files with unique filenames.
+```
+
+#### Stage 7 prompt - handoff
+
+```text
+Proceed to Stage 7: handoff.
+
+Provide:
+1. Links to final generated files.
+2. Implementation notes.
+3. Asset/audio manifest.
+4. Walkthrough.
+5. Walkthrough command coverage matrix.
+6. Transition continuity matrix.
+7. Clue gradient audit.
+8. Functional visual legibility audit.
+9. Quality/depth validation report.
+10. Structural validation report.
+11. Runtime test plan.
+12. Registry snippets or merged registry files if I supplied the current registry.
+
+Do not claim that any validator or runtime test passed unless it was actually run.
+```
+
+### 5. Coding-harness authoring
+
+Use this mode with a repository-aware coding agent that can edit files and run commands. Place AGENTS.md at the repository root and ask the coding agent to follow it.
+
+A suitable coding-harness task is:
+
+```text
+Create a new PointClickEngine game from the completed GDD using API-ref.md.
+
+Follow AGENTS.md exactly.
+
+First create the authoring stage files in docs/authoring:
+- 01_intake.md
+- 02_plan.md
+- 03_asset_audio_plan.md
+
+Then generate the implementation under the new game folder only after those files exist.
+
+Run validator.py with the generated game and write the validation report.
+
+Fix all validator errors and any serious semantic issues listed in AGENTS.md before final handoff.
+
+Do not modify games.json or games.js unless those files are supplied and the task explicitly asks for a merge.
+```
+
+A coding harness can reduce the manual burden because it can create intermediate files, run validator.py, and iterate on failures. It still needs clear repository instructions, reliable validation commands, and review of the final game.
+
+### 6. Validate and test
+
+Run validator.py, fix all errors, then test in the browser. Human testing should cover:
 - every room transition;
 - all dialogue branches;
 - all inventory actions and combinations used by puzzles;
