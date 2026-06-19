@@ -4741,7 +4741,7 @@ Engine.Renderer = {
             } });
         (room.characters||[]).forEach(function (c) { if (!c.hidden) { drawables.push({type:'character',data:c,y:c.y,z:Engine.Geometry.GetDrawableZ(c)});
             } });
-        if (Engine.State.player.visible) { drawables.push({type:'player',data:Engine.State.player,y:Engine.State.player.y,z:Engine.Geometry.GetDrawableZ(Engine.State.player)});
+        if (Engine.State.player.visible !== false) { drawables.push({type:'player',data:Engine.State.player,y:Engine.State.player.y,z:Engine.Geometry.GetDrawableZ(Engine.State.player)});
         }
         drawables.sort(function (a,b) { return ((a.z||0)-(b.z||0)) || (a.y-b.y);
         });
