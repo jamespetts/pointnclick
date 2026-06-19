@@ -174,7 +174,8 @@
           the canonical target for followPlayer characters.
         - The intro, main menu and options screens are engine states, not game
           script loops. They use game-defined titleBackground, titleMusic and
-          author metadata. ESC opens the main menu during play. Audio failures
+          author metadata. ESC opens the main menu during play and resumes from
+          the main menu whenever Resume Game is available. Audio failures
           must fail silently so missing optional music or sound files do not
           produce crashes or boot errors.
         - Save/load uses browser localStorage through the central SaveLoad
@@ -207,7 +208,9 @@
           completion.
         - Secondary pointer activation, including right-click and option/alt-click,
           is always interpreted as Walk To in the scene, regardless of the selected
-          verb. Do not implement a second movement path for this shortcut.
+          verb. Middle-click is always interpreted as Look At for scene, overlay
+          and inventory targets, regardless of the selected verb. Do not implement
+          a second movement or inspection path for these shortcuts.
         - NPC followers are ordinary room characters with followPlayer:true. They
           are advanced from the single movement update path and are re-positioned
           by the room system when the player enters a new room. Do not create a
@@ -4634,7 +4637,7 @@ Engine.Input = {
             } return;
         }
         if (Engine.Overlays.IsActive() && p.y < UI_TOP) { var overlayTarget=Engine.Overlays.HitTest(p.x,p.y);
-            if (overlayTarget) { var overlayVerb=(event.button === 2 || event.altKey) ? 'walkTo' : Engine.State.selectedVerbId;
+            if (overlayTarget) { var overlayVerb=event.button === 1 ? 'lookAt' : ((event.button === 2 || event.altKey) ? 'walkTo' : Engine.State.selectedVerbId);
                 var overlayCommand=Engine.Interactions.BuildCommand(overlayVerb,overlayTarget.id,p.x,p.y);
                 overlayCommand.targetType='overlay';
                 Engine.Interactions.RunTargetInteraction(overlayCommand,overlayTarget);
@@ -4650,7 +4653,9 @@ Engine.Input = {
                 Engine.State.selectedInventoryItemId=null;
                 return;
             } var itemId=Engine.Inventory.GetItemAtPoint(p.x,p.y);
-            if (itemId) { if (Engine.State.selectedVerbId === 'use' || Engine.State.selectedVerbId === 'give') { if (Engine.State.selectedInventoryItemId) { Engine.Interactions.ResolveInventoryCommand(Engine.State.selectedVerbId,itemId,Engine.State.selectedInventoryItemId);
+            if (itemId) { if (event.button === 1) { Engine.Interactions.ResolveInventoryCommand('lookAt',itemId,null);
+                    return;
+                } if (Engine.State.selectedVerbId === 'use' || Engine.State.selectedVerbId === 'give') { if (Engine.State.selectedInventoryItemId) { Engine.Interactions.ResolveInventoryCommand(Engine.State.selectedVerbId,itemId,Engine.State.selectedInventoryItemId);
                         Engine.State.selectedInventoryItemId=null;
                     } else { Engine.State.selectedInventoryItemId=itemId;
                     } } else { Engine.Interactions.ResolveInventoryCommand(Engine.State.selectedVerbId,itemId,null);
@@ -4658,7 +4663,7 @@ Engine.Input = {
             } return;
         }
         var targetId=Engine.Interactions.HitTest(p.x,p.y);
-        var verbId=(event.button === 2 || event.altKey) ? 'walkTo' : Engine.State.selectedVerbId;
+        var verbId=event.button === 1 ? 'lookAt' : ((event.button === 2 || event.altKey) ? 'walkTo' : Engine.State.selectedVerbId);
         var command=Engine.Interactions.BuildCommand(verbId,targetId,p.x,p.y);
         Engine.Verbs.Execute(command);
         if (command.inventoryItemId && (verbId === 'use' || verbId === 'give')) { Engine.State.selectedInventoryItemId=null;
@@ -4731,6 +4736,9 @@ document.addEventListener('keydown', function (e) { if (Engine.State.mode === 't
         return;
     } if (e.key === 'Escape' && (Engine.State.mode === 'play' || Engine.State.mode === 'cutscene')) { e.preventDefault();
         Engine.Private.ShowMainMenu();
+        return;
+    } if (e.key === 'Escape' && Engine.State.mode === 'menu' && Engine.State.gameStarted) { e.preventDefault();
+        Engine.Private.ResumeGame();
         return;
     } if (e.key === 'Escape' && (Engine.State.mode === 'saveGame' || Engine.State.mode === 'loadGame' || Engine.State.mode === 'options')) { e.preventDefault();
         Engine.State.mode='menu';
