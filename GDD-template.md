@@ -64,12 +64,35 @@ Rooms the human specifically wants:
 - 
 Rooms the AI may invent: yes
 
+#### Density and worldbuilding expectations
+Density target: default
+Options: sparse / moderate / rich / very rich / AI decides
+Default for production-intent games: rich. Rooms should reward exploration with many examinable objects, readable details, visible doors or machines, optional jokes, worldbuilding, red herrings, and fair false leads.
+
+Red herring preference: default
+Options: none / few / many / lots / AI decides
+Default: many. Red herrings and wild-goose-chase elements may misdirect or suggest plausible but unproductive theories, but must not contradict critical-path information or make required actions appear impossible.
+
+Optional inspection style:
+Examples: lots of ambient Look At text / concise but dense / comic labels and signs / serious environmental storytelling / AI decides
+
+Non-progressing action style:
+Examples: support plausible ordinary uses of tools / give custom refusals for obvious experiments / allow harmless repeated actions / AI decides
+
+Worldbuilding density notes:
+
+
 COPY THIS ROOM BLOCK AS NEEDED
 Room name:
 Purpose in story/puzzles:
 Visual description:
 Mood/lighting/weather:
 Important hotspots/objects:
+Optional examinable scenery, props, signs, machinery, doors, or furniture:
+Red herrings or false leads desired here:
+Worldbuilding or thematic details to include:
+Subtle clue fragments that may appear here:
+Plausible non-progressing actions the player should be able to try here:
 Characters present:
 Exits/transitions:
 Puzzles or events here:
@@ -125,6 +148,8 @@ Location(s):
 Solution, if known:
 Required items/state/dialogue:
 Clues/signposts:
+Subtle clue fragments and where they might appear:
+Red herrings or false leads related to this puzzle:
 Wrong-action/refusal tone:
 Preferred template: default
 END PUZZLE BLOCK
@@ -137,8 +162,10 @@ World form: room object / inventory item / both / background hotspot
 Visual description:
 Where found:
 Uses:
+Plausible non-progressing uses or wrong-target interactions:
 Can combine with:
 Should persist/change state:
+Worldbuilding, clue, or red-herring role:
 Asset notes:
 END ITEM/OBJECT BLOCK
 
@@ -150,6 +177,10 @@ Dialogue choice style: concise player choices, distinctive NPC responses
 Required conversation topics:
 - 
 Information discoverable through dialogue:
+- 
+Subtle clue fragments to distribute through optional dialogue:
+- 
+False leads, rumours, misunderstandings, or unreliable NPC claims allowed:
 - 
 Recurring catchphrases or verbal motifs:
 - 

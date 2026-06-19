@@ -48,11 +48,70 @@ General quality and depth contract:
 - A valid package must not merely run; it must show production-intent design depth appropriate to the requested asset tier, genre, tone, and GDD. Structural validation is necessary but not sufficient.
 - Content parsimony means avoiding redundant systems, filler, duplicated state, and unnecessary branches. It does not mean reducing important rooms, characters, objects, puzzles, clues, descriptions, refusals, dialogue, endings, or visual/audio assets to the smallest technically valid representation.
 - For each authored element, first identify its content role: critical path gate, puzzle source, clue carrier, red herring, worldbuilding element, comic/tonal beat, characterisation beat, reward/payoff, tutorial, transition, ambience, or purely incidental detail. The depth of implementation must match that role.
+- A production-intent adventure game must feel dense enough to reward ordinary point-and-click play: looking at visible things, trying plausible verbs, talking to optional characters, revisiting rooms after state changes, and following false leads. The authoring AI must plan and implement substantial non-critical content as part of the game, not merely the shortest solution path.
+- Red herrings are required by default. A red herring is an interactable, examinable, readable, visible, or conversational element that does not directly solve the critical path but enriches the world, reinforces theme or humour, offers optional clue fragments, or suggests a plausible but ultimately unproductive line of thought. Red herrings must never contradict critical-path information, permanently mislead the player about required mechanics, create unwinnable states, or imply that an actually required action is impossible.
 - Critical path, puzzle-relevant, recurring, gatekeeping, companion, antagonist, or theme-bearing elements require state-aware authored depth unless the GDD explicitly says they should be terse, silent, abstract, or minimalist. Depth may be expressed through dialogue trees, effective-property text, refusals, environmental descriptions, cutscenes, audio/visual design, or puzzle affordances; choose the canonical engine mechanism for the content role.
 - Incidental elements may be concise, but they should still be specific to the game world and tone. Avoid generic first-draft text, interchangeable jokes, unexplained gates, single-line substitutes for major interactions, and content that satisfies only id/reference/path validation.
 - Important clues should normally be represented in more than one channel, such as object description, dialogue, refusal, post-failure hint, environmental signposting, or state change. Repetition should clarify without spoiling and should escalate only after player action or failure.
 - Major conversations should normally be dialogue trees rather than one-line talk scripts. A one-line talkTo script is appropriate only for incidental targets with no puzzle, clue, plot, theme, character, gatekeeping, trade, recruitment, or recurring function.
 - Before handoff, perform a depth review: identify the major content roles, state what each contributes, and revise any element whose implementation is merely functional when its role requires authored depth.
+
+
+## 2A. Room Density, Red Herrings, and Optional Interaction Budget
+
+Production-intent PointClickEngine games must be authored as explorable adventure-game worlds, not only as puzzle dependency graphs. The AI must budget optional density before implementation and must audit it before handoff.
+
+### Density budget defaults
+
+Unless the GDD explicitly requests minimalism, a production-intent game must meet these minimum density budgets:
+- Per ordinary room: at least 8 authored interactable or examinable elements, including critical objects, doors/exits, readable signs, machinery, furniture, scenery, red herrings, clue carriers, and ambience hotspots.
+- Per important hub, gate, puzzle, climax, or theme-heavy room: at least 12 authored interactable or examinable elements.
+- Per deliberately sparse, transitional, or small room: at least 5 authored interactable or examinable elements, unless the GDD explicitly requests a barren or minimalist space and the quality/depth report justifies the exception.
+- Across the whole game: at least half of all authored interactable or examinable elements should be non-critical-path content. This includes worldbuilding, red herrings, optional clues, optional jokes, characterisation beats, false-but-fair leads, readable background material, and plausible non-progressing interactions.
+- Across the whole game: include a substantial number of red herrings. As a default target, plan at least one red herring or false-but-fair lead per ordinary room and at least two in important hub, puzzle, or investigation rooms.
+- For each starting or frequently used inventory item: provide Look At text, a plausible intransitive Use response where appropriate, and several authored wrong-target or non-progressing responses for obvious experiments.
+- For each visible door, hatch, cabinet, machine, terminal, sign, poster, shelf, window, body of water, vehicle, unusual prop, or other prominent room feature: provide at least Look At/readable support unless deliberately hidden, purely decorative, or too small to be a meaningful target. Important doors and containers should normally support Open/Close or explain why those verbs do not apply.
+- Major NPCs should have optional topics beyond required puzzle information. Minor NPCs and background characters may be concise, but a production-intent game should include enough optional conversation to make dialogue discovery rewarding.
+
+These are minimums, not targets. A dialogue-heavy, investigation-heavy, comic, mystery, social, or worldbuilding-heavy GDD should exceed them. If the GDD gives a lower density requirement, obey the GDD but document the lower-density assumption in the quality/depth report.
+
+### Red herring fairness rules
+
+Red herrings and wild-goose-chase elements are valuable because they make the world feel larger than the solution path and allow players to reason, speculate, and be wrong without being punished. They must obey these rules:
+- A red herring may suggest a plausible but unnecessary action, topic, location, item use, or theory.
+- A red herring may contain a subtle clue, partial truth, thematic echo, joke, or misleading emphasis.
+- A red herring must not state false critical-path facts unless the game clearly frames the source as unreliable and supplies corrective evidence before the player is expected to act.
+- A red herring must not make a required solution appear impossible, immoral in a way the protagonist would reject, or mechanically unsupported.
+- A red herring must not consume irreplaceable critical items, permanently close off progress, or create an unwinnable state.
+- A red herring should normally have satisfying feedback when tried: a refusal, joke, small optional reward, worldbuilding detail, or clue clarification.
+- If a false lead is especially attractive, provide gentle correction through later clues, repeated refusals, or NPC comments so the player is not trapped in an unfair line of reasoning.
+
+### Room density plan
+
+Before implementation, the AI must produce a room density plan. For each room, identify:
+- room role: hub, gate, puzzle room, clue room, character room, red-herring room, reward room, transition, ambience, finale, or other;
+- critical-path elements;
+- non-critical examinable elements;
+- red herrings and false-but-fair leads;
+- clue fragments and the puzzles they support;
+- optional conversation or characterisation beats;
+- plausible non-progressing actions and refusals;
+- visible doors/exits and their inspection/open/close behaviour;
+- functional visual details that the room art must show.
+
+### Clue web and false-lead audit
+
+A clue gradient is required for each non-trivial puzzle, but production-intent games must also include a clue web. The clue web maps how players can learn, suspect, misinterpret, test, reject, and eventually confirm puzzle ideas. For each non-trivial puzzle, identify:
+- direct clues needed to solve it;
+- subtle clue fragments distributed through rooms, objects, dialogue, readables, refusals, and visual design;
+- optional clues that deepen or clarify without spoiling;
+- red herrings and false leads related to the same puzzle;
+- why each false lead is fair and how the game prevents it from contradicting the correct solution;
+- at least one plausible wrong attempt and its authored feedback.
+
+### Verb affordance budget
+
+The AI must not author objects only as tokens for required commands. For important objects and inventory items, plan an affordance budget covering the common verbs that players are likely to try. Use data-driven refusals where possible. A plausible non-progressing action should receive a game-specific response rather than a generic default refusal when the action is obvious in context, such as trying to use a tool for its ordinary purpose, open a visible door, read a sign, inspect a machine, or talk to a nearby character.
 
 ## 3. Glossary of Engine Concepts
 
@@ -1326,6 +1385,11 @@ Authoring checklist before validation:
 - Does every required walkthrough step map to an implemented command path with verb, source item where applicable, target, preconditions, effects, and early/incorrect-attempt feedback?
 - Do functional visual assets such as maps, diagrams, terminals, signs, closeups, and puzzle panels communicate their gameplay information visually rather than relying only on invisible hotspots?
 - Does each non-trivial puzzle have a clue gradient that avoids both missing clues and over-explicit solution statements before the player has earned or requested them?
+- Does every ordinary room meet the room density budget, and are any sparse-room exceptions explicitly justified by the GDD or quality/depth report?
+- Does the game contain abundant non-critical examinable content, including red herrings, fair false leads, thematic worldbuilding, optional clues, and ambient details?
+- Do red herrings avoid contradicting critical-path information, implying that required actions are impossible, or creating unfair wild-goose chases without corrective feedback?
+- Do starting and frequently used inventory items support plausible non-progressing actions, ordinary-purpose uses where appropriate, and authored wrong-target feedback?
+- Can the player visually inspect major visible doors, hatches, cabinets, machines, terminals, signs, windows, furniture, vehicles, and unusual props, even when they are not on the critical path?
 
 Validation workflow:
 
@@ -1337,8 +1401,11 @@ Validation workflow:
   - Transition continuity: every room transition must preserve adventure-game spatial logic. Each transition should have a visible or clearly implied exit affordance in the source room, a matching visible or implied arrival affordance in the destination room, and plausible targetX, targetY, and targetFacing values. Avoid exits that require walking into the fourth wall or toward the player unless the GDD intentionally establishes and visually signposts that convention. Re-entry should not contradict exit direction or place the player as if entering through an unrelated side of the destination room.
   - Walkthrough command coverage: every required walkthrough step must map to an implemented command path. For each step identify roomId, verbId, source item id if any, target id, implementation path such as direct interaction key or template rule, preconditions, state/inventory effects, early/incorrect-attempt feedback, and validation status. If a walkthrough says to use or give an item to a target, the implementation must include the corresponding transitive interaction path or template rule, not merely the item and target as separate objects.
   - Functional visual legibility: any image that carries gameplay information, including maps, diagrams, terminal screens, signs, labels, closeups, puzzle panels, overlays, UI-like screens, and clue images, must visually communicate its gameplay function at runtime size. Hotspots may augment these images, but invisible hotspot discovery must not be the only way to understand the graphic unless that is an intentional, signposted puzzle.
-  - Clue gradient: every non-trivial puzzle must have clueing that progresses from subtle setup, to clearer optional inspection/dialogue/refusal information, to post-failure or repeated-attempt hints where appropriate. Avoid both un-signposted solutions and premature solution statements. Explicit solution-level hints should normally appear only after relevant player action, failure, optional help, or late-game blocking.
-  - First-play dry run: dry-run the shortest intended path and at least one plausible wrong attempt per major puzzle. Confirm that movement, transitions, visible affordances, clue discovery, refusals, state changes, and payoffs make sense to a player who has not read the implementation.
+  - Room density: every ordinary room must meet the density budget or have a justified sparse-room exception. Check that non-critical examinable objects, ambient hotspots, visible door/object inspections, optional conversations, and plausible non-progressing actions are actually implemented, not merely listed in the plan.
+- Red-herring and false-lead fairness: every red herring or wild-goose-chase element must enrich the world or clue web without contradicting critical-path information, implying required actions are impossible, consuming irreplaceable critical resources, or leaving the player without corrective feedback.
+- Clue web: every non-trivial puzzle must distribute solution understanding across direct clues, subtle fragments, optional clues, refusals, visual signposting, dialogue, and fair false leads as appropriate. Confirm that players can learn how to solve puzzles through exploration rather than only by reading the walkthrough.
+- Clue gradient: every non-trivial puzzle must have clueing that progresses from subtle setup, to clearer optional inspection/dialogue/refusal information, to post-failure or repeated-attempt hints where appropriate. Avoid both un-signposted solutions and premature solution statements. Explicit solution-level hints should normally appear only after relevant player action, failure, optional help, or late-game blocking.
+  - First-play dry run: dry-run the shortest intended path, several optional exploration paths, and at least one plausible wrong attempt per major puzzle. Confirm that movement, transitions, visible affordances, clue discovery, refusals, state changes, and payoffs make sense to a player who has not read the implementation.
 4. Run validator when the validator and engine file are available. Ordinary authoring from the API and GDD alone must still perform API-contract self-validation, but must mark external validator execution as not run if those files are not supplied. For the canonical layout `gameId/gameId.js` with assets below `gameId/`, the validator infers `gameId/` as the asset root for existence checks:
 
 EXAMPLE_START
@@ -1386,11 +1453,14 @@ Required deliverables:
 8. Puzzle dependency graph or walkthrough: the shortest intended solution path, optional branches, failure/refusal paths, and all required inventory/state dependencies.
 - Walkthrough command coverage matrix: every required solution step, optional branch needed for completion, and critical failure/retry case mapped to roomId, verbId, source item id if any, target id, implementation path, preconditions, effects, refusal/early feedback, and coverage status.
 - Transition continuity matrix: every room-to-room transition with source room, visible/implied source affordance, destination room, visible/implied arrival affordance, targetX/targetY/targetFacing, direction-continuity notes, and any justified exception.
+- Room density plan and audit: every room with role, critical-path objects, non-critical examinable objects, red herrings, clue fragments, optional conversations, plausible non-progressing actions, visible door/object inspection support, and density-budget verdict.
+- Red-herring and false-lead audit: every red herring or wild-goose-chase element with its apparent implication, actual role, fairness notes, contradiction check, and feedback path.
 - Clue gradient audit: every non-trivial puzzle with required inference, clue channels, escalation triggers, post-failure hints, spoiler/overtness risk, and final verdict.
+- Clue web: every non-trivial puzzle with subtle clue fragments, optional clue sources, misleading-but-fair leads, corrective information, and plausible wrong-attempt feedback.
 - Functional visual legibility audit: every map, diagram, terminal, sign, closeup, puzzle panel, overlay, and UI-like image that carries gameplay information, with its gameplay reading, visible affordances/labels, hotspot relationship, and runtime-size readability verdict.
 9. Quality/depth validation report: a concise review of the major content roles, how each is supported by authored depth, and any deliberately terse/minimal elements with justification. This report must be completed before structural validator handoff.
 10. Validation report: API-contract self-validation results, and, when validator/engine files are available, the validator command used, including `--asset-root` if needed, and the resulting errors/warnings. If the external validator was not run because it was not supplied, say so explicitly and provide the command to run. Errors must be fixed before handoff. Warnings must be fixed or explicitly justified.
-- Runtime test plan: every room transition, dialogue branch, inventory action, walkthrough command, template puzzle, cutscene, save/load case, ending, custom script, visual readability check, functional map/overlay check, clue-gradient check, and plausible wrong-attempt feedback path that a human tester should exercise.
+- Runtime test plan: every room transition, dialogue branch, inventory action, walkthrough command, template puzzle, cutscene, save/load case, ending, custom script, visual readability check, functional map/overlay check, room-density check, red-herring fairness check, clue-web check, clue-gradient check, non-critical interaction check, and plausible wrong-attempt feedback path that a human tester should exercise.
 
 Output rules for game scripts:
 
@@ -1417,7 +1487,8 @@ The completed Game Design Document is the design source of truth. The authoring 
 6. Map the design to engine systems: rooms to `game.rooms`, room travel to `transitionZones`, standard object behaviour to templates, branching conversation to `dialogueTrees`, staged presentation to cutscenes, persistent state to public flags/variables/scoped variables/object variables, and endings to `game.endings`.
 - Build a transition continuity matrix before implementation: every planned room transition must identify the source affordance, destination affordance, target coordinates, facing, and any exception to ordinary adventure-game spatial logic.
 - Build a walkthrough command coverage matrix before implementation: every required solution step must be expressible as a concrete implemented command path, including verb, source item if any, target, preconditions, effects, and feedback for incorrect or early attempts.
-- Build a clue gradient audit before finalising puzzles: each non-trivial puzzle must have clue channels and escalation that are neither absent nor prematurely solution-giving.
+- Build a room density plan before implementation: each room must identify critical-path objects, non-critical examinable objects, red herrings, clue fragments, optional conversations, plausible non-progressing actions, and visible door/object inspection support.
+- Build a clue web and clue gradient audit before finalising puzzles: each non-trivial puzzle must have clue channels and escalation that are neither absent nor prematurely solution-giving, plus subtle clue fragments, optional clues, false-but-fair leads, and corrective information where needed.
 - Build a functional visual legibility audit for maps, diagrams, terminals, signs, closeups, puzzle panels, overlays, and UI-like images that carry gameplay information.
 7. Establish the visual contract before generating the full asset set: derive a concise art direction from the GDD and research, create `style_reference_sheet.png`, then use it to guide all runtime room, character, object, inventory, overlay, and UI assets.
 - Establish the audio plan before final script handoff: derive the music cue manifest from the GDD and room/cutscene/ending moods, map every room/screen/ending to a cue or intentional silence, and document any temporary silence caused only by missing binary audio files.
@@ -1460,7 +1531,7 @@ Stage 1 - Intake and assumptions:
 - Do not generate the game script, runtime assets, registry files, or package archives.
 
 Stage 2 - Pre-implementation plan:
-- Produce the normalized design plan, content-role/depth plan, room graph, puzzle dependency graph, dialogue plan, transition continuity matrix, walkthrough command coverage matrix, clue gradient audit, functional visual legibility plan, state model, registry strategy, and initial asset/audio requirements.
+- Produce the normalized design plan, content-role/depth plan, room density plan, red-herring and false-lead plan, clue web, room graph, puzzle dependency graph, dialogue plan, transition continuity matrix, walkthrough command coverage matrix, clue gradient audit, functional visual legibility plan, verb affordance plan, state model, registry strategy, and initial asset/audio requirements.
 - The plan must identify major content roles and required depth before implementation.
 - Do not generate the game script, runtime assets, registry files, or package archives.
 
@@ -1569,7 +1640,8 @@ For serious games, keep jokes sparse or absent and use atmosphere, mystery, musi
 - Plot shape -> room order, puzzle dependency graph, cutscenes, dialogue reveals, and endings.
 - Room graph and navigation logic -> transition continuity matrix, visible exit/arrival affordances, target positions, and facing values that match adventure-game spatial expectations.
 - Walkthrough solution steps -> concrete command coverage matrix mapping each step to implemented verb/source/target paths, state effects, and failure feedback.
-- Clue design -> clue gradient audit balancing subtle setup, optional hints, post-failure feedback, and avoiding premature solution statements.
+- Clue design -> clue web and clue gradient audit balancing subtle setup, optional hints, red herrings, fair false leads, post-failure feedback, and avoiding premature solution statements.
+- Room/world density -> room density plan, red-herring audit, non-critical interaction plan, optional examinable objects, visible door/object inspection support, and plausible non-progressing verb responses.
 - Functional visual assets -> visible information design for maps, diagrams, terminals, signs, overlays, and closeups, with hotspots matching visible affordances.
 - Room count/range -> number of `rooms`, room graph, transition zones, and map design if needed.
 - Main characters -> `game.characters`, room placements, sprites, dialogue trees, dialogue colours, interaction/refusal text, and state variables.
@@ -1618,7 +1690,7 @@ The GDD template intentionally contains only game-specific design choices. Apply
 - Where the AI authoring the game cannot produce music itself, inform the human of this and give the human style prompts in 1,000 characters or less for an AI music generator for each piece of music required, specifying the file name that the resulting music from each style prompt should have.
 - Cutscene default: extra AI-added cutscenes should be limited to intro, major reveal, puzzle completion, and ending moments unless the GDD allows for more.
 - Technical default: standard engine save/load only; custom scripts only when templates, dialogue trees, cutscenes, and effective properties cannot express the behaviour.
-- Quality/depth default: production-quality first pass for content as well as assets. Major content roles require state-aware, game-specific authored depth; concise treatment is acceptable only for incidental elements or when the GDD intentionally asks for minimalism.
+- Quality/depth default: production-quality first pass for content as well as assets. Major content roles require state-aware, game-specific authored depth; concise treatment is acceptable only for incidental elements or when the GDD intentionally asks for minimalism. Ordinary rooms must still meet the density budget by default; production-intent games require abundant optional examinable content, red herrings, fair false leads, thematic worldbuilding, and plausible non-progressing interactions.
 - Asset default: create all needed runtime assets as a production-quality first pass. If binary image generation is unavailable, provide exact replacement specifications and label the package as not visually production-ready.
 - Style-reference default: create `style_reference_sheet.png` first, before the full runtime asset set, unless the GDD explicitly disables image generation or the human explicitly disables the style-reference workflow.
 
