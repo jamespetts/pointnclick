@@ -42,10 +42,10 @@ PointClickEngine.RegisterGame({
             },
             transitionZones: [
                 { id: 'toStoreRoom', rect: { x: 0, y: 86, w: 14, h: 48 }, targetRoomId: 'storeRoom', targetX: 300, targetY: 112, targetFacing: 'left' },
-                { id: 'throughDoor', rect: { x: 258, y: 86, w: 28, h: 24 }, enabledFlag: 'doorOpen', script: 'endThroughDoor' }
+                { id: 'throughDoor', rect: { x: 258, y: 86, w: 28, h: 24 }, enabledObjectId: 'door', enabledProperty: 'open', script: 'endThroughDoor' }
             ],
             hotspots: [
-                { id: 'door', name: 'door', template: 'door', locked: true, propertyGetters: { callbackResult: 'doorCallbackResult' }, rect: { x: 250, y: 31, w: 45, h: 56 }, x: 248, y: 30, closedSprite: 'door_opening_animation_v1.png', openSprite: 'door_opening_animation_v1.png', frameW: 48, frameH: 58, animation: 'closed', transitionAnimation: 'open', animations: { closed: { frame: 0, frames: 1 }, open: { frames: 4, fps: 5, loop: false } }, walkTo: { x: 270, y: 114 }, walkThroughTo: { x: 270, y: 86 }, lockedText: 'The door is locked. A small keyhole glints in the dim light.', unlockedText: 'The door is unlocked. It now awaits the rare and specialised operation known as opening.', openText: 'The door is open. Beyond it lies the end of the test, which is unusually literal.', lockedOpenText: 'It will not open. The lock is making a persuasive argument.', openActionText: 'The door creaks open.', closeActionText: 'The door closes with a modest wooden thunk.', alreadyOpenText: 'The door is already open. The corridor is available for walking through.', alreadyClosedText: 'The door is already closed.', unlockText: 'The key turns with a satisfying click. The door is now unlocked.', lockText: 'The key turns back with a small, unnecessary click. The door is locked again.', wrongKeyText: 'You do not have the right key.', closedWalkText: 'The door is closed. Walking through it would be poor form, and probably sore.', onOpen: 'doorTemplateOpened', onClose: 'doorTemplateClosed' },
+                { id: 'door', name: 'door', template: 'door', locked: true, propertyGetters: { callbackResult: 'doorCallbackResult' }, rect: { x: 250, y: 31, w: 45, h: 56 }, x: 248, y: 30, closedSprite: 'door_opening_animation_v1.png', openSprite: 'door_opening_animation_v1.png', frameW: 48, frameH: 58, animation: 'closed', transitionAnimation: 'open', animations: { closed: { frame: 0, frames: 1 }, open: { frames: 4, fps: 5, loop: false } }, walkTo: { x: 270, y: 114 }, walkThroughTo: { x: 270, y: 86 }, lockedText: 'The door is locked. A small keyhole glints in the dim light.', unlockedText: 'The door is unlocked. It now awaits the rare and specialised operation known as opening.', openText: 'The door is open. Beyond it lies the end of the test, which is unusually literal.', lockedOpenText: 'It will not open. The lock is making a persuasive argument.', openActionText: 'The door creaks open.', closeActionText: 'The door closes with a modest wooden thunk.', alreadyOpenText: 'The door is already open. The corridor is available for walking through.', alreadyClosedText: 'The door is already closed.', unlockText: 'The key turns with a satisfying click. The door is now unlocked.', lockText: 'The key turns back with a small, unnecessary click. The door is locked again.', wrongKeyText: 'You do not have the right key.', closedWalkText: 'The door is closed. Walking through it would be poor form, and probably sore.' },
                 { id: 'introDust', name: 'dust', sprite: 'intro_dust_puff_20260618.png', rect: { x: 260, y: 82, w: 16, h: 16 }, x: 260, y: 82, frameW: 16, frameH: 16, animation: 'idle', hidden: true, renderHidden: false, hitDisabled: true, zIndex: 20, animations: { idle: { frame: 0, frames: 1 }, puff: { frames: 4, fps: 8, loop: false } }, animationCompleteScripts: { puff: 'introDustComplete' } },
                 { id: 'chair', name: 'chair', template: 'furniture', sprite: 'chair_furniture_sprite_20260618_2230.png', rect: { x: 106, y: 82, w: 24, h: 30 }, x: 106, y: 82, frameW: 24, frameH: 30, walkTo: { x: 118, y: 118 }, collisionShape: { rect: { x: 109, y: 106, w: 18, h: 8 } }, baseline: 114, defaultText: 'A small wooden chair. It looks serviceable, if not urgently relevant.', refusals: { use: 'There is no time to sit down now.' } }
             ],
@@ -114,7 +114,7 @@ PointClickEngine.RegisterGame({
                             id: 'askKeyWithCoin',
                             text: 'Will you trade this coin for a key?',
                             conditions: [ { hasItem: 'coin' }, { missingItem: 'key' } ],
-                            actions: [ { removeItem: 'coin' }, { addItem: 'key' }, { script: 'caretakerLeavesAfterTrade' } ],
+                            actions: [ { script: 'tradeCoinForKey' }, { script: 'caretakerLeavesAfterTrade' } ],
                             response: 'A fair trade. Here is the key.',
                             end: true
                         },
@@ -171,9 +171,7 @@ PointClickEngine.RegisterGame({
                     { steps:[ { type:'setAnimation', actorId:'caretaker', animation:'talk' }, { type:'wait', duration:0.18 }, { type:'sound', sources:['door_close.mp3'] }, { type:'wait', duration:0.32 }, { type:'clearAnimation', actorId:'caretaker' } ] }
                 ] },
                 { type:'clearAnimation', actorId:'caretaker' },
-                { type:'setObjectState', objectId:'door', values:{ open:false, locked:true, animation:'closed' } },
-                { type:'setFlag', name:'doorOpen', value:false },
-                { type:'setObjectVariable', objectId:'door', name:'introClosedCount', value:1 },
+                { type:'setObjectState', objectId:'door', values:{ open:false, locked:true, animation:'closed' } },{ type:'setObjectVariable', objectId:'door', name:'introClosedCount', value:1 },
                 { type:'setObjectVariable', objectId:'door', name:'introLockChecked', value:1 },
                 { type:'say', speakerId:'caretaker', text:'There. Locked again. We cannot have doors getting ideas.', duration:1.8 },
                 { type:'moveCharacter', actorId:'caretaker', x:190, y:116, speed:38 },
@@ -208,10 +206,8 @@ PointClickEngine.RegisterGame({
         },
         introDustMissingFailure: function (api) { return api.MakeActionResult('blocked', { action:'script', reason:'introDustDidNotComplete', continueCutscene:false }); },
         lookCoin: function (api) { api.Narrate('It is a small brass coin. Adventure game law says you should probably take it, now that you have won the preliminary contest of noticing it.'); },
-        doorTemplateOpened: function (api) { api.SetFlag('doorOpen', true); },  
-        doorTemplateClosed: function (api) { api.SetFlag('doorOpen', false); },
         completeTestGame: function (api) { api.EndGame('Test Complete', 'You have completed the test game, negotiated its tiny economy, opened the locked door, and walked through it. Somewhere, a test harness nods approvingly.'); },
-        endThroughDoor: function (api) { api.RunHook('completeTestGame'); },
+        endThroughDoor: function (api) { api.RunScript('completeTestGame'); },
         mapTravelBlocked: function () { return false; },    
         doorCallbackResult: function (query, self, context) { var result=context.result||{}; if (result.status==='completed' && context.command && context.command.verbId==='walkTo') { return { status:'completed', reason:self.GetBool('open',false) ? 'openDoorApproachReached' : 'closedDoorApproachReached', reached:true, continueCutscene:true }; } return result; },
         tableCallbackResult: function (query, self, context) { var result=context.result||{}; if (result.status==='blocked') { return { status:'blocked', reason:query.GetFlag('bumpedTable') ? 'tableStillBlocked' : 'tableFirstBlocked', message:query.GetFlag('bumpedTable') ? 'The table remains stoutly in the way.' : 'The table blocks your route.', continueCutscene:false }; } return result; },
@@ -225,6 +221,7 @@ PointClickEngine.RegisterGame({
         useCoinWithKey: function (api) { api.Narrate('The coin and the key decline to become a more complicated currency system.'); },
         talkCaretaker: function (api) { api.StartDialogue('caretakerTalk'); },
         caretakerLeavesAfterTrade: function (api) { api.MoveCharacter('caretaker', 332, 116, { speed: 42, hideOnComplete: true }); },
-        giveCoinToCaretaker: function (api) { if (api.HasItem('coin')) { api.RemoveItem('coin'); api.AddItem('key'); api.Say('caretaker', 'A fair trade. Here is the key.', { onComplete: function () { api.MoveCharacter('caretaker', 332, 116, { speed: 42, hideOnComplete: true }); } }); } else { api.Say('caretaker', 'You appear to be short of coin.'); } }
+        tradeCoinForKey: function (api, options) { options=options||{}; if (!api.HasItem('coin')) { if (options.sayShortOfCoin) { api.Say('caretaker', 'You appear to be short of coin.'); } return false; } api.RemoveItem('coin'); api.AddItem('key'); return true; },
+        giveCoinToCaretaker: function (api) { if (api.RunScript('tradeCoinForKey', { sayShortOfCoin:true }) !== false) { api.Say('caretaker', 'A fair trade. Here is the key.', { onComplete: function () { api.RunScript('caretakerLeavesAfterTrade'); } }); } }
     }
 });

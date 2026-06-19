@@ -80,7 +80,10 @@
           the verb and inventory controls; dialogue choices and narration still use
           the lower UI panel. Non-speaker narration and object descriptions,
           including Look At responses, are rendered in the lower UI panel so that
-          they cannot run off the scene area or obscure characters. Future scripts
+          they cannot run off the scene area or obscure characters. During cutscenes,
+          the lower command UI is blocked in the same visual manner as during
+          actor-spoken dialogue, so verbs and inventory cannot appear active while
+          the player is not in control. Future scripts
           should use api.Say(...) for spoken character dialogue and api.Narrate(...)
           for descriptive interface text.
         - Dialogue choices are selected from the lower UI panel, but a chosen line
@@ -93,6 +96,9 @@
           with game.defaultRefusals. Object refusals take precedence over game
           refusals, which take precedence over engine defaults.
         - Room transitions are data-defined by each room's transitionZones array.
+          Door templates do not own room transitions; doors only expose open/closed
+          state, collision, animation and walk-through permission. The transition
+          zone remains the canonical authority for changing rooms or ending the game.
           Transition checks run through the room system and are triggered from the
           single movement update path when the canonical player position enters a
           zone. Game scripts must not implement their own movement or transition
@@ -101,9 +107,13 @@
           set walkThrough:true and walkThroughTo:{x,y} on that object. For Walk To
           only, the interaction dispatcher then walks to that through-point instead
           of the object's ordinary approach point; other verbs such as Open and
-          Close still use walkTo as normal. A walkTo interaction script may still
-          decide whether passage is allowed, while transition zones remain the
-          canonical way to perform the room change or ending.
+          Close still use walkTo as normal. A transition zone may set
+          enabledObjectId:'doorId' and enabledProperty:'open' to read the object's
+          template-backed variable state, so an open door can enable a canonical
+          transition without duplicating a separate global flag. A walkTo
+          interaction script may still decide whether passage is allowed, while
+          transition zones remain the canonical way to perform the room change or
+          ending.
         - Inventory items are also interaction targets. Single-target inventory
           actions such as Look At, Open and Close go through the same interaction
           dispatcher as world objects. Use and Give remain two-target verbs: first
@@ -168,7 +178,9 @@
           must fail silently so missing optional music or sound files do not
           produce crashes or boot errors.
         - Save/load uses browser localStorage through the central SaveLoad
-          system. Saves must capture the canonical game state, including room,
+          system. Saving is deliberately allowed only during ordinary play and from
+          the normal play menu; it is blocked during dialogue, cutscenes, input
+          prompts and modal sequences. Saves must capture the canonical game state, including room,
           player, inventory, flags, variables, object/room/character states and
           mutable runtime room characters. Menus list compatible saved games and
           show clear default text when no saved games are available. Save data has
@@ -408,7 +420,7 @@
         audio: { musicVolume: 0.25, sfxVolume: 0.75, musicMuted: false, sfxMuted: false },
         dialogue: { active: false, speakerId: null, speakerName: '', text: '', displayText: '', timer: 0, duration: 0, explicitDuration: null, options: [], onComplete: null, voiceAudio: null, lifecycleToken: null, color: null, textBlocks: [], textBlockIndex: 0 },
         player: { id: 'player', roomId: null, x: 80, y: 112, facing: 'down', animation: 'idleDown', visible: true, controllable: true, speed: 48, walkTarget: null, walkPath: [], walkCallback: null, spriteId: null, scale: 1 },
-        lifecycle: { sessionId: 0, roomId: 0, commandId: 0, dialogueId: 0, cutsceneId: 0, movementId: 0, characterMoveId: 0, objectAnimationId: 0 },
+        lifecycle: { sessionId: 0, roomId: 0, commandId: 0, dialogueId: 0, cutsceneId: 0, movementId: 0, characterMoveId: 0, objectAnimationId: 0, characterMoveIds: {}, objectAnimationIds: {} },
         debug: false
     };
 
@@ -583,6 +595,10 @@
                 if (typeof l[name] !== 'number') { l[name]=0;
                 }
             });
+            if (!l.characterMoveIds || typeof l.characterMoveIds !== 'object') { l.characterMoveIds={};
+            }
+            if (!l.objectAnimationIds || typeof l.objectAnimationIds !== 'object') { l.objectAnimationIds={};
+            }
             return l;
         },
         Capture: function (options) {
@@ -599,9 +615,11 @@
             }
             if (options.movement) { token.movementId=l.movementId;
             }
-            if (options.characterMove) { token.characterMoveId=l.characterMoveId;
+            if (options.characterMove) { token.characterId=options.characterId||options.actorId||null;
+                token.characterMoveId=token.characterId ? (l.characterMoveIds[token.characterId]||0) : l.characterMoveId;
             }
-            if (options.objectAnimation) { token.objectAnimationId=l.objectAnimationId;
+            if (options.objectAnimation) { token.objectId=options.objectId||options.targetId||null;
+                token.objectAnimationId=token.objectId ? (l.objectAnimationIds[token.objectId]||0) : l.objectAnimationId;
             }
             return token;
         },
@@ -621,9 +639,13 @@
             }
             if (Object.prototype.hasOwnProperty.call(token,'movementId') && token.movementId !== l.movementId) { return false;
             }
-            if (Object.prototype.hasOwnProperty.call(token,'characterMoveId') && token.characterMoveId !== l.characterMoveId) { return false;
+            if (Object.prototype.hasOwnProperty.call(token,'characterMoveId')) { var cm=token.characterId ? (l.characterMoveIds[token.characterId]||0) : l.characterMoveId;
+                if (token.characterMoveId !== cm) { return false;
+                }
             }
-            if (Object.prototype.hasOwnProperty.call(token,'objectAnimationId') && token.objectAnimationId !== l.objectAnimationId) { return false;
+            if (Object.prototype.hasOwnProperty.call(token,'objectAnimationId')) { var om=token.objectId ? (l.objectAnimationIds[token.objectId]||0) : l.objectAnimationId;
+                if (token.objectAnimationId !== om) { return false;
+                }
             }
             return true;
         },
@@ -637,6 +659,8 @@
             l.movementId++;
             l.characterMoveId++;
             l.objectAnimationId++;
+            l.characterMoveIds={};
+            l.objectAnimationIds={};
             return l.sessionId;
         },
         BumpRoom: function () { var l=this.Ensure();
@@ -645,6 +669,8 @@
             l.movementId++;
             l.characterMoveId++;
             l.objectAnimationId++;
+            l.characterMoveIds={};
+            l.objectAnimationIds={};
             return l.roomId;
         },
         BumpCommand: function () { var l=this.Ensure();
@@ -663,11 +689,17 @@
             l.movementId++;
             return l.movementId;
         },
-        BumpCharacterMove: function () { var l=this.Ensure();
+        BumpCharacterMove: function (characterId) { var l=this.Ensure();
+            if (characterId) { l.characterMoveIds[characterId]=(l.characterMoveIds[characterId]||0)+1;
+                return l.characterMoveIds[characterId];
+            }
             l.characterMoveId++;
             return l.characterMoveId;
         },
-        BumpObjectAnimation: function () { var l=this.Ensure();
+        BumpObjectAnimation: function (objectId) { var l=this.Ensure();
+            if (objectId) { l.objectAnimationIds[objectId]=(l.objectAnimationIds[objectId]||0)+1;
+                return l.objectAnimationIds[objectId];
+            }
             l.objectAnimationId++;
             return l.objectAnimationId;
         },
@@ -763,6 +795,23 @@
             return result.continueCutscene !== false && (result.status === 'completed' || result.status === 'transitioned');
         }
     };
+    Engine.Scripts = {
+        Run: function (scriptName, context, label) {
+            if (!scriptName) { return null;
+            }
+            if (typeof scriptName !== 'string') { Engine.Debug.Warn((label||'Script')+' ignored because script name is not a string.');
+                return null;
+            }
+            if (!Engine.CurrentGame || !Engine.CurrentGame.scripts || !Engine.CurrentGame.scripts[scriptName]) { Engine.Debug.Warn((label||'Script')+' references missing script "'+scriptName+'".');
+                return null;
+            }
+            try { return Engine.CurrentGame.scripts[scriptName](Engine.API, context||{});
+            }
+            catch (err) { Engine.Debug.Error((label||scriptName)+' failed: '+(err && err.message ? err.message : err));
+                return null;
+            }
+        }
+    };
     Engine.Hooks = {
         NormaliseList: function (scripts) {
             if (!scripts) { return [];
@@ -773,6 +822,9 @@
         },
         RunScript: function (scriptName, context, label) {
             if (!scriptName) { return true;
+            }
+            if (label === 'api.RunHook') { Engine.Debug.Warn('api.RunHook cannot run ordinary scripts. Use api.RunScript("'+scriptName+'") for named content scripts.');
+                return true;
             }
             if (typeof scriptName !== 'string') { Engine.Debug.Warn('Hook '+(label||'unknown')+' ignored because script name is not a string.');
                 return true;
@@ -1421,10 +1473,8 @@
                     } api.Narrate(locked ? Engine.Properties.GetRaw(target,'unlockText','Unlocked.') : Engine.Properties.GetRaw(target,'lockText','Locked.'));
                     Engine.Templates.door.helpers.RunOptionalScript(locked ? Engine.Properties.GetRaw(target,'onUnlock',null) : Engine.Properties.GetRaw(target,'onLock',null),self,{command:command,target:target,keyId:keyId});
                 },
-                walkTo:function (api,self,context) { if (self.GetBool('open',!!Engine.Properties.GetRaw(context.target,'open',false))) { var dest=Engine.Properties.Get(context.target,'walkThroughTo',context,null);
-                        if (dest && dest.roomId) { api.ChangeRoom(dest.roomId,dest.x,dest.y,dest.facing);
-                            return;
-                        } } api.Narrate(Engine.Properties.GetRaw(context.target,'closedWalkText','The door is closed.'));
+                walkTo:function (api,self,context) { if (self.GetBool('open',!!Engine.Properties.GetRaw(context.target,'open',false))) { return;
+                    } api.Narrate(Engine.Properties.GetRaw(context.target,'closedWalkText','The door is closed.'));
                 }
             }
         },
@@ -1848,7 +1898,11 @@
             } }
     };
     Engine.Validator = {
+        errors: [],
         Warn: function (message) { Engine.Debug.Warn('Game validation: '+message);
+        },
+        Error: function (message) { this.errors.push(message);
+            Engine.Debug.Error('Game validation: '+message);
         },
         AddId: function (seen, kind, id, where) {
             if (!id) { this.Warn(kind+' in '+where+' is missing an id.');
@@ -1863,7 +1917,7 @@
             if (!id) { this.Warn('Room object in '+where+' is missing an id.');
                 return;
             }
-            if (seen[id]) { this.Warn('Duplicate globally-scoped room object id "'+id+'" in '+where+'. Room object ids are saved in Engine.State.objectStates and must be unique across the whole game.');
+            if (seen[id]) { this.Error('Duplicate globally-scoped room object id "'+id+'" in '+where+'. Room object ids are saved in Engine.State.objectStates and must be unique across the whole game.');
                 return;
             }
             seen[id]=true;
@@ -1959,17 +2013,18 @@
             });
         },
         ValidateGame: function (game) {
-            if (!game) { this.Warn('No game definition was supplied.');
+            this.errors=[];
+            if (!game) { this.Error('No game definition was supplied.');
                 return false;
             }
             if (!game.id) { this.Warn('Game is missing id.');
             }
             if (game.engineApi !== ENGINE_API_VERSION) { this.Warn('Game "'+(game.id||'unknown')+'" declares engineApi '+game.engineApi+', expected '+ENGINE_API_VERSION+'.');
             }
-            if (!game.rooms || !Object.keys(game.rooms).length) { this.Warn('Game "'+(game.id||'unknown')+'" has no rooms.');
+            if (!game.rooms || !Object.keys(game.rooms).length) { this.Error('Game "'+(game.id||'unknown')+'" has no rooms.');
                 return false;
             }
-            if (!game.startRoomId || !game.rooms[game.startRoomId]) { this.Warn('Game startRoomId "'+game.startRoomId+'" is missing.');
+            if (!game.startRoomId || !game.rooms[game.startRoomId]) { this.Error('Game startRoomId "'+game.startRoomId+'" is missing.');
             }
             if (game.player && game.player.spriteId && game.sprites && !game.sprites[game.player.spriteId]) { this.Warn('Player references missing sprite "'+game.player.spriteId+'".');
             }
@@ -2028,7 +2083,7 @@
                 });
                 (room.transitionZones||[]).forEach(function (z,index) {
                     var zwhere=where+'.transitionZones['+index+']';
-                    if (!z.script && (!z.targetRoomId || !game.rooms[z.targetRoomId])) { self.Warn(zwhere+' has no script and references missing targetRoomId "'+z.targetRoomId+'".');
+                    if (!z.script && (!z.targetRoomId || !game.rooms[z.targetRoomId])) { self.Error(zwhere+' has no script and references missing targetRoomId "'+z.targetRoomId+'".');
                     }
                     self.ValidateScriptName(game,z.script,zwhere+'.script');
                     self.ValidateScriptName(game,z.beforeTransition,zwhere+'.beforeTransition');
@@ -2047,7 +2102,7 @@
                     } });
             });
             this.ValidateDialogueTrees(game);
-            return true;
+            return this.errors.length===0;
         }
     };
 
@@ -2085,8 +2140,23 @@
         return Engine.Private.LoadJsonManifest().catch(function () { return Engine.Private.LoadScriptManifest();
         });
     };
+    Engine.Private.SetCopyableErrorText = function (message) { var id='pointClickEngineCopyableError';
+        var node=document.getElementById(id);
+        if (!node) { node=document.createElement('pre');
+            node.id=id;
+            node.setAttribute('role','alert');
+            node.style.cssText='position:absolute;left:1rem;right:1rem;bottom:1rem;max-height:45vh;overflow:auto;background:#200000;color:#ffffff;border:1px solid #ffffff;padding:0.75rem;white-space:pre-wrap;user-select:text;font:14px monospace;z-index:10;';
+            document.body.appendChild(node);
+        }
+        node.textContent='Boot error:\n'+message;
+    };
+    Engine.Private.ClearCopyableErrorText = function () { var node=document.getElementById('pointClickEngineCopyableError');
+        if (node) { node.parentNode.removeChild(node);
+        }
+    };
     Engine.Private.ShowBootError = function (message) { Engine.State.mode = 'error';
         Engine.State.bootError = message;
+        Engine.Private.SetCopyableErrorText(message);
         try { Engine.Renderer.Render();
         } catch (err) { var ctx=Engine.Ctx;
             ctx.clearRect(0,0,LOGICAL_WIDTH,LOGICAL_HEIGHT);
@@ -2119,7 +2189,8 @@
             if (!game) { throw new Error(entry.script + ' did not register game ' + entry.id + '.');
             }
             game.assetPath = entry.assetPath;
-            Engine.Validator.ValidateGame(game);
+            if (!Engine.Validator.ValidateGame(game)) { throw new Error('Game validation failed:\n'+Engine.Validator.errors.join('\n'));
+            }
             Engine.Private.StartGame(game);
         }).catch(function (err) { Engine.Private.ShowBootError(err.message);
         });
@@ -2127,6 +2198,7 @@
     Engine.Private.StartGame = function (game) {
         Engine.Lifecycle.BumpSession();
         Engine.CurrentGame = game;
+        Engine.Private.ClearCopyableErrorText();
         Engine.CurrentGame.initialRooms = DeepClone(game.rooms);
         Engine.State.mode = 'loading';
         Engine.Renderer.Render();
@@ -2226,7 +2298,7 @@
         if (!game) { return;
         }
         Engine.Lifecycle.BumpSession();
-        Engine.State.lifecycle = Engine.State.lifecycle || { sessionId:0, roomId:0, commandId:0, dialogueId:0, cutsceneId:0, movementId:0, characterMoveId:0, objectAnimationId:0 };
+        Engine.State.lifecycle = Engine.State.lifecycle || { sessionId:0, roomId:0, commandId:0, dialogueId:0, cutsceneId:0, movementId:0, characterMoveId:0, objectAnimationId:0, characterMoveIds:{}, objectAnimationIds:{} };
         if (game.initialRooms) { game.rooms=DeepClone(game.initialRooms);
         }
         Engine.State.currentRoomId = null;
@@ -2341,6 +2413,8 @@
         GetCharacterState: function (characterId) { if (!characterId) { return {};
             } if (!Engine.State.characterStates[characterId]) { Engine.State.characterStates[characterId] = {};
             } return Engine.State.characterStates[characterId];
+        },
+        RunScript: function (scriptName, context) { return Engine.Scripts.Run(scriptName, context || {}, 'api.RunScript');
         },
         RunHook: function (scriptName, context) { return Engine.Hooks.RunScript(scriptName, context || {}, 'api.RunHook');
         },
@@ -2776,6 +2850,14 @@
         PeekState: function (objectId) { if (!objectId || !Engine.State.objectStates) { return {};
             } return Engine.State.objectStates[objectId]||{};
         },
+        FindObject: function (objectId) { if (!objectId || !Engine.CurrentGame || !Engine.CurrentGame.rooms) { return null;
+            } var roomIds=Object.keys(Engine.CurrentGame.rooms);
+            for (var r=0;r<roomIds.length;r++) { var objects=Engine.CurrentGame.rooms[roomIds[r]].hotspots||[];
+                for (var i=0;i<objects.length;i++) { if (objects[i].id===objectId) { return objects[i];
+                    } }
+            }
+            return null;
+        },
         SetState: function (objectId, values) { var state=this.GetState(objectId);
             Object.keys(values||{}).forEach(function (key) { state[key]=values[key];
             });
@@ -2825,7 +2907,8 @@
             state.animationComplete=false;
             state.animationCompletionFired=false;
             state.animationOnComplete=options.onComplete||null;
-            state.lifecycleToken=Engine.Lifecycle.Capture({room:true,objectAnimation:true});
+            Engine.Lifecycle.BumpObjectAnimation(objectId);
+            state.lifecycleToken=Engine.Lifecycle.Capture({room:true,objectAnimation:true,objectId:objectId});
         },
         ClearAnimation: function (objectId) { var state=this.GetState(objectId);
             if (state.animationOnComplete && state.lifecycleToken && Engine.Lifecycle.IsCurrent(state.lifecycleToken)) {
@@ -2956,7 +3039,8 @@
             if (c.moveTarget && c.moveTarget.onComplete && Engine.Lifecycle.IsCurrent(c.moveTarget.lifecycleToken)) {
                 c.moveTarget.onComplete(Engine.ActionResults.Superseded({action:'characterMove',reason:'moveReplaced',actorId:c.id,targetId:c.id,roomId:Engine.State.currentRoomId,x:c.x,y:c.y}));
             }
-            var token=Engine.Lifecycle.Capture({room:true,characterMove:true});
+            Engine.Lifecycle.BumpCharacterMove(c.id);
+            var token=Engine.Lifecycle.Capture({room:true,characterMove:true,characterId:c.id});
             c.hidden=false;
             c.moveTarget={x:x,y:y,hideOnComplete:!!options.hideOnComplete,onComplete:options.onComplete||null,lifecycleToken:token};
             c.speed=options.speed||c.speed||38;
@@ -3164,6 +3248,12 @@
             for (var i=0;i<zones.length;i++) { var z=zones[i];
                 if (z.enabledFlag && !Engine.State.flags[z.enabledFlag]) { continue;
                 } if (z.disabledFlag && Engine.State.flags[z.disabledFlag]) { continue;
+                } if (z.enabledObjectId) { var enabledObject=Engine.RoomObjects.FindObject(z.enabledObjectId);
+                    var enabledProperty=z.enabledProperty||'open';
+                    var enabledDefault=Engine.Properties.Get(enabledObject,enabledProperty,{purpose:'transition',transition:z},false);
+                    var enabledFacade=enabledObject ? Engine.Entities.CreateFacade(enabledObject,Engine.Entities.DetectType(enabledObject),{context:{purpose:'transition',transition:z}}) : null;
+                    if (!enabledObject || !enabledFacade.GetBool(enabledProperty,!!enabledDefault)) { continue;
+                    }
                 } if (z.rect && PointInRect(p.x,p.y,z.rect)) { var context={ transition:z, fromRoomId:Engine.State.currentRoomId, toRoomId:z.targetRoomId||null, player:Engine.State.player };
                     if (Engine.Hooks.RunTransitionHook(z,'beforeTransition',context) === false) { return true;
                     } if (z.script && Engine.CurrentGame.scripts[z.script]) { Engine.CurrentGame.scripts[z.script](Engine.API,context);
@@ -4399,7 +4489,16 @@ Engine.SaveLoad = {
             if (this.IsCompatibleSave(data)) { list.push({ slot:String(i), data:data, label:this.Summarise(String(i),data) });
             } } return list;
     },
-    PrepareSaveMenu: function () { var list=[];
+    CanSaveNow: function () { var ordinaryPlay=Engine.State.mode==='play' || (Engine.State.mode==='menu' && Engine.State.previousMode==='play');
+        return !!(Engine.State.gameStarted && ordinaryPlay && !(Engine.State.dialogue && Engine.State.dialogue.active) && !Engine.State.activeCutscene && !Engine.State.inputPrompt);
+    },
+    SaveBlockedMessage: function () { if (!Engine.State.gameStarted) { return 'Start a game before saving.';
+        } return 'You cannot save during dialogue, cutscenes, input prompts or other modal sequences.';
+    },
+    PrepareSaveMenu: function () { if (!this.CanSaveNow()) { Engine.State.saveLoadList=[];
+            Engine.State.saveLoadMessage=this.SaveBlockedMessage();
+            return;
+        } var list=[];
         for (var i=1;i<=this.maxSlots;i++) { var slot=String(i);
             var data=this.ReadSlot(slot);
             data=this.MigrateSaveData(data);
@@ -4414,7 +4513,7 @@ Engine.SaveLoad = {
         Engine.State.saveLoadMessage=list.length ? 'Choose a saved game to load.' : 'No saved games are available.';
         Engine.State.mode='loadGame';
     },
-    Save: function (slot) { if (!Engine.State.gameStarted) { Engine.State.saveLoadMessage='Start a game before saving.';
+    Save: function (slot) { if (!this.CanSaveNow()) { Engine.State.saveLoadMessage=this.SaveBlockedMessage();
             return;
         } var data=this.BuildData(slot||'1');
         try { localStorage.setItem(this.Key(slot||'1'),JSON.stringify(data));
@@ -4491,7 +4590,7 @@ Engine.Input = {
         Engine.State.pointerY=p.y;
         if (Engine.State.mode==='play' || Engine.State.mode==='cutscene') { var overlayTarget=(Engine.Overlays && Engine.Overlays.IsActive() && p.y < SCENE_HEIGHT) ? Engine.Overlays.HitTest(p.x,p.y) : null;
             Engine.State.hoveredTargetId = overlayTarget ? overlayTarget.id : (p.y < SCENE_HEIGHT ? Engine.Interactions.HitTest(p.x,p.y) : null);
-            Engine.State.hoveredInventoryItemId = Engine.Inventory.GetItemAtPoint(p.x,p.y);
+            Engine.State.hoveredInventoryItemId = Engine.State.mode==='play' ? Engine.Inventory.GetItemAtPoint(p.x,p.y) : null;
         } },
     OnPointerDown: function (event) {
         event.preventDefault();
@@ -5189,8 +5288,9 @@ Engine.Renderer = {
         if (d.active && d.options && d.options.length) { this.RenderDialogueChoices();
             return;
         }
-        this.RenderUIPanelBackground(!!d.active);
-        if (d.active) { return;
+        var blockCommandUI=!!d.active || Engine.State.mode==='cutscene';
+        this.RenderUIPanelBackground(blockCommandUI);
+        if (blockCommandUI) { return;
         }
         for (var v=0;v<Engine.Verbs.list.length;v++) { var verb=Engine.Verbs.list[v];
             var selected=verb.id===Engine.State.selectedVerbId;
