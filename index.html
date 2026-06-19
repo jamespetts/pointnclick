@@ -180,7 +180,9 @@
         - Save/load uses browser localStorage through the central SaveLoad
           system. Saving is deliberately allowed only during ordinary play and from
           the normal play menu; it is blocked during dialogue, cutscenes, input
-          prompts and modal sequences. Saves must capture the canonical game state, including room,
+          prompts and modal sequences. The main-menu Save Game entry must be greyed
+          out whenever SaveLoad.CanSaveNow() would refuse to save. Saves must
+          capture the canonical game state, including room,
           player, inventory, flags, variables, object/room/character states and
           mutable runtime room characters. Menus list compatible saved games and
           show clear default text when no saved games are available. Save data has
@@ -4672,7 +4674,7 @@ Engine.Input = {
         if (y>=94 && y<106) { Engine.SaveLoad.PrepareLoadMenu();
             return;
         }
-        if (y>=108 && y<120 && Engine.State.gameStarted) { Engine.SaveLoad.PrepareSaveMenu();
+        if (y>=108 && y<120 && Engine.SaveLoad.CanSaveNow()) { Engine.SaveLoad.PrepareSaveMenu();
             return;
         }
         if (y>=122 && y<136) { Engine.State.mode='options';
@@ -4885,11 +4887,12 @@ Engine.Renderer = {
     },
     RenderMainMenu: function () { this.RenderTitleBackground();
         var title=(Engine.CurrentGame && Engine.CurrentGame.title) ? Engine.CurrentGame.title : 'Adventure';
+        var canSave=Engine.SaveLoad && Engine.SaveLoad.CanSaveNow ? Engine.SaveLoad.CanSaveNow() : false;
         this.CenterText(title,38,'#ffff55');
         this.TextWithShadow((Engine.State.gameStarted ? 'Resume game' : 'Resume game'),112,68,Engine.State.gameStarted ? '#ffffff' : '#606060');
         this.TextWithShadow('New game',112,82,'#ffffff');
         this.TextWithShadow('Load game',112,96,'#ffffff');
-        this.TextWithShadow('Save game',112,110,Engine.State.gameStarted ? '#ffffff' : '#606060');
+        this.TextWithShadow('Save game',112,110,canSave ? '#ffffff' : '#606060');
         this.TextWithShadow('Options',112,124,'#ffffff');
     },
     RenderSaveLoadMenu: function () { this.RenderTitleBackground();
