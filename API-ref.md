@@ -344,11 +344,11 @@ Room fields:
 - `start:{x:number,y:number,facing:string}`: content-defined default start point for authoring/scripts; the engine does not automatically apply it on room entry.
 - `playerStart:{x:number,y:number,facing:string}`: content pattern for scripts; room entry uses the current player coordinates unless `api.ChangeRoom()` or a transition zone passes target coordinates. Initial new-game position comes from `game.player.x/y/facing`.
 - `walkableArea:{x:number,y:number,w:number,h:number}`: fallback walk rectangle and validation area. If no `walkBoxes`/`walkAreas` are supplied, the engine creates one walk box from `walkableArea`; if `walkableArea` is also absent, the fallback is `{x:0,y:80,w:320,h:56}`.
-- `walkBoxes:array`: preferred walkable shapes. Entries may be bare rectangles, `{rect:{x,y,w,h}}`, or `{shape:shape}`. Entries may have `id` and may use `links` or `connects` arrays to build graph edges when explicit `walkGraph.edges` are absent.
-- `walkAreas:array`: supported alias for `walkBoxes`. Prefer `walkBoxes` for new content.
+- `walkBoxes:array`: preferred walkable shapes. Entries may be bare rectangles, `{rect:{x,y,w,h}}`, or `{shape:shape}`. Entries may have `id` and may use `links` or `connects` arrays to build graph edges when explicit `walkGraph.edges` are absent. If `walkBoxes` is present, omitted `links`/`connects` mean no authored inter-node edges from that box; supply explicit `walkGraph.edges` or `links`/`connects` for routed navigation around blockers.
+- `walkAreas:array`: supported alias for `walkBoxes` for walkability and derived graph-node positions. Prefer `walkBoxes` for new content. In this engine version, link/connect edge derivation reads `room.walkBoxes`, not `walkAreas`; if using `walkAreas` and routed edges matter, supply explicit `walkGraph.edges`.
 - `blockers:array`: room-level movement blockers; each may have `id`, `shape` or `rect`, `onCollide`, `onBump`. `onCollide` is preferred when both collision script names are present.
 - `walkGraph.nodes:array`: `{id:string,x:number,y:number}`. If omitted or empty, the engine derives one node at the centre of each walk box.
-- `walkGraph.edges:array`: `[fromId,toId]` or `{from:string,to:string}`. Edges are treated as bidirectional path links. If omitted, walk box `links`/`connects` are used; if those are also absent, all graph nodes are connected to all other graph nodes.
+- `walkGraph.edges:array`: `[fromId,toId]` or `{from:string,to:string}`. Edges are treated as bidirectional path links. If omitted and `room.walkBoxes` is present, only walk box `links`/`connects` create authored inter-node edges. If omitted and `room.walkBoxes` is absent, all graph nodes are connected to all other graph nodes.
 - `hotspots:array`: room objects; see next section.
 - `characters:array`: room-local characters; see actors section.
 - `transitionZones:array`: exits/room transitions.
@@ -370,7 +370,7 @@ Geometry and pathfinding semantics:
 - Walkable geometry: a point is walkable if it is inside any `walkBoxes`/`walkAreas` shape. If no `walkBoxes`/`walkAreas` exist, `walkableArea` supplies a single rectangular walk box. If neither exists, the fallback rectangle is `{x:0,y:80,w:320,h:56}`.
 - Destination clamping: when a requested point is outside all walk boxes, the engine chooses the nearest point in the rectangular bounds of the nearest walk box. For circle shapes, hit-testing is circular, but clamping and some path/blocker tests use the circle's bounding rectangle; do not rely on true circular navigation for precise path constraints.
 - Graph nodes: explicit `walkGraph.nodes` are used when present. Otherwise, one node is derived at the centre of each walk box. If a node id is absent, its array index string is used.
-- Graph edges: explicit `walkGraph.edges` are used when present. Otherwise, each walk box's `links` or `connects` array creates edges from that box id to listed ids. If neither explicit edges nor links/connects exist, the engine connects every graph node to every other graph node.
+- Graph edges: explicit `walkGraph.edges` are used when present. Otherwise, if `room.walkBoxes` is present, each walk box's `links` or `connects` array creates edges from that box id to listed ids; boxes without `links`/`connects` create no inter-node edges. If `room.walkBoxes` is absent, the engine connects every graph node to every other graph node.
 - Edge blocking: graph edges, and temporary start-to-node and node-to-target links, are ignored if the straight line segment intersects any current blocker rectangle. Rect blockers are exact rectangles; circle blockers are reduced to their bounding rectangle for segment-blocking.
 - Fallback path: if no graph route can be found, the engine falls back to a direct path to the clamped target. Author walk boxes/graphs/blockers so this fallback is harmless, or provide enough graph connectivity that routes are found.
 - Player collision: if the player steps into a blocker, the walk is blocked, the blocker `onCollide`/`onBump` script is run, and the walk callback/action result reports status `blocked` with reason `collision` and `blockerId`.
@@ -458,14 +458,14 @@ Hotspot/object fields read by the engine:
 - Identity/template: `id`, `name`, `displayName`, `template`, `templateId`, `kind`, `templates`, `itemId`.
 - Text/behaviour: `defaultText`, `description`, `interactions`, `refusals`, `properties`, getter maps, `callbackStatus`, `callbackResult`, `callbackResults`.
 - Rendering: `x`, `y`, `frameW`, `frameH`, `sprite`, `closedSprite`, `openSprite`, `emptySprite`, `fullSprite`, `onSprite`, `offSprite`, `animation`, `animations`, `animationCompleteScripts`.
-- Visibility/hit: `hidden`, `renderHidden`, `hitDisabled`, `interactionDisabled`, `rect`, `hitRect`, `priority`, `hitPriority`, `zIndex`, `baseline`.
+- Visibility/hit: `hidden`, `renderHidden`, `hitDisabled`, `disableHit`, `interactionDisabled`, `rect`, `hitRect`, `priority`, `hitPriority`, `zIndex`, `baseline`.
 - Movement/geometry: `walkTo`, `walkThrough`, `walkThroughTo`, `walkThroughPoint`, `blocksMovement`, `blocksWhenHidden`, `collisionShape`, `walkBehind`, `baseline`, `zIndex`, `triggerZones`, `onCollide`, `onBump`, `onStay`. Reserved/no-op in this engine version: `blocksActors`, `occluderShape`, `walkBoxes`, `blockers`, `walkBehinds`.
 
 Object geometry semantics:
 
 - `hitRect` overrides `rect` for pointer hit-testing. If `hitRect` is absent, `rect` is used; otherwise `x`/`y`/`frameW`/`frameH` may be used by rendering/collision fallbacks where applicable.
 - `priority` or `hitPriority` controls click target precedence among overlapping scene targets; `hitPriority` is preferred when numeric, otherwise `priority`, otherwise 0. Later room targets win ties.
-- `hidden` removes an object from hit-testing and rendering. `renderHidden` also hides rendering. `hitDisabled`, `disableHit`, or `interactionDisabled` disables hit-testing/interaction without necessarily hiding rendering.
+- `hidden` removes an object from hit-testing and rendering. `renderHidden` also hides rendering. `hitDisabled`, `disableHit`, or `interactionDisabled` disables hit-testing/interaction without necessarily hiding rendering. `disableHit` is a supported legacy alias; prefer `hitDisabled` for new content.
 - `blocksMovement:true` turns a hotspot into an object blocker. If `collisionShape` is absent, `rect` is used; if `rect` is absent, `x`/`y`/`frameW`/`frameH` are used. Hidden blockers are ignored unless `blocksWhenHidden:true`.
 - `walkBehind:true` affects drawable sorting by using `collisionShape`/`rect` bottom as the object's drawable y when `baseline` is absent. It does not by itself create collision; use `blocksMovement`/`collisionShape` for blocking.
 - `baseline:number` overrides the object's drawable y for sorting. `zIndex:number` sorts before y and is useful for forcing foreground/background ordering.
@@ -530,7 +530,7 @@ Overlay spec fields:
 - `image:string`: PNG in `objects/`, normally 320x136. A string `overlaySpec` is equivalent to `{image:'filename.png'}`.
 - `background`, `endBackground:string`: accepted by the preload path for ending/overlay-like specs, but ordinary overlays render `image`; use `image` for normal closeups and maps.
 - `itemId:string` optional.
-- `hotspots:array` optional; overlay targets use `id`, `name`, `rect`, `interactions`, `refusals`, and other ordinary target fields. Overlay targets are clicked only while the overlay is open; their ids do not place persistent room objects, but if they use object variables they still share the object-variable namespace for that id.
+- `hotspots:array` optional; overlay targets use `id`, `name`, `rect`, `hitPriority`, `interactions`, `refusals`, `defaultText`, `properties`, and getter maps. Overlay hit-testing is rectangular and uses `rect` plus `hitPriority` only; `hidden`, `hitDisabled`, `disableHit`, `interactionDisabled`, and `priority` are not checked by the overlay hit-tester in this engine version. Overlay targets are clicked only while the overlay is open; their ids do not place persistent room objects, but if they use object variables they still share the object-variable namespace for that id.
 
 Map item syntax:
 
@@ -550,7 +550,7 @@ items:{
 }
 EXAMPLE_END
 
-Map place fields: `id`, `name`, `rect`, `targetRoomId`, `targetX`, `targetY`, `targetFacing`, `description`, `defaultText`, `alwaysVisible`, `visibleFlag`, `hiddenFlag`, `blockedFlag`, `blockedScript`, `blockedText`, `script`. A place is shown only if `visibleFlag` is absent or true, `hiddenFlag` is absent or false, and either `alwaysVisible` is true, no `roomId`/`targetRoomId` is present, or the destination room has been visited. `blockedScript` is a getter-style script called with `(query,self,context)` and should return truthy when travel is blocked.
+Map places may be supplied as `item.map.places`, `item.map.hotspots`, an effective item property `places`, or an effective item property `mapPlaces`. Map place fields: `id`, `name`, `rect`, `roomId`, `targetRoomId`, `targetX`, `targetY`, `targetFacing`, `description`, `defaultText`, `alwaysVisible`, `visibleFlag`, `hiddenFlag`, `blockedFlag`, `blockedScript`, `blockedText`, `script`. `visibleFlag`, `hiddenFlag`, and `blockedFlag` are global flags. A place is shown only if `visibleFlag` is absent or true, `hiddenFlag` is absent or false, and either `alwaysVisible` is true, no `roomId`/`targetRoomId` is present, or the destination room has been visited. Entering a room sets room scoped variable `visited=1` for that room. `blockedScript` is a getter-style script called with `(query,self,context)` and should return truthy when travel is blocked.
 
 Sprite syntax:
 
@@ -570,7 +570,7 @@ sprites:{
 }
 EXAMPLE_END
 
-Sprite fields: `image`, `frameW`, `frameH`, `directional`, `rows`, `animations`, `idleFrames`, `idleFps`, `walkFrames`, `walkFps`. `frameW` and `frameH` are required for actor spritesheets. Directional row order is down, left, right, up. An animation entry may define `frames`, `fps`, `frame`, `rowOffset`, and `directional:false`. For directional sprites, `rowOffset` is added before the facing row is applied. `talk` is used automatically by `api.Say()` if present.
+Sprite fields: `image`, `frameW`, `frameH`, `directional`, `rows`, `animations`, `idleFrames`, `idleFps`, `walkFrames`, `walkFps`. `frameW` and `frameH` are required for actor spritesheets. Directional row order is down, left, right, up. An animation entry may define `frames`, `fps`, `frame`, `rowOffset`, and `directional:false`. For directional sprites, `rowOffset` is added before the facing row is applied. Actor sprite animations with `frames>1` always loop in the current renderer; a `loop` field is harmless metadata but is not read for actor animations. Use object animation or cutscene sequencing for non-looping presentation. `talk` is used automatically by `api.Say()` if present.
 
 Actor/player/room character fields: `id`, `name`, `displayName`, `spriteId`, `x`, `y`, `facing`, `visible`, `hidden`, `controllable`, `speed`, `scale`, `scaleWithPerspective`, `perspectiveScale`, `characterScale`, `fixedScale`, `followPlayer`, `followDistance`, `avoidanceRadius`, `personalSpace`, `avoidanceDisabled`, `avoidanceLocked`, `dialogueColor`, `walkTo`, `rect`, `hitW`, `hitH`, `rectW`, `rectH`, `interactions`, `refusals`, effective property maps. Top-level `game.characters` supplies reusable character metadata such as names/dialogue colours and scoped-variable existence; NPCs that should appear, move, or be clicked must also be placed in `room.characters`. If a room character lacks `rect`, the engine derives it from `x`/`y` using `hitW`/`hitH` or `rectW`/`rectH`, default 16x16, with `x` centred and `y` as the foot point. `api.MoveCharacter()` moves NPCs directly to `x`/`y` and does not use `walkGraph` pathfinding. `followTarget`, `lastMoveX`, `lastMoveY`, `moveTarget` and animation timing fields are runtime state; do not author them except in saved-state restoration generated by the engine.
 
@@ -612,14 +612,17 @@ Template actions are valid only in interaction fields. Do not call private templ
 Interaction key lookup:
 
 - For ordinary verbs, use the verb id, such as `lookAt` or `open`.
-- For inventory-on-target `use`/`give`, the engine first checks `verbId:inventoryItemId` on the target or linked item, then checks the reverse key `verbId:targetId` on the selected inventory item, then falls back to `verbId`. Use these specific keys for one-off transitive interactions; use `combine` or `toolTarget` for reusable patterns.
+- For inventory-on-target `use`/`give`, the engine first checks `verbId:inventoryItemId` on the target, then on the target's linked item, then checks the reverse key `verbId:targetId` on the selected inventory item, then on that selected item's linked item, then falls back to `verbId` on the target or linked item. Use these specific keys for one-off transitive interactions; use `combine` or `toolTarget` for reusable patterns.
 
 Refusal lookup order:
 
-1. Target `refusals[verbId]`.
-2. Linked inventory item refusal if a room object has `itemId` and the target has no refusal.
-3. `game.defaultRefusals[verbId]`.
-4. Engine default refusal.
+1. Target `refusals[verbId:inventoryItemId]` when applicable.
+2. Target `refusals[verbId]`.
+3. Linked inventory item `refusals[verbId:inventoryItemId]` when applicable.
+4. Linked inventory item `refusals[verbId]`.
+5. `game.defaultRefusals[verbId:inventoryItemId]` when applicable.
+6. `game.defaultRefusals[verbId]`.
+7. Engine default keyed refusal, then engine default verb refusal.
 
 Use/Give:
 
@@ -742,7 +745,7 @@ Text fields: `openText`, `lockedText`, `unlockedText`, `closedText`, `alreadyOpe
 
 ### `key`
 
-Fields: `unlocks`, `unlockDoors`, `opens`, `targets`, `doorIds`, `objectIds`; string or array; `'*'` targets all compatible locks.
+Fields: `unlocks`, `unlockDoors`, `opens`, `targets`, `doorIds`, `objectIds`; string or array; `'*'` targets all compatible locks. For the `door` template, the inventory item must have the `key` template and its target list must include the door id or `'*'`. The `container` template checks the same target list but does not require the item itself to use the `key` template.
 
 ### `map`
 
@@ -819,7 +822,7 @@ Adds `use`. Fields: `toolUses`, `toolNeedItemText`, `toolRefusalText`. Source is
 
 ### `clueUnlocker`
 
-Adds `lookAt`, `use`. Fields: `unlockBlocked`, `unlockBlockedText`, `unlocksPlaces`, `mapItemId`, `unlockText`. If `unlockBlocked` is true, narrates `unlockBlockedText`. Otherwise, for each place id in `unlocksPlaces` it sets item variable `place_placeId_unlocked=1` on `mapItemId` or on the clue item/object id, then narrates `unlockText`. Pair this with map place `visibleFlag` or custom map visibility logic when the design needs clue-gated map places.
+Adds `lookAt`, `use`. Fields: `unlockBlocked`, `unlockBlockedText`, `unlocksPlaces`, `mapItemId`, `unlockText`. If `unlockBlocked` is true, narrates `unlockBlockedText`. Otherwise, for each place id in `unlocksPlaces` it sets item variable `place_placeId_unlocked=1` on `mapItemId` or on the clue item/object id, then narrates `unlockText`. Pair this with a `places`/`mapPlaces` getter or other custom map visibility logic when the design needs clue-gated map places; `visibleFlag` itself checks a global flag, not the item variable set by `clueUnlocker`.
 
 ### `distractible`
 
