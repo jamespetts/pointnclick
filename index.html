@@ -126,7 +126,7 @@
         previousMode: null,
         saveLoadList: [], saveLoadMessage: '', debugMessages: [], playerTrail: [],
         audio: { musicVolume: 0.25, sfxVolume: 0.75, musicMuted: false, sfxMuted: false },
-        dialogue: { active: false, speakerId: null, speakerName: '', text: '', displayText: '', timer: 0, duration: 0, explicitDuration: null, options: [], onComplete: null, voiceAudio: null, lifecycleToken: null, color: null, textBlocks: [], textBlockIndex: 0 },
+        dialogue: { active: false, speakerId: null, speakerName: '', text: '', displayText: '', timer: 0, duration: 0, explicitDuration: null, options: [], onComplete: null, voiceAudio: null, lifecycleToken: null, color: null, textBlocks: [], textBlockIndex: 0, choiceScroll: 0 },
         player: { id: 'player', roomId: null, x: 80, y: 112, facing: 'down', animation: 'idleDown', visible: true, controllable: true, speed: 48, walkTarget: null, walkPath: [], walkCallback: null, spriteId: null, scale: 1 },
         lifecycle: { sessionId: 0, roomId: 0, commandId: 0, dialogueId: 0, cutsceneId: 0, movementId: 0, characterMoveId: 0, objectAnimationId: 0, characterMoveIds: {}, objectAnimationIds: {} },
         debug: false
@@ -2166,7 +2166,7 @@
         if (Engine.State.dialogue.voiceAudio) { Engine.State.dialogue.voiceAudio.pause();
         }
         Engine.Animations.ClearDialogueAnimation();
-        Engine.State.dialogue = { active:false, speakerId:null, speakerName:'', text:'', displayText:'', timer:0, duration:0, explicitDuration:null, options:[], onComplete:null, voiceAudio:null, lifecycleToken:null, color:null, textBlocks:[], textBlockIndex:0 };
+        Engine.State.dialogue = { active:false, speakerId:null, speakerName:'', text:'', displayText:'', timer:0, duration:0, explicitDuration:null, options:[], onComplete:null, voiceAudio:null, lifecycleToken:null, color:null, textBlocks:[], textBlockIndex:0, choiceScroll:0 };
         Engine.State.player = DeepClone(game.player || {});
         if (Engine.State.player.visible === undefined) { Engine.State.player.visible = true;
         }
@@ -2248,9 +2248,13 @@
             } return Engine.State.roomStates[roomId];
         },
         SetCharacterState: function (characterId, values) { if (!characterId) { return;
-            } if (!Engine.State.characterStates[characterId]) { Engine.State.characterStates[characterId] = {};
-            } Object.keys(values || {}).forEach(function (key) { Engine.State.characterStates[characterId][key] = values[key];
+            } values=values||{};
+            if (!Engine.State.characterStates[characterId]) { Engine.State.characterStates[characterId] = {};
+            } Object.keys(values).forEach(function (key) { Engine.State.characterStates[characterId][key] = values[key];
             });
+            if (characterId === 'player') { Object.keys(values).forEach(function (key) { Engine.State.player[key]=values[key];
+                });
+            }
         },
         GetCharacterState: function (characterId) { if (!characterId) { return {};
             } if (!Engine.State.characterStates[characterId]) { Engine.State.characterStates[characterId] = {};
@@ -3540,6 +3544,7 @@
             Engine.State.dialogue.color=options.color||null;
             Engine.State.dialogue.textBlocks=textBlocks;
             Engine.State.dialogue.textBlockIndex=0;
+            Engine.State.dialogue.choiceScroll=0;
             Engine.Dialogue.SetCurrentBlockDuration();
             Engine.Animations.BeginDialogueAnimation(speakerId, options);
             if (Engine.State.dialogue.voiceAudio) { Engine.State.dialogue.voiceAudio.pause();
@@ -4078,7 +4083,7 @@ Engine.Cutscenes = {
     ApplyCharacterState: function (step) { var actor=step.actorId==='player' ? Engine.State.player : Engine.Rooms.GetCharacter(step.actorId||step.characterId);
         if (!actor) { return Engine.ActionResults.Cancelled({action:'setCharacter',reason:'missingCharacter',actorId:step.actorId||step.characterId});
         }
-        ['x','y','facing','hidden','visible','controllable','animation','customAnimation','scale'].forEach(function (key) { if (Object.prototype.hasOwnProperty.call(step,key)) { actor[key]=step[key];
+        ['x','y','facing','hidden','visible','controllable','animation','customAnimation','scale','spriteId'].forEach(function (key) { if (Object.prototype.hasOwnProperty.call(step,key)) { actor[key]=step[key];
             } });
         if (actor.id!=='player') { Engine.Rooms.UpdateCharacterRect(actor);
         }
@@ -4195,7 +4200,7 @@ Engine.EndGame = {
         if (Engine.State.dialogue.voiceAudio) { Engine.State.dialogue.voiceAudio.pause();
         }
         Engine.Animations.ClearDialogueAnimation();
-        Engine.State.dialogue = { active:false, speakerId:null, speakerName:'', text:'', displayText:'', timer:0, duration:0, explicitDuration:null, options:[], onComplete:null, voiceAudio:null, lifecycleToken:null, color:null, textBlocks:[], textBlockIndex:0 };
+        Engine.State.dialogue = { active:false, speakerId:null, speakerName:'', text:'', displayText:'', timer:0, duration:0, explicitDuration:null, options:[], onComplete:null, voiceAudio:null, lifecycleToken:null, color:null, textBlocks:[], textBlockIndex:0, choiceScroll:0 };
     },
     Apply: function (spec) {
         Engine.Lifecycle.BumpSession();
@@ -4490,7 +4495,14 @@ Engine.Input = {
         if (Engine.State.mode !== 'play') { if (Engine.State.mode==='cutscene' && Engine.State.dialogue.active) { Engine.Dialogue.Advance();
             } return;
         }
-        if (Engine.State.dialogue.active) { if (Engine.State.dialogue.options && Engine.State.dialogue.options.length) { var opt=Engine.Renderer.GetChoiceIndexAtPoint(p.x,p.y);
+        if (Engine.State.dialogue.active) { if (Engine.State.dialogue.options && Engine.State.dialogue.options.length) { var dialogueArrow=Engine.Renderer.GetDialogueChoiceArrowAtPoint(p.x,p.y);
+                if (dialogueArrow === 'up' && Engine.Renderer.CanScrollDialogueChoicesUp()) { Engine.Renderer.ScrollDialogueChoices(-1);
+                    return;
+                }
+                if (dialogueArrow === 'down' && Engine.Renderer.CanScrollDialogueChoicesDown()) { Engine.Renderer.ScrollDialogueChoices(1);
+                    return;
+                }
+                var opt=Engine.Renderer.GetChoiceIndexAtPoint(p.x,p.y);
                 if (opt >= 0) { Engine.Dialogue.Choose(opt);
                 } } else { Engine.Dialogue.Advance();
             } return;
@@ -5075,29 +5087,67 @@ Engine.Renderer = {
         this.RenderUIPanelBackground(true);
         this.RenderWrappedLinesInBox(d.text,8,142,304,54,this.GetTextColor('narrationTextColor','#ffffff'),false);
     },
-    GetChoiceLayout: function () { var d=Engine.State.dialogue;
+    GetDialogueChoiceArrowAtPoint: function (x, y) { if (x < Engine.Inventory.arrowX || x >= 318) { return null;
+        } if (y >= Engine.Inventory.upArrowY && y < Engine.Inventory.upArrowY + 16) { return 'up';
+        } if (y >= Engine.Inventory.downArrowY && y < Engine.Inventory.downArrowY + 16) { return 'down';
+        } return null;
+    },
+    GetChoicePage: function () { var d=Engine.State.dialogue;
         var options=d.options||[];
-        var layout=[];
-        var y=142;
         var lineHeight=this.GetLineHeight();
-        var maxWidth=304;
-        for (var i=0;i<options.length;i++) { var label=String(i+1)+'. '+String(options[i].text||'');
-            var lines=this.BuildWrappedLines(label,maxWidth);
-            layout.push({ index:i, x:8, y:y, h:lines.length*lineHeight, lines:lines });
-            y += lines.length*lineHeight + 2;
-        } return layout;
+        var maxY=196;
+        var self=this;
+        var build=function (maxWidth) { var layout=[];
+            var scroll=Clamp(d.choiceScroll||0,0,Math.max(0,options.length-1));
+            d.choiceScroll=scroll;
+            var y=142;
+            var nextIndex=scroll;
+            for (var i=scroll;i<options.length;i++) { var label=String(i+1)+'. '+String(options[i].text||'');
+                var lines=self.BuildWrappedLines(label,maxWidth);
+                var h=lines.length*lineHeight;
+                if (layout.length && y+h > maxY) { break;
+                }
+                layout.push({ index:i, x:8, y:y, h:h, lines:lines });
+                y += h + 2;
+                nextIndex=i+1;
+                if (y > maxY) { break;
+                }
+            }
+            return { layout:layout, canScrollUp:scroll>0, canScrollDown:nextIndex<options.length, hasArrows:false };
+        };
+        var page=build(304);
+        if (page.canScrollUp || page.canScrollDown) { page=build(284);
+            page.hasArrows=true;
+        }
+        return page;
+    },
+    GetChoiceLayout: function () { return this.GetChoicePage().layout;
+    },
+    CanScrollDialogueChoicesUp: function () { return this.GetChoicePage().canScrollUp;
+    },
+    CanScrollDialogueChoicesDown: function () { return this.GetChoicePage().canScrollDown;
+    },
+    ScrollDialogueChoices: function (delta) { var d=Engine.State.dialogue;
+        var options=d.options||[];
+        d.choiceScroll=Clamp((d.choiceScroll||0)+delta,0,Math.max(0,options.length-1));
     },
     GetChoiceIndexAtPoint: function (x,y) { if (x < 0 || x >= 320) { return -1;
+        } if (this.GetDialogueChoiceArrowAtPoint(x,y)) { return -1;
         } var layout=this.GetChoiceLayout();
         for (var i=0;i<layout.length;i++) { if (y >= layout[i].y-1 && y < layout[i].y + layout[i].h + 2) { return layout[i].index;
             } } return -1;
     },
     RenderDialogueChoices: function () { this.RenderUIPanelBackground(true);
-        var layout=this.GetChoiceLayout();
+        var page=this.GetChoicePage();
+        var layout=page.layout;
         var color=this.GetTextColor('choiceTextColor','#ffffff');
-        for (var i=0;i<layout.length;i++) { for (var j=0;j<layout[i].lines.length;j++) { if (layout[i].y+j*this.GetLineHeight() > 194) { return;
+        for (var i=0;i<layout.length;i++) { for (var j=0;j<layout[i].lines.length;j++) { if (layout[i].y+j*this.GetLineHeight() > 194) { break;
                 } this.Text(layout[i].lines[j],layout[i].x,layout[i].y+j*this.GetLineHeight(),color);
-            } } },
+            } }
+        if (page.hasArrows) { this.DrawInventoryArrow(304,142,'up',page.canScrollUp);
+            this.DrawInventoryArrow(304,166,'down',page.canScrollDown);
+        }
+    },
     RenderTextInputPanel: function () { var p=Engine.State.inputPrompt||{};
         this.RenderUIPanelBackground(true);
         this.RenderWrappedLinesInBox(p.prompt||'Enter text:',8,142,304,18,this.GetTextColor('narrationTextColor','#ffffff'),false);
