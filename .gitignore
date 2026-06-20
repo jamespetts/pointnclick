@@ -12,3 +12,9 @@ Thumbs.db
 
 # Generated patch/archive files
 *.zip
+
+# Non-test games
+moonlogic
+
+# This file
+.gitignore
