@@ -978,6 +978,15 @@
             }
             if (Object.prototype.hasOwnProperty.call(entity,propertyName)) { return entity[propertyName];
             }
+            var characterDefaults=null;
+            if (entity.id && Engine.CurrentGame && Engine.CurrentGame.characters && (entity.spriteId || entity._entityType === 'character' || entity.id === 'player')) { characterDefaults=Engine.CurrentGame.characters[entity.id] || null;
+            }
+            if (characterDefaults && characterDefaults !== entity) {
+                if (characterDefaults.properties && Object.prototype.hasOwnProperty.call(characterDefaults.properties,propertyName)) { return characterDefaults.properties[propertyName];
+                }
+                if (Object.prototype.hasOwnProperty.call(characterDefaults,propertyName)) { return characterDefaults[propertyName];
+                }
+            }
             return defaultValue;
         },
         GetTemplateNames:function (entity) { var raw=entity && (entity.templates || entity.template || entity.templateId || entity.kind);
