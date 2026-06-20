@@ -3561,9 +3561,11 @@
             var choices=options.choices||[];
             var displayText=lineText;
             var textBlocks=[];
-            if (speakerId && !choices.length && Engine.Renderer) {
-                var lines=Engine.Renderer.BuildWrappedLines(displayText,168);
-                for (var i=0;i<lines.length;i+=2) { textBlocks.push(lines.slice(i,i+2));
+            if (!choices.length && Engine.Renderer) {
+                var lineWidth=speakerId ? 168 : 284;
+                var lines=Engine.Renderer.BuildWrappedLines(displayText,lineWidth);
+                var linesPerBlock=speakerId ? 2 : 6;
+                for (var i=0;i<lines.length;i+=linesPerBlock) { textBlocks.push(lines.slice(i,i+linesPerBlock));
                 }
             }
             Engine.State.dialogue.active=true;
@@ -3601,12 +3603,21 @@
                 }
                 return;
             }
+            var text='';
             if (d.textBlocks && d.textBlocks.length) {
                 var block=d.textBlocks[d.textBlockIndex]||[];
-                d.duration=Math.max(1.4,Math.min(4.5,block.join(' ').length/12));
-                return;
+                text=block.join(' ');
+            } else {
+                text=String(d.text||'');
             }
-            d.duration=Math.max(2.0,Math.min(8.0,String(d.text||'').length/12));
+            var words=String(text).trim().match(/\S+/g);
+            var wordCount=words ? words.length : 0;
+            var wpm=d.speakerId ? 180 : 190;
+            var padding=d.speakerId ? 0.7 : 0.9;
+            var minimum=d.speakerId ? 1.8 : 2.2;
+            var maximum=d.speakerId ? 12.0 : 14.0;
+            var seconds=padding+(wordCount*60/wpm);
+            d.duration=Math.max(minimum,Math.min(maximum,seconds));
         },
         AdvanceBlockOrClear: function () {
             var d=Engine.State.dialogue;
@@ -4527,7 +4538,14 @@ Engine.Input = {
             if (idx>=0 && idx<games.length) { Engine.Private.LoadGameFromManifest(games[idx]);
             } return;
         }
-        if (Engine.State.mode !== 'play') { if (Engine.State.mode==='cutscene' && Engine.State.dialogue.active) { Engine.Dialogue.Advance();
+        if (Engine.State.mode !== 'play') { if (Engine.State.mode==='cutscene' && Engine.State.dialogue.active) { var cutsceneArrow=Engine.Renderer.GetDialogueTextArrowAtPoint(p.x,p.y);
+                if (cutsceneArrow === 'up' && Engine.Renderer.CanScrollDialogueTextUp()) { Engine.Renderer.ScrollDialogueText(-1);
+                    return;
+                }
+                if (cutsceneArrow === 'down' && Engine.Renderer.CanScrollDialogueTextDown()) { Engine.Renderer.ScrollDialogueText(1);
+                    return;
+                }
+                Engine.Dialogue.Advance();
             } return;
         }
         if (Engine.State.dialogue.active) { if (Engine.State.dialogue.options && Engine.State.dialogue.options.length) { var dialogueArrow=Engine.Renderer.GetDialogueChoiceArrowAtPoint(p.x,p.y);
@@ -4539,7 +4557,14 @@ Engine.Input = {
                 }
                 var opt=Engine.Renderer.GetChoiceIndexAtPoint(p.x,p.y);
                 if (opt >= 0) { Engine.Dialogue.Choose(opt);
-                } } else { Engine.Dialogue.Advance();
+                } } else { var textArrow=Engine.Renderer.GetDialogueTextArrowAtPoint(p.x,p.y);
+                if (textArrow === 'up' && Engine.Renderer.CanScrollDialogueTextUp()) { Engine.Renderer.ScrollDialogueText(-1);
+                    return;
+                }
+                if (textArrow === 'down' && Engine.Renderer.CanScrollDialogueTextDown()) { Engine.Renderer.ScrollDialogueText(1);
+                    return;
+                }
+                Engine.Dialogue.Advance();
             } return;
         }
         if (Engine.Overlays.IsActive() && p.y < UI_TOP) { var overlayTarget=Engine.Overlays.HitTest(p.x,p.y);
@@ -5120,7 +5145,35 @@ Engine.Renderer = {
     },
     RenderNarrationPanel: function () { var d=Engine.State.dialogue;
         this.RenderUIPanelBackground(true);
-        this.RenderWrappedLinesInBox(d.text,8,142,304,54,this.GetTextColor('narrationTextColor','#ffffff'),false);
+        var color=this.GetTextColor('narrationTextColor','#ffffff');
+        if (d.textBlocks && d.textBlocks.length) { var lines=d.textBlocks[d.textBlockIndex]||[];
+            for (var i=0;i<lines.length;i++) { if (142+i*this.GetLineHeight() > 194) { break;
+                } this.Text(this.FitLineToWidth(lines[i],284),8,142+i*this.GetLineHeight(),color);
+            }
+            if (d.textBlocks.length > 1) { this.DrawInventoryArrow(304,142,'up',this.CanScrollDialogueTextUp());
+                this.DrawInventoryArrow(304,166,'down',this.CanScrollDialogueTextDown());
+            }
+            return;
+        }
+        this.RenderWrappedLinesInBox(d.text,8,142,284,54,color,false);
+    },
+    GetDialogueTextArrowAtPoint: function (x, y) { if (x < Engine.Inventory.arrowX || x >= 318) { return null;
+        } if (y >= Engine.Inventory.upArrowY && y < Engine.Inventory.upArrowY + 16) { return 'up';
+        } if (y >= Engine.Inventory.downArrowY && y < Engine.Inventory.downArrowY + 16) { return 'down';
+        } return null;
+    },
+    CanScrollDialogueTextUp: function () { var d=Engine.State.dialogue;
+        return !!(d && d.textBlocks && d.textBlocks.length > 1 && d.textBlockIndex > 0);
+    },
+    CanScrollDialogueTextDown: function () { var d=Engine.State.dialogue;
+        return !!(d && d.textBlocks && d.textBlocks.length > 1 && d.textBlockIndex < d.textBlocks.length-1);
+    },
+    ScrollDialogueText: function (delta) { var d=Engine.State.dialogue;
+        if (!d || !d.textBlocks || d.textBlocks.length <= 1) { return;
+        }
+        d.textBlockIndex=Clamp((d.textBlockIndex||0)+delta,0,d.textBlocks.length-1);
+        d.timer=0;
+        Engine.Dialogue.SetCurrentBlockDuration();
     },
     GetDialogueChoiceArrowAtPoint: function (x, y) { if (x < Engine.Inventory.arrowX || x >= 318) { return null;
         } if (y >= Engine.Inventory.upArrowY && y < Engine.Inventory.upArrowY + 16) { return 'up';
