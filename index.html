@@ -120,7 +120,7 @@
     Engine.State = {
         mode: 'boot', gameId: null, currentRoomId: null, selectedVerbId: 'walkTo', selectedInventoryItemId: null,
         hoveredTargetId: null, hoveredInventoryItemId: null, pointerX: 0, pointerY: 0, pendingCommand: null,
-        activeCutscene: null, cutsceneQueue: [], activeOverlay: null, flags: {}, variables: {}, dialogueMemory: {}, inputPrompt: null, geometry: { activeTriggers:{} }, scopedVariables: { rooms:{}, characters:{}, items:{} }, roomStates: {}, objectStates: {}, characterStates: {}, inventory: [], inventoryScroll: 0,
+        activeCutscene: null, cutsceneQueue: [], activeOverlay: null, flags: {}, variables: {}, dialogueMemory: {}, inputPrompt: null, geometry: { activeTriggers:{} }, transitionDebounce: { roomId:null, zoneId:null, active:false }, scopedVariables: { rooms:{}, characters:{}, items:{} }, roomStates: {}, objectStates: {}, characterStates: {}, inventory: [], inventoryScroll: 0,
         endGame: { title: '', text: '', endingId: null, background: null, animation: null, animationStarted: 0 },
         gameStarted: false,
         previousMode: null,
@@ -2813,7 +2813,7 @@
     Engine.Rooms = {
         GetCurrentRoom: function () { return Engine.CurrentGame.rooms[Engine.State.currentRoomId];
         },
-        EnterRoom: function (roomId, x, y, facing, options) {
+        EnterRoom: function (roomId, x, y, facing, options) { Engine.Rooms.ClearTransitionDebounce();
             options = options || {};
             var room = Engine.CurrentGame.rooms[roomId];
             if (!room) { Engine.Dialogue.ShowLine(null,'Missing room: '+roomId,{});
@@ -3091,12 +3091,42 @@
             this.UpdateFollowers(dt);
             this.ApplyActorAvoidance();
         },
-        MakeTransitionState: function (state, zone, context, result) {
+        GetTransitionZoneId: function (zone, index) { if (!zone) { return null;
+        } return zone.id || zone.name || String(index);
+    },
+    GetActiveTransitionZoneId: function (zones, player) { for (var i=0;i<zones.length;i++) { var z=zones[i];
+            if (z.rect && PointInRect(player.x,player.y,z.rect)) { return this.GetTransitionZoneId(z,i);
+            }
+        } return null;
+    },
+    UpdateTransitionDebounce: function (room, zones, player) { var debounce=Engine.State.transitionDebounce;
+        if (!debounce || !debounce.active) { return;
+        }
+        if (!room || debounce.roomId !== Engine.State.currentRoomId) { Engine.State.transitionDebounce={ roomId:null, zoneId:null, active:false };
+            return;
+        }
+        var activeZoneId=this.GetActiveTransitionZoneId(zones,player);
+        if (activeZoneId !== debounce.zoneId) { Engine.State.transitionDebounce={ roomId:null, zoneId:null, active:false };
+        }
+    },
+    IsTransitionDebounced: function (zone, index) { var debounce=Engine.State.transitionDebounce;
+        return !!(debounce && debounce.active && debounce.roomId === Engine.State.currentRoomId && debounce.zoneId === this.GetTransitionZoneId(zone,index));
+    },
+    ArmTransitionDebounce: function (zone, index, context) { if (!zone || !zone.rect) { return;
+        }
+        if (context && context.fromRoomId && context.fromRoomId !== Engine.State.currentRoomId) { return;
+        }
+        Engine.State.transitionDebounce={ roomId:Engine.State.currentRoomId, zoneId:this.GetTransitionZoneId(zone,index), active:true };
+    },
+    ClearTransitionDebounce: function () { Engine.State.transitionDebounce={ roomId:null, zoneId:null, active:false };
+    },
+    MakeTransitionState: function (state, zone, context, result) {
             return { state:state, zone:zone||null, context:context||null, result:result||null };
         },
         CheckTransitions: function () { var room=this.GetCurrentRoom();
             var zones=room.transitionZones||[];
             var p=Engine.State.player;
+            this.UpdateTransitionDebounce(room,zones,p);
             for (var i=0;i<zones.length;i++) { var z=zones[i];
                 if (z.enabledFlag && !Engine.State.flags[z.enabledFlag]) { continue;
                 } if (z.disabledFlag && Engine.State.flags[z.disabledFlag]) { continue;
@@ -3106,8 +3136,11 @@
                     var enabledFacade=enabledObject ? Engine.Entities.CreateConstFacade(enabledObject,Engine.Entities.DetectType(enabledObject),{context:{purpose:'transition',transition:z}}) : null;
                     if (!enabledObject || !enabledFacade.GetBool(enabledProperty,!!enabledDefault)) { continue;
                     }
-                } if (z.rect && PointInRect(p.x,p.y,z.rect)) { var context={ transition:z, fromRoomId:Engine.State.currentRoomId, toRoomId:z.targetRoomId||null, player:Engine.State.player };
-                    if (Engine.Hooks.RunTransitionHook(z,'beforeTransition',context) === false) { return this.MakeTransitionState('blocked',z,context,Engine.ActionResults.Blocked({action:'transition',reason:'beforeTransitionCancelled',targetId:z.id||null,roomId:Engine.State.currentRoomId}));
+                } if (z.rect && PointInRect(p.x,p.y,z.rect)) { if (this.IsTransitionDebounced(z,i)) { continue;
+                    }
+                    var context={ transition:z, fromRoomId:Engine.State.currentRoomId, toRoomId:z.targetRoomId||null, player:Engine.State.player };
+                    if (Engine.Hooks.RunTransitionHook(z,'beforeTransition',context) === false) { this.ArmTransitionDebounce(z,i,context);
+                        return this.MakeTransitionState('blocked',z,context,Engine.ActionResults.Blocked({action:'transition',reason:'beforeTransitionCancelled',targetId:z.id||null,roomId:Engine.State.currentRoomId}));
                     } if (z.script) { var scriptResult=Engine.Scripts.Run(z.script,context,'transition script '+z.script);
                         var state=Engine.State.mode==='ended' ? 'ended' : 'scripted';
                         var fallback=state==='ended' ? Engine.ActionResults.Ended({action:'transition',reason:'scriptEndedGame',targetId:z.id||null,roomId:Engine.State.currentRoomId}) : Engine.ActionResults.Transitioned({action:'transition',reason:'scriptedTransition',targetId:z.id||null,roomId:Engine.State.currentRoomId});
@@ -3116,10 +3149,12 @@
                         if (result.status==='blocked' || result.status==='cancelled' || result.status==='superseded') { state='blocked';
                         } else if (result.status==='ended') { state='ended';
                         }
+                        this.ArmTransitionDebounce(z,i,context);
                         return this.MakeTransitionState(state,z,context,result);
                     } if (this.EnterRoom(z.targetRoomId,z.targetX,z.targetY,z.targetFacing,{ transition:z }) !== false) { Engine.Hooks.RunTransitionHook(z,'afterTransition',context);
                         return this.MakeTransitionState('transitioned',z,context,Engine.ActionResults.Transitioned({action:'transition',reason:'roomTransition',targetId:z.id||null,roomId:z.targetRoomId||Engine.State.currentRoomId}));
-                    } return this.MakeTransitionState('blocked',z,context,Engine.ActionResults.Blocked({action:'transition',reason:'roomTransitionCancelled',targetId:z.id||null,roomId:Engine.State.currentRoomId}));
+                    } this.ArmTransitionDebounce(z,i,context);
+                    return this.MakeTransitionState('blocked',z,context,Engine.ActionResults.Blocked({action:'transition',reason:'roomTransitionCancelled',targetId:z.id||null,roomId:Engine.State.currentRoomId}));
                 } } return this.MakeTransitionState('none',null,null,null);
         }
     };
