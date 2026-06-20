@@ -33,15 +33,15 @@ The project is aimed at a workflow where a human describes the game in a concise
 
 Some browsers block `fetch("games.json")` from `file://` URLs. For reliable local testing, run a simple local web server from the project folder:
 
-```bash
+
 python3 -m http.server 8000
-```
+
 
 Then open:
 
-```text
+
 http://localhost:8000/
-```
+
 
 The optional `games.js` file exists as a direct-file fallback manifest for simple local tests, but a local web server is the recommended way to test.
 
@@ -57,7 +57,7 @@ A web deployment is static: no server-side code is needed.
 
 A typical `games.json` entry looks like this:
 
-```json
+
 {
   "games": [
     {
@@ -69,19 +69,18 @@ A typical `games.json` entry looks like this:
     }
   ]
 }
-```
+
 
 Before deployment, run the validator from the project root:
 
-```bash
+
 python3 validator.py gameId/gameId.js --engine index.html --check-assets --report validation_report.txt
-```
+
 
 For the normal layout `gameId/gameId.js`, the validator infers `gameId/` as the asset root. If the game script is somewhere else, pass the asset folder explicitly:
 
-```bash
 python3 validator.py scripts/gameId.js --engine index.html --asset-root gameId/ --check-assets --report validation_report.txt
-```
+
 
 Fix all validator errors before deployment. Treat warnings as issues unless they are deliberately harmless and documented.
 
@@ -124,7 +123,7 @@ At every stage, provide the latest relevant files or outputs from previous stage
 
 #### Stage 1 prompt - intake and assumptions
 
-```text
+
 You are authoring a PointClickEngine game. Use API-ref.md and the completed GDD.
 
 For this reply only, perform Stage 1: intake and assumptions.
@@ -139,11 +138,10 @@ Output:
 5. A concise list of files you will need in later stages.
 
 End by saying whether I should ask for Stage 2 or answer clarification questions.
-```
+
 
 #### Stage 2 prompt - pre-implementation plan
 
-```text
 Proceed to Stage 2: pre-implementation plan.
 
 Do not generate game code, assets, registry files, or package archives.
@@ -163,11 +161,11 @@ Using the Stage 1 assumptions and the GDD, output:
 12. Initial asset and audio requirements.
 
 End by asking me to approve the plan or request revisions.
-```
+
 
 #### Stage 3 prompt - revise the plan, if needed
 
-```text
+
 Revise the Stage 2 plan using these notes:
 
 [insert notes]
@@ -175,13 +173,13 @@ Revise the Stage 2 plan using these notes:
 Do not generate game code, assets, registry files, or package archives.
 
 Output only the revised sections and a short list of consequences for later stages.
-```
+
 
 If the Stage 2 plan is acceptable, skip this revision prompt and proceed to Stage 4.
 
 #### Stage 4 prompt - asset, visual, and audio planning
 
-```text
+
 The Stage 2 plan is approved. Proceed to Stage 4: asset, visual, and audio planning.
 
 Do not generate the game script yet.
@@ -196,11 +194,11 @@ Output:
 7. Exact instructions for replacing temporary silence or placeholder assets later.
 
 End by asking me to approve the asset/audio plan or request revisions.
-```
+
 
 #### Stage 5 prompt - implementation
 
-```text
+
 The Stage 2 plan and Stage 4 asset/audio plan are approved.
 
 Proceed to Stage 5: implementation generation.
@@ -215,11 +213,10 @@ Rules:
 - Keep all mutable game state in public engine state or template runtime variables.
 
 Output downloadable files plus implementation notes.
-```
+
 
 #### Stage 6 prompt - validation and fixes
 
-```text
 Proceed to Stage 6: self-validation and quality/depth review.
 
 Use the exact files generated in Stage 5.
@@ -237,11 +234,10 @@ Run or simulate the required validation as far as this environment allows:
 10. Runtime test plan.
 
 If any issue is found, fix it before handoff and regenerate files with unique filenames.
-```
+
 
 #### Stage 7 prompt - handoff
 
-```text
 Proceed to Stage 7: handoff.
 
 Provide:
@@ -259,7 +255,6 @@ Provide:
 12. Registry snippets or merged registry files if I supplied the current registry.
 
 Do not claim that any validator or runtime test passed unless it was actually run.
-```
 
 ### 5. Coding-harness authoring
 
@@ -267,7 +262,6 @@ Use this mode with a repository-aware coding agent that can edit files and run c
 
 A suitable coding-harness task is:
 
-```text
 Create a new PointClickEngine game from the completed GDD using API-ref.md.
 
 Follow AGENTS.md exactly.
@@ -284,7 +278,6 @@ Run validator.py with the generated game and write the validation report.
 Fix all validator errors and any serious semantic issues listed in AGENTS.md before final handoff.
 
 Do not modify games.json or games.js unless those files are supplied and the task explicitly asks for a merge.
-```
 
 A coding harness can reduce the manual burden because it can create intermediate files, run validator.py, and iterate on failures. It still needs clear repository instructions, reliable validation commands, and review of the final game.
 
@@ -301,7 +294,6 @@ Run validator.py, fix all errors, then test in the browser. Human testing should
 
 Canonical layout:
 
-```text
 index.html
 README.md
 API-ref.md
@@ -316,7 +308,6 @@ gameId/objects/*.png
 gameId/ui/*.png
 gameId/music/*
 gameId/sounds/*
-```
 
 ### Important files
 
