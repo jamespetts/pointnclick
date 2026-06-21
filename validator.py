@@ -11,10 +11,57 @@ import argparse
 import io
 import os
 import re
+import subprocess
 import sys
 
 ENGINE_API_VERSION = 1
 KNOWN_TEMPLATES = set(['door', 'key', 'map', 'pickup', 'container', 'switch', 'readable', 'device', 'furniture', 'barrier', 'combine', 'openableBox', 'exchange', 'multiRequirement', 'gatekeeper', 'costume', 'toolTarget', 'clueUnlocker', 'distractible'])
+
+# Exact public template actions accepted in interaction values of the form
+# template:templateName.actionName. This must match the actions implemented by
+# the engine. Do not infer action names from verb ids: for example, the readable
+# template contributes lookAt/use interactions, but its action name is read.
+KNOWN_TEMPLATE_ACTIONS = {
+    'door': set(['lookAt', 'open', 'close', 'useKey', 'walkTo']),
+    'key': set([]),
+    'map': set(['show', 'lookPlace', 'travelPlace']),
+    'pickup': set(['lookAt', 'take']),
+    'container': set(['lookAt', 'open', 'close', 'useKey']),
+    'switch': set(['lookAt', 'toggle', 'turnOn', 'turnOff']),
+    'readable': set(['read']),
+    'device': set(['lookAt', 'use']),
+    'furniture': set(['lookAt']),
+    'barrier': set(['lookAt']),
+    'combine': set(['use']),
+    'openableBox': set(['open']),
+    'exchange': set(['give']),
+    'multiRequirement': set(['add']),
+    'gatekeeper': set(['talkTo', 'check']),
+    'costume': set(['use']),
+    'toolTarget': set(['use']),
+    'clueUnlocker': set(['unlock']),
+    'distractible': set(['distract'])
+}
+TEMPLATE_CONTRIBUTED_INTERACTIONS = {
+    'door': {'lookAt':'template:door.lookAt', 'open':'template:door.open', 'close':'template:door.close', 'use':'template:door.useKey', 'walkTo':'template:door.walkTo'},
+    'map': {'lookAt':'template:map.show'},
+    'pickup': {'lookAt':'template:pickup.lookAt', 'take':'template:pickup.take'},
+    'container': {'lookAt':'template:container.lookAt', 'open':'template:container.open', 'close':'template:container.close', 'use':'template:container.useKey'},
+    'switch': {'lookAt':'template:switch.lookAt', 'use':'template:switch.toggle', 'open':'template:switch.turnOn', 'close':'template:switch.turnOff'},
+    'readable': {'lookAt':'template:readable.read', 'use':'template:readable.read'},
+    'device': {'lookAt':'template:device.lookAt', 'use':'template:device.use'},
+    'furniture': {'lookAt':'template:furniture.lookAt'},
+    'barrier': {'lookAt':'template:barrier.lookAt'},
+    'combine': {'use':'template:combine.use'},
+    'openableBox': {'open':'template:openableBox.open', 'use':'template:openableBox.open'},
+    'exchange': {'give':'template:exchange.give'},
+    'multiRequirement': {'give':'template:multiRequirement.add', 'use':'template:multiRequirement.add'},
+    'gatekeeper': {'talkTo':'template:gatekeeper.talkTo', 'use':'template:gatekeeper.check', 'give':'template:gatekeeper.check'},
+    'costume': {'use':'template:costume.use'},
+    'toolTarget': {'use':'template:toolTarget.use'},
+    'clueUnlocker': {'lookAt':'template:clueUnlocker.unlock', 'use':'template:clueUnlocker.unlock'},
+    'distractible': {'use':'template:distractible.distract', 'give':'template:distractible.distract'}
+}
 GAME_HOOKS = set(['beforeRoomEnter', 'afterRoomEnter', 'beforeRoomExit', 'afterRoomExit', 'beforeTransition', 'afterTransition', 'beforeCommand', 'afterCommand', 'onInventoryChanged', 'beforeCutscene', 'afterCutscene', 'onMenuEnter', 'onMenuExit'])
 ROOM_HOOKS = set(['beforeEnter', 'afterEnter', 'beforeExit', 'afterExit'])
 TRANSITION_HOOKS = set(['beforeTransition', 'afterTransition'])
@@ -373,7 +420,12 @@ def validate_script(log, scripts, name, where, required=False, template_ok=True)
             return
         parts = name[len('template:'):].split('.')
         if len(parts) != 2 or parts[0] not in KNOWN_TEMPLATES:
-            log.error('TEMPLATE_ACTION_INVALID', 'Template action reference is invalid.', where=where, script=name)
+            log.error('TEMPLATE_ACTION_INVALID', 'Template action reference is invalid. Use template:templateName.actionName with a known template and an explicitly documented action name.', where=where, script=name)
+            return
+        actions = KNOWN_TEMPLATE_ACTIONS.get(parts[0], set([]))
+        if parts[1] not in actions:
+            expected = ','.join(sorted(actions)) if actions else '(no public actions)'
+            log.error('TEMPLATE_ACTION_INVALID', 'Template action reference names an action that the template does not implement. Do not infer action names from verb ids; use the exact action names documented for the template.', where=where, script=name, template=parts[0], action=parts[1], expectedActions=expected)
         return
     if name not in scripts:
         if required:
@@ -391,6 +443,29 @@ def validate_templates(log, obj, where):
     for name in raw:
         if name and name not in KNOWN_TEMPLATES:
             log.error('TEMPLATE_UNKNOWN', 'Unknown template name.', where=where, template=name)
+
+
+def get_template_names_from_obj(obj):
+    raw = []
+    for field in ['template', 'templateId', 'kind']:
+        val = sprop(obj, field)
+        if val:
+            raw += re.split(r'[\s,]+', val)
+    raw += arr_strings(prop(obj, 'templates'))
+    return [name for name in raw if name]
+
+def validate_template_interaction_overrides(log, obj, where):
+    interactions = prop(obj, 'interactions')
+    if not interactions or not interactions.strip().startswith('{'):
+        return
+    entries = dict(top_entries(interactions))
+    for template_name in get_template_names_from_obj(obj):
+        contributed = TEMPLATE_CONTRIBUTED_INTERACTIONS.get(template_name, {})
+        for verb, expected in contributed.items():
+            if verb in entries:
+                actual = string_value(entries[verb])
+                if actual and actual != expected:
+                    log.warn('TEMPLATE_INTERACTION_OVERRIDDEN', 'Entity explicitly overrides an interaction normally contributed by its template. This is allowed only when deliberate; for ordinary template behaviour, omit the interaction and let the template contribute it.', where=where + '.interactions.' + verb, template=template_name, expectedDefault=expected, actual=actual)
 
 def validate_images(log, base, asset_root, obj, where, default_role, exists):
     for field, role in IMAGE_ROLES.items():
@@ -560,7 +635,9 @@ def validate_game(game, source_text, script_path, engine_path, log, check_assets
             log.warn('ITEM_ID_MISMATCH', 'Item id does not match its object key.', key=item_id, id=inner)
         validate_templates(log, item, 'items.' + item_id)
         validate_images(log, base, asset_root, item, 'items.' + item_id, 'itemIcon', check_assets)
+        validate_templates(log, item, 'items.' + item_id)
         validate_interactions(log, scripts, item, 'items.' + item_id)
+        validate_template_interaction_overrides(log, item, 'items.' + item_id)
         validate_getters(log, scripts, item, 'items.' + item_id)
         validate_script_fields(log, scripts, item, 'items.' + item_id)
         for target in arr_strings(prop(item, 'unlocks')):
@@ -598,7 +675,9 @@ def validate_game(game, source_text, script_path, engine_path, log, check_assets
                 log.warn('ITEM_REF_MISSING', 'Room object itemId references a missing item.', where=hwhere + '.itemId', itemId=item)
             validate_templates(log, hot, hwhere)
             validate_images(log, base, asset_root, hot, hwhere, 'hotspot', check_assets)
+            validate_templates(log, hot, hwhere)
             validate_interactions(log, scripts, hot, hwhere)
+            validate_template_interaction_overrides(log, hot, hwhere)
             validate_getters(log, scripts, hot, hwhere)
             validate_script_fields(log, scripts, hot, hwhere)
             validate_point(log, hot, 'walkTo', hwhere + '.walkTo')
@@ -611,7 +690,9 @@ def validate_game(game, source_text, script_path, engine_path, log, check_assets
             sid = sprop(ch, 'spriteId')
             if sid and sid not in sprite_ids:
                 log.warn('SPRITE_REF_MISSING', 'Character references a missing sprite.', where=cwhere + '.spriteId', spriteId=sid)
+            validate_templates(log, ch, cwhere)
             validate_interactions(log, scripts, ch, cwhere)
+            validate_template_interaction_overrides(log, ch, cwhere)
             validate_getters(log, scripts, ch, cwhere)
         for idx, zone in arr_objects(prop(room, 'transitionZones')):
             zwhere = where + '.transitionZones[' + str(idx) + ']'
@@ -637,6 +718,45 @@ def validate_game(game, source_text, script_path, engine_path, log, check_assets
         for eid, ending in top_entries(endings):
             validate_images(log, base, asset_root, ending, 'endings.' + eid, 'endBackground', check_assets)
     log.info('STRUCTURE_CHECKED', 'Declarative structure checks completed.', rooms=len(room_ids), items=len(item_ids), scripts=len(scripts))
+
+
+def find_executable(name):
+    paths = os.environ.get('PATH', '').split(os.pathsep)
+    exts = ['']
+    if os.name == 'nt':
+        exts = os.environ.get('PATHEXT', '.EXE;.BAT;.CMD').split(';')
+    for folder in paths:
+        candidate = os.path.join(folder, name)
+        for ext in exts:
+            path = candidate + ext
+            if os.path.isfile(path) and os.access(path, os.X_OK):
+                return path
+    return None
+
+def check_js_syntax(log, script_path, required=True):
+    node = find_executable('node')
+    if not node:
+        if required:
+            log.warn('JS_SYNTAX_CHECK_NOT_RUN', 'Node.js was not found on PATH, so JavaScript parser syntax checking was not run. Install Node.js or run node --check manually before runtime testing.', path=script_path)
+        return True
+    try:
+        proc = subprocess.Popen([node, '--check', script_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        out, err = proc.communicate()
+    except Exception as exc:
+        log.warn('JS_SYNTAX_CHECK_FAILED_TO_RUN', 'Could not run node --check. JavaScript syntax was not verified.', path=script_path, error=exc)
+        return True
+    if proc.returncode != 0:
+        try:
+            err_text = err.decode('utf-8', 'replace') if not isinstance(err, str) else err
+        except Exception:
+            err_text = str(err)
+        first_line = err_text.strip().splitlines()[0] if err_text.strip() else 'node --check failed'
+        log.error('JS_SYNTAX_ERROR', 'JavaScript parser rejected the game script. The game cannot boot until this is fixed.', path=script_path, detail=first_line)
+        for line in err_text.strip().splitlines()[0:8]:
+            log.error('JS_SYNTAX_ERROR_DETAIL', line, path=script_path)
+        return False
+    log.info('JS_SYNTAX_CHECKED', 'JavaScript syntax check passed using node --check.', path=script_path)
+    return True
 
 def discover_game_scripts():
     candidates = []
@@ -670,6 +790,7 @@ def run(argv):
     parser.add_argument('--check-assets', action='store_true', help='Also check that referenced asset files exist.')
     parser.add_argument('--asset-root', default=None, help='Asset folder relative to the engine file. If omitted, inferred from the game script folder.')
     parser.add_argument('--report', default='', help='Optional path to write the same log output.')
+    parser.add_argument('--no-js-syntax', action='store_true', help='Skip node --check JavaScript parser validation. Not recommended for handoff.')
     args = parser.parse_args(argv)
     log = Log()
     if not args.game_script:
@@ -701,6 +822,8 @@ def run(argv):
         log.summary()
         write_report(args.report, log)
         return 1
+    if not args.no_js_syntax:
+        check_js_syntax(log, args.game_script, required=True)
     game = extract_game(text, log)
     if game:
         validate_game(game, text, args.game_script, args.engine, log, args.check_assets, args.asset_root)
