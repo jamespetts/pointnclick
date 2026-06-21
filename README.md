@@ -84,211 +84,132 @@ python3 validator.py scripts/gameId.js --engine index.html --asset-root gameId/ 
 
 Fix all validator errors before deployment. Treat warnings as issues unless they are deliberately harmless and documented.
 
-## Getting started with AI-authored games
+## Getting started with AI-assisted games
 
-### 1. Write the GDD
+The known good human-guided process is **one room at a time**. Do not ask a chat AI to generate the entire game from its own reworked GDD in a single implementation step. That process has proved ineffective because the AI tends to replace the human's design control with an over-broad internal redesign.
 
-Copy GDD-template.md and fill in as much or as little as needed. At minimum, provide:
+Instead, the human should keep control of the overall game structure and provide the function of the current room and its main elements. The AI should then fill in implementation details from the GDD and API-ref.md, using the engine's canonical systems.
+
+### 1. Write or maintain the GDD
+
+Use GDD-template.md as the human design source. At minimum, maintain:
 - title;
 - setting;
 - one-sentence premise or objective;
 - overall style and humour/serious tone;
-- player character.
+- player character;
+- current room list or intended room sequence;
+- known puzzles, objects, characters, and endings.
 
-Use `default` where the AI should decide and `none` where something must not appear. Copy the repeating blocks for rooms, characters, puzzles, objects, cutscenes, and endings as needed.
+The GDD does not need to contain every hotspot or refusal. In the one-room workflow, the human supplies the current room's role and main elements, and the AI may fill in minor details that are consistent with the GDD.
 
-### 2. Choose the authoring mode
-
-PointClickEngine supports two practical AI authoring modes:
-
-1. **Coding-harness authoring**, for tools such as Codex that can read and edit the repository, run commands, run validator.py, and iterate on failures.
-2. **Manual staged chat authoring**, for chat environments where the human must ask for one authoring stage at a time.
-
-Do not assume that a chat model will reliably manage the whole multi-stage process by itself. In manual staged chat authoring, use the prompts below. In coding-harness authoring, use AGENTS.md and the repository validation commands.
-
-### 3. Give the AI the authoring pack
+### 2. Give the AI the authoring pack
 
 For ordinary game-script authoring, give the AI:
 - API-ref.md;
-- the completed GDD;
-- validator.py, or the validator report format/instructions.
+- the current game script or relevant script section;
+- the completed or current GDD;
+- validator.py or a recent validation report when validation is part of the task.
 
 Do **not** give the AI index.html unless you are asking it to modify the engine itself or to run validation that needs the engine file. Game authors should use only the public API described in API-ref.md.
 
-### 4. Manual staged chat authoring
+### 3. Work one room at a time
 
-Use this section when working in a chat interface where the AI cannot reliably maintain its own multi-step authoring state. Ask for one stage at a time. Do not ask for the whole game in one prompt.
+For each room, the human should provide a concise room brief:
+- room id and display name;
+- room function in the game, such as gate, puzzle room, clue room, transition, hub, payoff, or ambience;
+- how the player reaches and leaves the room;
+- main visible elements, NPCs, doors, objects, signs, machines, or red herrings;
+- required puzzle functions or state changes in this room;
+- clues or information this room should communicate;
+- items that can be obtained, used, altered, or checked here;
+- relevant existing flags, variables, object variables, item variables, dialogue state, or inventory state;
+- whether the request is for a plan, a code change, a review, or a bug fix.
 
-At every stage, provide the latest relevant files or outputs from previous stages. If the AI starts generating later-stage files too early, stop and repeat the current stage prompt.
+The AI should implement only the requested room or change unless the human explicitly asks for wider integration work.
 
-#### Stage 1 prompt - intake and assumptions
+### 4. Room prompt template
 
+A useful room-by-room prompt is:
 
-You are authoring a PointClickEngine game. Use API-ref.md and the completed GDD.
+```text
+Use API-ref.md as the engine contract and use the attached/current game script as the source of truth.
 
-For this reply only, perform Stage 1: intake and assumptions.
+We are working only on room: [roomId].
+Do not rewrite unrelated rooms or global systems unless required for this room's integration.
 
-Do not generate game code, assets, registry files, or package archives.
+Room function:
+[describe the role of the room]
 
-Output:
-1. GDD summary.
-2. Missing or ambiguous information.
-3. Assumptions that let you proceed without changing the GDD's intent.
-4. Any engine-extension needs.
-5. A concise list of files you will need in later stages.
+Main elements:
+[list important objects, NPCs, exits, signs, machines, red herrings, clues]
 
-End by saying whether I should ask for Stage 2 or answer clarification questions.
+Required player-visible behaviour:
+[list required commands, puzzle steps, state changes, transitions, dialogue, refusals]
 
+Existing state/inventory context:
+[list relevant flags, variables, object/item variables, items, dialogue state]
 
-#### Stage 2 prompt - pre-implementation plan
+Please fill in reasonable minor details from the GDD.
+Use declarative data, templates, effective properties/getters, dialogue trees, cutscene data, and refusals before custom scripts.
+If a custom script is necessary, explain why the canonical declarative mechanisms are insufficient.
+Return only the requested plan, code section, replacement file, or review.
+```
 
-Proceed to Stage 2: pre-implementation plan.
+### 5. What the AI should provide for a room
 
-Do not generate game code, assets, registry files, or package archives.
+For a new room or substantial room revision, ask the AI for:
+- a short room implementation plan;
+- room hotspots, characters, transition zones, trigger zones, dialogue, and inventory links as needed;
+- a state model for this room's persistent state;
+- a template/effective-property decision note for important objects;
+- a custom-script justification for any custom scripts;
+- walkthrough command coverage for required actions in the room;
+- transition continuity notes for exits and entrances;
+- clueing and wrong-attempt feedback notes for non-trivial puzzles;
+- functional visual legibility notes for signs, maps, terminals, diagrams, closeups, puzzle panels, overlays, and UI-like images;
+- validation notes or validator output where available.
 
-Using the Stage 1 assumptions and the GDD, output:
-1. Normalised design plan.
-2. Content-role and required-depth plan.
-3. Room graph.
-4. Puzzle dependency graph.
-5. Dialogue plan.
-6. Transition continuity matrix.
-7. Walkthrough command coverage matrix.
-8. Clue gradient audit.
-9. Functional visual legibility plan.
-10. State model.
-11. Registry strategy.
-12. Initial asset and audio requirements.
+For a small fix, ask for the minimal change only, but still require the AI to preserve templates, effective properties, state ownership, and existing behaviour.
 
-End by asking me to approve the plan or request revisions.
+### 6. Declarative implementation expectations
 
+In the one-room workflow, insist on these rules:
+Use effective properties/getters wherever the API supports them for state-dependent text, visibility, blocking, sprites, available interactions, and refusal text.
 
-#### Stage 3 prompt - revise the plan, if needed
+- standard adventure objects should use templates where possible;
+- state-dependent text, visibility, blocking, sprites, available interactions, and refusal text should use effective properties/getters wherever the API supports them;
+- mutable state must use public engine state APIs or template runtime variables;
+- template-owned runtime variables must not be duplicated with separate flags unless the separate flag has an independent story-level purpose;
+- custom scripts are acceptable only for distinctive side effects, inventory changes, dialogue/cutscene starts, room changes, or puzzle logic that cannot be expressed declaratively;
+- every custom script should have a brief justification.
 
+### 7. Integrate rooms gradually
 
-Revise the Stage 2 plan using these notes:
+After each room is implemented:
+- validate syntax and run validator.py when available;
+- playtest the room's required command paths;
+- test transitions into and out of the room;
+- test relevant save/load state;
+- check that clues, refusals, and wrong attempts make sense without reading the implementation;
+- then move to the next room.
 
-[insert notes]
+Avoid asking the AI to regenerate the whole game from a reinterpreted GDD. If a later room requires a shared state or earlier clue, make a targeted change to the earlier room instead.
 
-Do not generate game code, assets, registry files, or package archives.
+### 8. Coding-harness authoring
 
-Output only the revised sections and a short list of consequences for later stages.
+For repository-aware automatic coding agents, use AGENTS.md. AGENTS.md should carry repository workflow rules, authoring-stage document requirements, validation commands, and handoff requirements. README.md documents the human-guided one-room process.
 
-
-If the Stage 2 plan is acceptable, skip this revision prompt and proceed to Stage 4.
-
-#### Stage 4 prompt - asset, visual, and audio planning
-
-
-The Stage 2 plan is approved. Proceed to Stage 4: asset, visual, and audio planning.
-
-Do not generate the game script yet.
-
-Output:
-1. Visual style brief.
-2. style_reference_sheet specification or generated style reference if available.
-3. Asset manifest with visual acceptance notes.
-4. Music cue manifest.
-5. Sound-effect manifest.
-6. Notes on any assets that cannot be generated in this environment.
-7. Exact instructions for replacing temporary silence or placeholder assets later.
-
-End by asking me to approve the asset/audio plan or request revisions.
-
-
-#### Stage 5 prompt - implementation
-
-
-The Stage 2 plan and Stage 4 asset/audio plan are approved.
-
-Proceed to Stage 5: implementation generation.
-
-Generate the game script and any files/assets that this environment can actually produce.
-
-Rules:
-- Use unique filenames for generated files.
-- Do not generate replacement games.json or games.js unless I supplied the current files.
-- If binary image/audio generation is unavailable, create specifications or clearly labelled prototype assets only.
-- Use templates and declarative data before custom scripts.
-- Keep all mutable game state in public engine state or template runtime variables.
-
-Output downloadable files plus implementation notes.
-
-
-#### Stage 6 prompt - validation and fixes
-
-Proceed to Stage 6: self-validation and quality/depth review.
-
-Use the exact files generated in Stage 5.
-
-Run or simulate the required validation as far as this environment allows:
-1. API-contract validation.
-2. Structural validator, if validator.py and index.html are available.
-3. Walkthrough command coverage check.
-4. Transition continuity check.
-5. Dialogue escape check.
-6. Linked item look/read check.
-7. Clue gradient check.
-8. Functional visual legibility check.
-9. Quality/depth review.
-10. Runtime test plan.
-
-If any issue is found, fix it before handoff and regenerate files with unique filenames.
-
-
-#### Stage 7 prompt - handoff
-
-Proceed to Stage 7: handoff.
-
-Provide:
-1. Links to final generated files.
-2. Implementation notes.
-3. Asset/audio manifest.
-4. Walkthrough.
-5. Walkthrough command coverage matrix.
-6. Transition continuity matrix.
-7. Clue gradient audit.
-8. Functional visual legibility audit.
-9. Quality/depth validation report.
-10. Structural validation report.
-11. Runtime test plan.
-12. Registry snippets or merged registry files if I supplied the current registry.
-
-Do not claim that any validator or runtime test passed unless it was actually run.
-
-### 5. Coding-harness authoring
-
-Use this mode with a repository-aware coding agent that can edit files and run commands. Place AGENTS.md at the repository root and ask the coding agent to follow it.
-
-A suitable coding-harness task is:
-
-Create a new PointClickEngine game from the completed GDD using API-ref.md.
-
-Follow AGENTS.md exactly.
-
-First create the authoring stage files in docs/authoring:
-- 01_intake.md
-- 02_plan.md
-- 03_asset_audio_plan.md
-
-Then generate the implementation under the new game folder only after those files exist.
-
-Run validator.py with the generated game and write the validation report.
-
-Fix all validator errors and any serious semantic issues listed in AGENTS.md before final handoff.
-
-Do not modify games.json or games.js unless those files are supplied and the task explicitly asks for a merge.
-
-A coding harness can reduce the manual burden because it can create intermediate files, run validator.py, and iterate on failures. It still needs clear repository instructions, reliable validation commands, and review of the final game.
-
-### 6. Validate and test
+### 9. Validate and test
 
 Run validator.py, fix all errors, then test in the browser. Human testing should cover:
-- every room transition;
-- all dialogue branches;
-- all inventory actions and combinations used by puzzles;
-- all cutscenes and endings;
-- save/load before and after important state changes.
+- every room transition affected by the current change;
+- all dialogue branches affected by the current change;
+- all inventory actions and combinations used by the current room's puzzles;
+- all cutscenes and endings affected by the current change;
+- save/load before and after important state changes;
+- red-herring fairness and clue-web coverage where relevant;
+- functional visual legibility for maps, signs, terminals, diagrams, closeups, puzzle panels, overlays, and UI-like images.
 
 ## Folder structure
 

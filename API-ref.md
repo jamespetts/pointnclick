@@ -7,6 +7,8 @@ This is the complete public authoring contract for game scripts. The authoring A
 
 Examples use indented plain text blocks labelled `EXAMPLE_START` / `EXAMPLE_END`; no fenced code blocks are used so this file can be embedded in prompts safely.
 
+This document is deliberately limited to the public game-authoring API and data contract. Human-guided authoring workflow and repository-agent operating rules belong outside this API reference.
+
 ## 1. Genre, Mental Model, and Authoring Priorities
 
 PointClickEngine creates early-1990s point-and-click adventure games in the style of SCUMM-era adventures: a 320x200 logical screen, painted room scene, lower verb/inventory interface, clickable hotspots, walking actors, inventory puzzles, dialogue trees, simple sprite animations, overlays/maps, cutscenes, save/load, refusals, and multiple endings.
@@ -18,6 +20,8 @@ Author in this priority order:
 3. Effective properties and getter scripts.
 4. Dialogue trees and cutscene step data.
 5. Custom JavaScript scripts only for distinctive logic that cannot be represented above.
+
+This priority order is mandatory. A locally working custom script is not acceptable when the same behaviour can be expressed by declarative data, a template, an effective property/getter, a dialogue action, a cutscene step, or refusal data.
 
 Do not implement custom rendering, movement loops, inventory UI, dialogue UI, save/load systems, or timer-driven cutscene systems.
 
@@ -44,74 +48,11 @@ Decision process for authoring an interaction:
 - Use a custom script only for distinctive game-specific logic that cannot be expressed by the above.
 
 
-General quality and depth contract:
-- A valid package must not merely run; it must show production-intent design depth appropriate to the requested asset tier, genre, tone, and GDD. Structural validation is necessary but not sufficient.
-- Content parsimony means avoiding redundant systems, filler, duplicated state, and unnecessary branches. It does not mean reducing important rooms, characters, objects, puzzles, clues, descriptions, refusals, dialogue, endings, or visual/audio assets to the smallest technically valid representation.
-- For each authored element, first identify its content role: critical path gate, puzzle source, clue carrier, red herring, worldbuilding element, comic/tonal beat, characterisation beat, reward/payoff, tutorial, transition, ambience, or purely incidental detail. The depth of implementation must match that role.
-- A production-intent adventure game must feel dense enough to reward ordinary point-and-click play: looking at visible things, trying plausible verbs, talking to optional characters, revisiting rooms after state changes, and following false leads. The authoring AI must plan and implement substantial non-critical content as part of the game, not merely the shortest solution path.
-- Red herrings are required by default. A red herring is an interactable, examinable, readable, visible, or conversational element that does not directly solve the critical path but enriches the world, reinforces theme or humour, offers optional clue fragments, or suggests a plausible but ultimately unproductive line of thought. Red herrings must never contradict critical-path information, permanently mislead the player about required mechanics, create unwinnable states, or imply that an actually required action is impossible.
-- Critical path, puzzle-relevant, recurring, gatekeeping, companion, antagonist, or theme-bearing elements require state-aware authored depth unless the GDD explicitly says they should be terse, silent, abstract, or minimalist. Depth may be expressed through dialogue trees, effective-property text, refusals, environmental descriptions, cutscenes, audio/visual design, or puzzle affordances; choose the canonical engine mechanism for the content role.
-- Incidental elements may be concise, but they should still be specific to the game world and tone. Avoid generic first-draft text, interchangeable jokes, unexplained gates, single-line substitutes for major interactions, and content that satisfies only id/reference/path validation.
-- Important clues should normally be represented in more than one channel, such as object description, dialogue, refusal, post-failure hint, environmental signposting, or state change. Repetition should clarify without spoiling and should escalate only after player action or failure.
-- Major conversations should normally be dialogue trees rather than one-line talk scripts. A one-line talkTo script is appropriate only for incidental targets with no puzzle, clue, plot, theme, character, gatekeeping, trade, recruitment, or recurring function.
-- Before handoff, perform a depth review: identify the major content roles, state what each contributes, and revise any element whose implementation is merely functional when its role requires authored depth.
-
-
-## 2A. Room Density, Red Herrings, and Optional Interaction Budget
-
-Production-intent PointClickEngine games must be authored as explorable adventure-game worlds, not only as puzzle dependency graphs. The AI must budget optional density before implementation and must audit it before handoff.
-
-### Density budget defaults
-
-Unless the GDD explicitly requests minimalism, a production-intent game must meet these minimum density budgets:
-- Per ordinary room: at least 8 authored interactable or examinable elements, including critical objects, doors/exits, readable signs, machinery, furniture, scenery, red herrings, clue carriers, and ambience hotspots.
-- Per important hub, gate, puzzle, climax, or theme-heavy room: at least 12 authored interactable or examinable elements.
-- Per deliberately sparse, transitional, or small room: at least 5 authored interactable or examinable elements, unless the GDD explicitly requests a barren or minimalist space and the quality/depth report justifies the exception.
-- Across the whole game: at least half of all authored interactable or examinable elements should be non-critical-path content. This includes worldbuilding, red herrings, optional clues, optional jokes, characterisation beats, false-but-fair leads, readable background material, and plausible non-progressing interactions.
-- Across the whole game: include a substantial number of red herrings. As a default target, plan at least one red herring or false-but-fair lead per ordinary room and at least two in important hub, puzzle, or investigation rooms.
-- For each starting or frequently used inventory item: provide Look At text, a plausible intransitive Use response where appropriate, and several authored wrong-target or non-progressing responses for obvious experiments.
-- For each visible door, hatch, cabinet, machine, terminal, sign, poster, shelf, window, body of water, vehicle, unusual prop, or other prominent room feature: provide at least Look At/readable support unless deliberately hidden, purely decorative, or too small to be a meaningful target. Important doors and containers should normally support Open/Close or explain why those verbs do not apply.
-- Major NPCs should have optional topics beyond required puzzle information. Minor NPCs and background characters may be concise, but a production-intent game should include enough optional conversation to make dialogue discovery rewarding.
-
-These are minimums, not targets. A dialogue-heavy, investigation-heavy, comic, mystery, social, or worldbuilding-heavy GDD should exceed them. If the GDD gives a lower density requirement, obey the GDD but document the lower-density assumption in the quality/depth report.
-
-### Red herring fairness rules
-
-Red herrings and wild-goose-chase elements are valuable because they make the world feel larger than the solution path and allow players to reason, speculate, and be wrong without being punished. They must obey these rules:
-- A red herring may suggest a plausible but unnecessary action, topic, location, item use, or theory.
-- A red herring may contain a subtle clue, partial truth, thematic echo, joke, or misleading emphasis.
-- A red herring must not state false critical-path facts unless the game clearly frames the source as unreliable and supplies corrective evidence before the player is expected to act.
-- A red herring must not make a required solution appear impossible, immoral in a way the protagonist would reject, or mechanically unsupported.
-- A red herring must not consume irreplaceable critical items, permanently close off progress, or create an unwinnable state.
-- A red herring should normally have satisfying feedback when tried: a refusal, joke, small optional reward, worldbuilding detail, or clue clarification.
-- If a false lead is especially attractive, provide gentle correction through later clues, repeated refusals, or NPC comments so the player is not trapped in an unfair line of reasoning.
-
-### Room density plan
-
-Before implementation, the AI must produce a room density plan. For each room, identify:
-- room role: hub, gate, puzzle room, clue room, character room, red-herring room, reward room, transition, ambience, finale, or other;
-- critical-path elements;
-- non-critical examinable elements;
-- red herrings and false-but-fair leads;
-- clue fragments and the puzzles they support;
-- optional conversation or characterisation beats;
-- plausible non-progressing actions and refusals;
-- visible doors/exits and their inspection/open/close behaviour;
-- functional visual details that the room art must show.
-
-### Clue web and false-lead audit
-
-A clue gradient is required for each non-trivial puzzle, but production-intent games must also include a clue web. The clue web maps how players can learn, suspect, misinterpret, test, reject, and eventually confirm puzzle ideas. For each non-trivial puzzle, identify:
-- direct clues needed to solve it;
-- subtle clue fragments distributed through rooms, objects, dialogue, readables, refusals, and visual design;
-- optional clues that deepen or clarify without spoiling;
-- red herrings and false leads related to the same puzzle;
-- why each false lead is fair and how the game prevents it from contradicting the correct solution;
-- at least one plausible wrong attempt and its authored feedback.
-
-### Verb affordance budget
-
-The AI must not author objects only as tokens for required commands. For important objects and inventory items, plan an affordance budget covering the common verbs that players are likely to try. Use data-driven refusals where possible. A plausible non-progressing action should receive a game-specific response rather than a generic default refusal when the action is obvious in context, such as trying to use a tool for its ordinary purpose, open a visible door, read a sign, inspect a machine, or talk to a nearby character.
+Declarative architecture rule:
+- A game script is architecturally valid only if standard behaviours use the canonical engine mechanism: declarative data, then templates, then effective properties/getters, then dialogue/cutscene data, and finally custom scripts only when the behaviour cannot be represented above.
+- State-dependent text, visibility, blocking, sprites, available interactions, transitive-use behaviour, and refusal text should be authored as effective properties/getters wherever the API supports them.
+- A custom interaction script is appropriate only when the command has side effects or control flow that cannot be represented by templates, effective properties, dialogue actions, cutscene data, or refusals.
+- If an entity overrides an interaction contributed by its template, the override should be intentional and should not merely duplicate the template's standard behaviour.
 
 ## 3. Glossary of Engine Concepts
 
@@ -277,12 +218,6 @@ Asset size and image authoring constraints:
 - Ending animation images are PNG spritesheets in `objects/` because the engine resolves `ending.animation.image` with the hotspot/object image role.
 - Dynamic image constraint: the engine preloads only images referenced in documented image fields of the game definition. If a script, getter, template effect, or `SetObjectState` can ever switch to an image path, that path must also be referenced in a preloaded field such as `sprite`, `closedSprite`, `openSprite`, `emptySprite`, `fullSprite`, `onSprite`, `offSprite`, `worldSprite`, `icon`, overlay `image`, map `image`, or ending animation `image`. Otherwise the image may not render at runtime.
 
-Visual asset quality contract:
-- For a playable first pass, runtime art is expected to be production-intent prototype art, not merely validation art. Each gameplay-relevant room, character, object, inventory icon, overlay, and UI element must be designed from its narrative function, material, scale, interaction role, and visual style. It must be recognisable at the size and context in which the engine displays it.
-- Visual parsimony means using the smallest number of well-designed assets that communicate the game clearly. It does not mean substituting undifferentiated marks, arbitrary tokens, or mechanically varied shapes for authored visual design.
-- Placeholder assets are allowed only when the workflow or user explicitly requests placeholders, or when binary image generation is genuinely unavailable. They must be labelled as placeholders in the asset manifest and implementation notes, and the package must state that it is not a production-quality visual first pass.
-- Every important visual asset must have a short visual acceptance note in the asset manifest covering intended reading, distinguishing features, scale/readability context, transparency/background needs, and consistency with the style reference sheet.
-
 Audio:
 
 - Music resolves under `music/`; sound and voice resolve under `sounds/`.
@@ -291,21 +226,6 @@ Audio:
 - Voice fields/options are a single relative filename string, not an array.
 - Use browser-supported audio file types such as `.ogg`, `.mp3`, or `.wav`. The engine does not validate audio extensions.
 - Music loops until replaced or stopped; sound effects and voice are one-shot.
-
-Audio authoring deliverables:
-- The GDD is expected to give general music and sound-effect direction, not a complete cue-by-cue specification. Do not require the human to fill in per-cue music or sound-effect blocks.
-- Music is normally expected for an early-1990s point-and-click adventure, even if the style is MIDI-like and the runtime file is MP3 or OGG. Use `[]` only where silence is intentional, such as a deliberately quiet room, title pause, or ending beat.
-- Sound effects are optional and may default to silence. Silent sound effects should be represented by omitting the effect or using `[]`/`null` in public APIs. Do not create placeholder sound files for effects the human has not chosen to include.
-- From the GDD's general audio overview, room moods, cutscenes, endings, and pacing, the authoring AI must derive a music cue manifest. Each cue entry must include id, filename, rooms/screens/endings using it, purpose/mood, style/instrumentation, tempo/energy, looping notes, and an AI music-generator prompt of 1000 characters or fewer.
-- The music cue manifest is required even when binary audio generation is unavailable. Do not omit it merely because the runtime package cannot include audio files. The manifest must identify which room, title, menu, cutscene, and ending music arrays should use each cue once the audio files are generated.
-- Multiple rooms may share one music cue. Prefer reuse for rooms with the same mood or hub area rather than generating unnecessary tracks.
-- For each room or screen, the implementation notes or asset manifest must state the intended music cue id and filename, even when several rooms share one cue. If the game script temporarily uses `[]` because binary audio files are absent, this must be labelled as temporary silence pending generated audio, not as intentional silent design.
-- Use `[]` for music only when silence is an intentional design choice, or as a clearly labelled temporary validation/runtime fallback while the required music cue files are still to be generated. In the latter case, include exact instructions for replacing the temporary `[]` arrays with the cue filenames after generation.
-- From the GDD's general sound-effect direction and the implemented gameplay, the authoring AI must create an optional sound-effect manifest. Each entry must include id, filename, required/optional status, trigger/use, description, an AI sound-generator prompt of 1000 characters or fewer, and implementation notes if needed.
-- Required sound effects are only those needed for gameplay comprehension, timing, feedback, or a specified dramatic beat. Optional effects may be listed for human selection without being referenced by the game script.
-- If a listed optional effect is not referenced by the game script, mark it as optional in the asset manifest and do not require it for validation or runtime testing.
-- Keep audio prompts original and concise. Describe mood, instrumentation, timing, texture, loop behaviour, and era flavour; do not request imitation of a living artist or copying a specific copyrighted track.
-
 
 ## 6. Public Browser Facade: Exact Method Contracts
 
@@ -673,84 +593,167 @@ Actor/player/room character fields: `id`, `name`, `displayName`, `spriteId`, `x`
 
 ## 11. Interactions, Refusals, Effective Properties, and Getter API
 
-This section explains how authoring data becomes runtime behaviour. For an authoring AI, the key rule is: do not write scripts merely to vary text, visibility, blocking, sprites, availability, or refusals by state. Use effective properties, template runtime variables, and getters.
+This section is the main architectural contract for game authors. The authoring AI must prefer declarative data, templates, and effective properties over custom scripts whenever behaviour is a state-dependent answer to an engine question. This is a contract rule, not a style preference.
 
-An effective property is the value the engine actually sees when it asks a question such as "is this object hidden?", "what sprite should this object use?", "what interactions does this target have?", or "what text should Look At display?" The value may come from static data, saved runtime state, a getter script, or a template default.
+Core rule:
+- If the question is "what is this target's current text, sprite, visibility, blocking, walk point, available interactions, transitive-use behaviour, or refusal text?", use an effective property, a template runtime variable, or a property getter.
+- If the action changes inventory, changes rooms, starts dialogue, runs a cutscene, applies a puzzle effect, or performs distinctive story logic, use a template action, dialogue action, cutscene step, or custom script as appropriate.
+- Do not write a custom Look At script merely to choose between description strings. Use effective defaultText or description.
+- Do not write a custom script merely to choose current hidden, sprite, blocksMovement, walkTo, interactions, transitiveUse, or refusals. Use effective properties.
+- Do not duplicate template-owned runtime variables with separate flags unless the separate flag has a distinct story-level meaning.
+- A script that only narrates state-dependent descriptive text, only changes availability, only duplicates template state, or only says no is an architectural error unless a documented API limitation prevents a declarative implementation.
 
-When to use each mechanism:
+### 11.1 Interaction values and template action names
 
-- Use a direct field, such as `hidden:false` or `defaultText:'A locked door.'`, when the value is static.
-- Use `properties:{...}` when you want to group base authored properties separately from other entity fields.
-- Use an object variable, item variable, room variable, or template runtime variable when the value changes because of play.
-- Use `api.SetObjectState(objectId,{propertyName:value})` when you intentionally want runtime state to override an object's effective property directly.
-- Use a const getter when the property should be computed from existing state without changing state.
-- Use a mutable getter only when computing the property must also update saved state.
-
-Example effective-property pattern: a door can use the `door` template, while `open` and `locked` are template-owned runtime variables. The same object can expose dynamic `defaultText`, `blocksMovement`, and `sprite` through template defaults and effective-property resolution without custom scripts.
-
-Interaction syntax:
+An interaction is a map from an interaction key to either a game script name or a public template action name.
 
 EXAMPLE_START
 interactions:{
-  lookAt:'lookAtPainting',
-  open:'template:container.open',
-  use:'template:toolTarget.use',
-  give:'template:exchange.give'
+    open:'openSpecialPanel',
+    lookAt:'lookAtPainting',
+    'use:brassKey':'unlockPanel',
+    give:'template:exchange.give'
 }
 EXAMPLE_END
 
-Interaction value types:
+Interaction keys:
+- Ordinary verb keys are walkTo, lookAt, take, give, talkTo, open, close, and use.
+- Transitive inventory-on-target keys use verbId:itemId, for example use:spanner or give:coin.
+- For inventory-on-target use/give, the engine checks the target verbId:inventoryItemId key, then the target's linked item, then the reverse key verbId:targetId on the selected inventory item, then that selected item's linked item, then the plain verb key on the target or linked item.
+- Use specific transitive keys for one-off pairings. Use combine or toolTarget for reusable patterns.
 
-- Script name string naming a function in `game.scripts`. Interaction scripts are called as `function (api, command, target, self)`. `command` has `verbId`, `targetId`, `inventoryItemId`, `roomId`, `x`, `y`, and may have `_lastActionResult`. `target` is the clicked entity. `self` is the saved-state facade for `target`.
-- Template action string `template:templateName.actionName`.
+Interaction values:
+- A game script name is a string naming a function in game.scripts. Interaction scripts receive (api, command, target, self).
+- A template action is a string exactly of the form template:templateName.actionName.
+- Template action names are exact public action names. Do not infer them from verb ids.
+- Template action names are valid only in interactions. They are not valid in hooks, getters, script fields, dialogue script fields, cutscene script steps, optional template script fields, or api.RunScript.
 
-Template actions are valid only in interaction fields. Do not call private template internals.
+Critical readable-template example:
+- The readable template contributes lookAt and use interactions, but its only public action is read.
+- Correct explicit action: template:readable.read.
+- Incorrect invented actions: template:readable.lookAt and template:readable.use.
+- Best ordinary pattern: attach template:'readable' and omit lookAt/use so the template contributes them.
 
-Interaction key lookup:
+Correct state-dependent readable pattern:
+EXAMPLE_START
+items:{
+    workRota:{
+        name:'work rota',
+        icon:'work_rota_icon.png',
+        template:'readable',
+        transitiveUse:true,
+        propertyGetters:{defaultText:'workRotaDefaultText'},
+        interactions:{
+            'use:mop':'useMopOnWorkRota',
+            'use:bucketWater':'useBucketOnWorkRota'
+        }
+    }
+},
+scripts:{
+    workRotaDefaultText:function (query,self,context) {
+        if (query.GetFlag('workRotaAlteredForDayOff')) {
+            return 'The rota now marks today as authorised leave.';
+        }
+        return 'The rota lists cleaning duties for far too many consecutive days.';
+    }
+}
+EXAMPLE_END
 
-- For ordinary verbs, use the verb id, such as `lookAt` or `open`.
-- For inventory-on-target `use`/`give`, the engine first checks `verbId:inventoryItemId` on the target, then on the target's linked item, then checks the reverse key `verbId:targetId` on the selected inventory item, then on that selected item's linked item, then falls back to `verbId` on the target or linked item. Use these specific keys for one-off transitive interactions; use `combine` or `toolTarget` for reusable patterns.
+Incorrect readable pattern:
+EXAMPLE_START
+items:{
+    workRota:{
+        template:'readable',
+        interactions:{
+            lookAt:'template:readable.lookAt',
+            use:'template:readable.use'
+        }
+    }
+}
+EXAMPLE_END
 
+### 11.2 Refusals
 
-Linked item look/read inheritance:
-- For a room hotspot or character target with `itemId`, general Look At text is automatically shared with the linked inventory item by default. Resolution order is: explicit world target `defaultText` or `description`, including getter-provided values; linked inventory item `defaultText` or `description`; template-generated target `defaultText`; then the template or engine fallback text.
-- A game script overrides the shared text by defining `defaultText`, `description`, `propertyGetters`/`getters` for `defaultText`/`description`, `readText`, `lookOverlay`, or `closeupOverlay` on the world target.
-- Templates that provide general inspection behaviour, including `pickup`, `readable`, `device`, `furniture`, and `barrier`, must use this linked look/read resolution rather than reading only the clicked target. Stateful templates such as `door`, `container`, and `switch` may still generate state-specific text, but an explicit world override or linked inventory item text takes precedence when `itemId` linkage is present.
+A refusal is data-driven text used when a command has no implemented interaction. Use refusals instead of custom scripts that only say no.
 
 Refusal lookup order:
+- Target refusals[verbId:inventoryItemId] when applicable.
+- Target refusals[verbId].
+- Linked inventory item refusals[verbId:inventoryItemId] when applicable.
+- Linked inventory item refusals[verbId].
+- game.defaultRefusals[verbId:inventoryItemId] when applicable.
+- game.defaultRefusals[verbId].
+- Engine default keyed refusal, then engine default verb refusal.
 
-1. Target `refusals[verbId:inventoryItemId]` when applicable.
-2. Target `refusals[verbId]`.
-3. Linked inventory item `refusals[verbId:inventoryItemId]` when applicable.
-4. Linked inventory item `refusals[verbId]`.
-5. `game.defaultRefusals[verbId:inventoryItemId]` when applicable.
-6. `game.defaultRefusals[verbId]`.
-7. Engine default keyed refusal, then engine default verb refusal.
+EXAMPLE_START
+refusals:{
+    take:'I cannot take the whole cabinet.',
+    open:'It is already more open than management would like.',
+    'use:mop':'Mopping the label would only make the instructions wetter.'
+}
+EXAMPLE_END
 
-Use/Give:
+Use a script instead of a refusal only when the failed command must change saved state, start dialogue, run a cutscene, or branch in a way that cannot be represented by an effective refusal getter.
 
-- `give` is always a two-target verb: select inventory item, then click target.
-- `use` supports both intransitive operation and two-target Use X with Y. A target or inventory item with effective `transitiveUse:false` runs its own plain `use` interaction immediately. A target or inventory item with effective `transitiveUse:true` is selectable as the first subject for Use X with Y.
-- If `transitiveUse` is omitted, the engine infers the safer behaviour. A target or inventory item with a plain `use` interaction is treated as intransitive unless that interaction is a known transitive template (`combine`, `toolTarget`, `multiRequirement`, door key use, or container key use). This prevents ordinary terminals, switches, kiosks, levers, readers, devices, and custom one-click use objects from requiring accidental Use X with X authoring.
-- `Use X with X` is never exposed as a distinct gameplay action. If the selected Use subject and clicked target are the same entity, or the clicked world target is the world instance of that item, the engine clears the selected subject and runs intransitive `Use X` instead. Specific `use:X` self-use keys should not be authored; they will not be reached through ordinary UI input.
-- `exchange`/barter is Give-only.
-- True symmetric Use X with Y uses `combine`.
-- Target-specific tools use `toolTarget`.
-- If a custom plain `use` interaction really is intended to select the object as the first subject for Use X with Y, set `transitiveUse:true` explicitly and test both subject-first and target-first orders.
+### 11.3 Use and Give semantics
 
-Effective property resolution:
+Give:
+- give is always two-target: select an inventory item, then click a target.
+- exchange/barter is Give-only. Use template:'exchange' for standard Give-based trades.
 
-1. Runtime object state override, where applicable.
-2. `entity.properties[propertyName]`.
-3. `entity[propertyName]`.
-4. Getter script. The raw value above is passed as the getter fallback; a getter may override a direct field/property/state value by returning a non-`undefined` value.
-5. Template default.
-6. Caller default.
+Use:
+- use may be intransitive, such as Use switch, Use note, Use bucket.
+- use may be transitive, such as Use key with door or Use mop with stain.
+- A target or item with effective transitiveUse:false runs its own plain use interaction immediately.
+- A target or item with effective transitiveUse:true is selectable as the first subject for Use X with Y.
+- If transitiveUse is omitted, the engine infers safer behaviour. A plain custom use interaction is treated as intransitive unless it is a known transitive template interaction.
+- Use X with X is normalized to intransitive Use X; do not author use:self keys expecting ordinary UI input to reach them.
 
-For `interactions`, `refusals`, and `callbackResults`, template maps merge with entity maps.
+### 11.4 Effective property model
+
+An effective property is the value the engine actually uses after considering saved state, authored data, getters, and template defaults.
+
+Effective property resolution order:
+- Runtime object state override, where object state applies.
+- entity.properties[propertyName].
+- entity[propertyName].
+- Getter script declared in propertyGetters or getters; the raw value above is passed as fallback.
+- Template default.
+- Caller default.
+
+For interactions, refusals, and callbackResults, template maps merge with entity maps. Entity maps override template maps for the same key.
+
+Direct fields are best for static values:
+EXAMPLE_START
+stainedFloor:{
+    defaultText:'A stubborn brown stain has spread across the floor.',
+    blocksMovement:false
+}
+EXAMPLE_END
+
+Getter scripts are best for state-dependent values:
+EXAMPLE_START
+cabinet:{
+    template:'container',
+    propertyGetters:{defaultText:'cabinetDefaultText', hidden:'cabinetHidden'}
+},
+scripts:{
+    cabinetDefaultText:function (query,self,context) {
+        return self.GetBool('open',false) ? 'The cabinet is open.' : 'The cabinet is closed.';
+    },
+    cabinetHidden:function (query,self,context) {
+        return query.GetFlag('cabinetDestroyed');
+    }
+}
+EXAMPLE_END
+
+Object variables are best for object-local persistent state. Item variables are best for item-local persistent state. Object state is best only when you deliberately want to override effective properties directly.
+
+If a script, getter, template effect, or SetObjectState can select a new image path, that image must also be referenced by a documented preloadable image field elsewhere in the game definition.
+
+### 11.5 Getter declarations and signatures
 
 Getter declarations:
-
 EXAMPLE_START
 propertyGetters:{defaultText:'cabinetText'}
 getters:{hidden:'cabinetHidden'}
@@ -758,197 +761,1131 @@ nonConstPropertyGetters:{defaultText:'statefulText'}
 mutablePropertyGetters:{hidden:'statefulHidden'}
 EXAMPLE_END
 
-Getter signature:
+Preferred fields:
+- propertyGetters and getters are const getter maps. They must not mutate state.
+- nonConstPropertyGetters and mutablePropertyGetters are mutable getter maps. Use only when property computation must update saved state.
 
+Getter signature:
 EXAMPLE_START
 cabinetText:function (query,self,context) {
-  return self.GetBool('open',false) ? 'It is open.' : 'It is closed.';
+    return self.GetBool('open',false) ? 'It is open.' : 'It is closed.';
 }
 EXAMPLE_END
 
-Getter `query` methods:
+Getter query methods:
+- HasItem(itemId) -> boolean.
+- GetFlag(name) -> boolean.
+- GetVariable(name) -> any.
+- GetRoomVariable(roomId,name,defaultValue) -> string|number|defaultValue.
+- GetCharacterVariable(characterId,name,defaultValue) -> string|number|defaultValue.
+- GetItemVariable(itemId,name,defaultValue) -> string|number|defaultValue.
+- GetObjectVariable(objectId,name,defaultValue) -> string|number|defaultValue.
+- GetProperty(entity,propertyName,context,defaultValue) -> any.
 
-- `HasItem(itemId) -> boolean`.
-- `GetFlag(name) -> boolean`.
-- `GetVariable(name) -> any`.
-- `GetRoomVariable(roomId,name,defaultValue) -> string|number|defaultValue`.
-- `GetCharacterVariable(characterId,name,defaultValue) -> string|number|defaultValue`.
-- `GetItemVariable(itemId,name,defaultValue) -> string|number|defaultValue`.
-- `GetObjectVariable(objectId,name,defaultValue) -> string|number|defaultValue`.
-- `GetProperty(entity,propertyName,context,defaultValue) -> any`.
+Const self has Id, Type, RoomId, Entity, Context, Get, GetBool, GetNumber, GetString, GetBaseProperty, and GetProperty. Mutable self additionally has Set, SetBool, SetNumber, SetString, and Add.
 
-Const `self`: `Id`, `Type`, `RoomId`, `Entity`, `Context`, `Get`, `GetBool`, `GetNumber`, `GetString`, `GetBaseProperty`, `GetProperty`. Mutable `self` additionally has `Set`, `SetBool`, `SetNumber`, `SetString`, `Add`.
+Const getters must not mutate state, narrate, start dialogue, show overlays, move actors, change rooms, play sound, save/load, start cutscenes, call browser timers, or touch private engine objects.
 
-Const getters must not mutate state, call `api`, move actors, change rooms, narrate, play sound, or use timers. Mutable getters are only for property derivation that genuinely must update saved state.
+### 11.6 Properties commonly worth making effective
+
+Dynamic text:
+- defaultText, description, readText, and template text fields where effective lookup is documented.
+
+Dynamic visibility and availability:
+- hidden, hitDisabled, disableHit, interactionDisabled, renderHidden.
+
+Dynamic graphics:
+- sprite, closedSprite, openSprite, emptySprite, fullSprite, onSprite, offSprite, worldSprite, icon.
+
+Dynamic movement/rendering:
+- blocksMovement, blocksWhenHidden, collisionShape, walkTo, walkThrough, walkThroughTo, walkThroughPoint, walkBehind, baseline, zIndex, triggerZones.
+
+Dynamic command behaviour:
+- interactions, refusals, transitiveUse, callbackStatus, callbackResult, callbackResults.
+
+Template-specific state and gating:
+- open, locked, on, powered, allowsPassage, travelBlocked, unlockBlocked, requirements.
 
 Validated effective property types:
+- Booleans: visible, hidden, hitDisabled, walkThrough, renderHidden, blocksWhenHidden, interactionDisabled, blocksMovement, blocksActors, walkBehind. blocksActors is reserved/no-op in this engine version.
+- Points: walkTo and walkThroughTo are null/undefined or {x:number,y:number}.
+- Rectangles: hitRect and rect are {x:number,y:number,w:number,h:number}.
+- Arrays: walkBoxes, blockers, walkBehinds, triggerZones. On hotspots, walkBoxes/blockers/walkBehinds are reserved/no-op in this engine version; room walkBoxes/blockers and hotspot triggerZones are used.
+- Objects: collisionShape, occluderShape. occluderShape is reserved/no-op in this engine version.
+- Numbers: baseline, zIndex.
+- Callback values: callbackStatus:string, callbackResult:string|object, callbackResults:object.
 
-- Booleans: `visible`, `hidden`, `hitDisabled`, `walkThrough`, `renderHidden`, `blocksWhenHidden`, `interactionDisabled`, `blocksMovement`, `blocksActors`, `walkBehind`. `blocksActors` is reserved/no-op in this engine version.
-- Points: `walkTo`, `walkThroughTo` are null/undefined or `{x:number,y:number}`.
-- Rectangles: `hitRect`, `rect` are `{x:number,y:number,w:number,h:number}`.
-- Arrays: `walkBoxes`, `blockers`, `walkBehinds`, `triggerZones`. On hotspots, `walkBoxes`/`blockers`/`walkBehinds` are reserved/no-op in this engine version; room `walkBoxes`/`blockers` and hotspot `triggerZones` are used.
-- Objects: `collisionShape`, `occluderShape`. `occluderShape` is reserved/no-op in this engine version.
-- Numbers: `baseline`, `zIndex`.
-- Callback values: `callbackStatus:string`, `callbackResult:string|object`, `callbackResults:object`.
+### 11.7 Canonical effective-property examples
 
-Common properties worth making dynamic with effective properties or getters:
+State-dependent readable text:
+EXAMPLE_START
+items:{
+    permit:{name:'permit',icon:'permit_icon.png',template:'readable',propertyGetters:{defaultText:'permitText'}}
+},
+scripts:{
+    permitText:function (query,self,context) {
+        return query.GetFlag('permitStamped') ? 'The permit bears an official stamp.' : 'The permit is unstamped.';
+    }
+}
+EXAMPLE_END
 
-- `hidden`, `hitDisabled`, `interactionDisabled`, `renderHidden` for whether a target appears or can be clicked.
-- `defaultText` and `description` for state-dependent Look At text.
-- `sprite`, `closedSprite`, `openSprite`, `onSprite`, `offSprite`, `emptySprite` for state-dependent graphics.
-- `blocksMovement`, `blocksWhenHidden`, `walkTo`, `walkThrough`, `walkThroughTo`, `walkThroughPoint`, `collisionShape`, `triggerZones`, `walkBehind`, `baseline`, `zIndex` for state-dependent navigation/rendering.
-- `interactions` and `refusals` when available verbs or failure text depend on state.
-- Template-specific properties such as `open`, `locked`, `on`, `powered`, `allowsPassage`, `travelBlocked`, `unlockBlocked`, and `requirements`.
+State-dependent blocker:
+EXAMPLE_START
+hotspots:[
+    {id:'robotBarrier',name:'robot',template:'barrier',hidden:true,renderHidden:true,blocksWhenHidden:true,collisionShape:{x:260,y:100,w:30,h:24},propertyGetters:{blocksMovement:'robotBlocksPassage'},onCollide:'bumpRobot'}
+],
+scripts:{
+    robotBlocksPassage:function (query,self,context) {
+        return !query.GetFlag('robotPermissionGranted');
+    }
+}
+EXAMPLE_END
 
-Avoid these mistakes:
+State-dependent interactions:
+EXAMPLE_START
+hotspots:[
+    {id:'sealedHatch',name:'sealed hatch',propertyGetters:{interactions:'sealedHatchInteractions'},defaultText:'A heavy sealed hatch blocks the wall.'}
+],
+scripts:{
+    sealedHatchInteractions:function (query,self,context) {
+        return query.GetFlag('hatchUnlocked') ? {lookAt:'lookAtSealedHatch',open:'openSealedHatch'} : {lookAt:'lookAtSealedHatch','use:keyCard':'useKeyCardOnHatch'};
+    }
+}
+EXAMPLE_END
 
-- Do not write a custom Look At script just to vary description text; use a getter for `defaultText`.
-- Do not use both a flag and a template runtime variable for the same state unless both are needed for different story purposes.
-- Do not use `SetObjectState` casually; it overrides effective properties. Use object variables for ordinary puzzle state and reserve object state for deliberate property overrides.
-- Do not mutate state in const getters. If mutation is unavoidable, declare the getter in `nonConstPropertyGetters` or `mutablePropertyGetters` and keep the mutation minimal and saved-state-safe.
+State-dependent sprite:
+EXAMPLE_START
+hotspots:[
+    {id:'warningLamp',name:'warning lamp',sprite:'lamp_off.png',onSprite:'lamp_on.png',offSprite:'lamp_off.png',propertyGetters:{sprite:'warningLampSprite'}}
+],
+scripts:{
+    warningLampSprite:function (query,self,context) {
+        return query.GetFlag('alarmActive') ? 'lamp_on.png' : 'lamp_off.png';
+    }
+}
+EXAMPLE_END
 
+Dynamic refusal text:
+EXAMPLE_START
+hotspots:[
+    {id:'elevator',name:'elevator',propertyGetters:{refusals:'elevatorRefusals'},template:'device'}
+],
+scripts:{
+    elevatorRefusals:function (query,self,context) {
+        return query.GetFlag('powerOn') ? {use:'The elevator hums, but the doors remain locked.'} : {use:'The elevator is dark. It needs power first.'};
+    }
+}
+EXAMPLE_END
+
+### 11.8 Custom script decision checklist
+
+Before writing a custom interaction script, ask:
+- Can a template already express this? If yes, use the template.
+- Is the script only choosing text? If yes, use defaultText, description, readText, or a text getter.
+- Is the script only hiding/showing something? If yes, use hidden/hitDisabled/renderHidden getters.
+- Is the script only changing blocking? If yes, use blocksMovement/blocksWhenHidden/collisionShape getters.
+- Is the script only changing available commands? If yes, use an interactions getter.
+- Is the script only saying no? If yes, use refusals or a refusals getter.
+- Is the script performing a state change, inventory change, dialogue/cutscene start, room change, or distinctive puzzle effect? If yes, a script may be appropriate.
 
 ## 12. Templates
 
-A template is a declarative behaviour package. It can add default interactions, refusals, effective properties, and runtime state conventions to an entity. Templates are the engine's main way to author common point-and-click adventure behaviours without custom scripts.
+A template is a declarative behaviour package. It can contribute default interactions, effective properties, refusals, callback results, actions, and saved runtime-variable conventions. Templates are the main mechanism for avoiding custom scripts for standard point-and-click adventure objects.
 
-For an authoring AI, templates should be the first choice for recurring puzzle patterns:
+Template authoring rules:
+- Start with a template for every standard object pattern.
+- Omit interactions that the template already contributes unless you intentionally override them.
+- Use template runtime variables for the template's own state.
+- Use effective properties/getters to customise template behaviour dynamically.
+- Use custom scripts only for game-specific behaviour the template cannot express.
+- If overriding a template-contributed interaction, document why the override is necessary.
 
-- Use `door` plus `key` for lockable passages; put the actual room change in a `transitionZone`.
-- Use `pickup` for world objects that become inventory items.
-- Use `container` for boxes, drawers, safes, and cabinets.
-- Use `switch` for toggles, valves, levers, and buttons.
-- Use `readable` for signs, notes, labels, books, and closeups.
-- Use `device` for machines requiring power or a specific item.
-- Use `combine` for symmetric Use X with Y inventory/object combinations.
-- Use `toolTarget` for target-specific use of a tool on an object.
-- Use `exchange` for Give-only barter/trading.
-- Use `multiRequirement` for a target that needs several items delivered.
-- Use `gatekeeper` for NPCs/objects that allow or block passage.
-- Use `costume`, `clueUnlocker`, or `distractible` for their specific puzzle patterns.
+Template attachment fields:
+- template:'readable'.
+- templateId:'readable'.
+- kind:'readable'.
+- templates:['readable','toolTarget'].
+- String lists in template/templateId/kind may be space-separated or comma-separated.
 
-How templates work:
+Known templates:
+- door, key, map, pickup, container, switch, readable, device, furniture, barrier, combine, openableBox, exchange, multiRequirement, gatekeeper, costume, toolTarget, clueUnlocker, distractible.
 
-- Attach a template with `template`, `templateId`, `kind`, or `templates`.
-- The template contributes interactions such as `open:'template:door.open'` or `take:'template:pickup.take'`.
-- The template may contribute effective property defaults such as blocking movement, default text, or sprite selection.
-- The entity may override or extend template-provided maps by defining its own `interactions`, `refusals`, or effective properties.
-- Template runtime variables are saved state. Use the documented runtime variable names instead of inventing duplicate state for the same concept.
+Template action naming is exact:
+- The template may contribute a verb such as lookAt, but the public action name may be different.
+- readable contributes lookAt and use, but both actions are template:readable.read.
+- switch contributes use, but the action is template:switch.toggle.
+- multiRequirement contributes give and use, but both actions are template:multiRequirement.add.
+- Never invent template action names. Use only the exact public actions documented below.
 
-Multiple templates can be combined only when their behaviours are compatible. For example, furniture-like geometry may combine with a container, but avoid combining templates that provide conflicting meanings for the same verb unless the entity explicitly overrides the interaction.
+Shared rule fields used by several templates:
+- requiresFlag:string.
+- requiresItem:string.
+- allowProperty:string.
+- sourceAllowProperty:string.
+- targetAllowProperty:string.
+- refusalText:string.
+- blockedText:string.
+- removeSource or consumeSource:boolean.
+- removeTarget or consumeTarget:boolean.
+- removeItem:string.
+- addItem:string.
+- resultItem:string.
+- setFlag:string with flagValue:false to set false.
+- clearFlag:string.
+- setSource or sourceVars:object.
+- setTarget or targetVars:object.
+- setVariables:object.
+- setObjectState:object.
+- setSourceState:object.
+- animation:string and animationOptions:object.
+- sound:string or array.
+- script or onComplete:string.
+- text/playerText/npcText/speaker fields as documented per template.
 
-Attach templates using `template`, `templateId`, `kind`, or `templates`. String template lists may be space/comma separated.
+### 12.1 door template
 
-Known templates: `door`, `key`, `map`, `pickup`, `container`, `switch`, `readable`, `device`, `furniture`, `barrier`, `combine`, `openableBox`, `exchange`, `multiRequirement`, `gatekeeper`, `costume`, `toolTarget`, `clueUnlocker`, `distractible`.
+Purpose:
+- Standard openable/closable door-like world object.
+- Manages open/closed/locked state, sprite selection, blocking, walk-through, and state text.
+- Does not change rooms by itself; use transitionZones for travel.
 
-Shared puzzle rule fields: `requiresFlag`, `requiresItem`, `allowProperty`, `sourceAllowProperty`, `targetAllowProperty`, `refusalText`, `blockedText`, `removeSource`, `consumeSource`, `removeTarget`, `consumeTarget`, `removeItem`, `addItem`, `resultItem`, `setFlag`, `flagValue`, `clearFlag`, `setSource`, `sourceVars`, `setTarget`, `targetVars`, `setVariables`, `setObjectState`, `setSourceState`, `animation`, `animationOptions`, `sound`, `script`, `onComplete`, text/speaker fields documented per template.
+Attach to:
+- Room hotspots.
 
-### `door`
+Public actions:
+- template:door.lookAt
+- template:door.open
+- template:door.close
+- template:door.useKey
+- template:door.walkTo
 
-Linked look text: `lookAt` uses the same linked look-text resolution before falling back to the door template's state text. Ordinary doors normally do not need `itemId`; this rule exists for consistency with linked world/inventory authoring.
-
-Adds `lookAt`, `open`, `close`, `use`, `walkTo`. Runtime object variables: `open`, `locked`. Initial values come from authored `open`/`locked` if the runtime variables are absent. Effective defaults: `defaultText` varies by open/locked state; `sprite` selects `openSprite` or `closedSprite`, falling back to `sprite`; `walkThrough` is true when open; `blocksMovement` is true when not open; `collisionShape` falls back to `rect`; `baseline` falls back to rect bottom or `y`. Doors control open/closed/blocking; room transitions are still transition zones.
-Fields: `locked`, `open`, `sprite`, `closedSprite`, `openSprite`, `rect`, `collisionShape`, `baseline`, `walkThroughTo`, `transitionAnimation`, `openAnimation`, `unlockAnimation`, `lockAnimation`, `onOpen`, `onClose`, `onUnlock`, `onLock`.
-Text fields: `openText`, `lockedText`, `unlockedText`, `closedText`, `alreadyOpenText`, `lockedOpenText`, `openActionText`, `alreadyClosedText`, `closeActionText`, `wrongKeyText`, `unlockText`, `lockText`, `closedWalkText`.
-
-### `key`
-
-Fields: `unlocks`, `unlockDoors`, `opens`, `targets`, `doorIds`, `objectIds`; string or array; `'*'` targets all compatible locks. For the `door` template, the inventory item must have the `key` template and its target list must include the door id or `'*'`. The `container` template checks the same target list but does not require the item itself to use the `key` template.
-
-### `map`
-
-Adds `lookAt`. Fields: `map`, `map.image`, `map.places`, `travelBlocked`, `travelBlockedText`. Map places are rendered as overlay targets and use `walkTo` for travel and `lookAt` for descriptions. Places without `alwaysVisible` normally appear only after their target room has been visited.
-
-### `pickup`
-
-Linked look text: `lookAt` uses linked item look-text resolution. The world object's explicit `defaultText`/`description` or getter wins; otherwise the linked inventory item's `defaultText`/`description` is used; otherwise the pickup fallback is used.
-
-Adds `lookAt`, `take`. Fields: `itemId`, `hideOnTake`, `hiddenFlag`, `takenFlag`, `takeText`, `onTake`. Runtime variable: `taken`. The `take` action adds the linked item to inventory, sets object variable `taken=1`, and sets `hiddenFlag` if present, otherwise `takenFlag` if present. By default, pickup-template objects hide themselves after they have been taken because the template contributes an effective `hidden` value from the `taken` runtime variable. Use `hideOnTake:false`, an explicit `hidden:false` field, or a `hidden` getter only for exceptional pickup-like objects that should remain visible after being taken. `hiddenFlag` and `takenFlag` remain available for story flags, map logic, compatibility, or custom visibility patterns, but ordinary pickup objects do not need either field merely to disappear after `Take`.
-
-### `container`
-
-Linked look text: `lookAt` uses the same linked look-text resolution before falling back to the container template's state text. Ordinary containers normally do not need `itemId`; this rule exists for consistency with linked world/inventory authoring.
-
-Adds `lookAt`, `open`, `close`, `use`. Runtime object variables: `open`, `locked`, `emptied`. Initial `open`/`locked` values come from authored fields if runtime variables are absent. Effective defaults: `defaultText` varies by open/locked/emptied state; `sprite` selects `emptySprite`, `openSprite`, `closedSprite`, or `sprite`.
-Fields: `locked`, `open`, `contents` or `contains` (string or array of item ids), `sprite`, `closedSprite`, `openSprite`, `emptySprite`, `transitionAnimation`, `openAnimation`, `unlockAnimation`, `lockAnimation`, `onOpen`, `onClose`, `onUnlock`, `onLock`, `onEmpty`. Opening an unlocked unopened container sets `open=1`, adds all contents to inventory once, then sets `emptied=1` if contents were present.
-Text fields: `emptyText`, `openText`, `lockedText`, `closedText`, `alreadyOpenText`, `lockedOpenText`, `takeContentsText`, `openActionText`, `alreadyClosedText`, `closeActionText`, `wrongKeyText`, `unlockText`, `lockText`.
-
-### `switch`
-
-Linked look text: `lookAt` uses the same linked look-text resolution before falling back to the switch template's on/off text. Ordinary switches normally do not need `itemId`; this rule exists for consistency with linked world/inventory authoring.
-
-Adds `lookAt`, `use`, `open`, `close`. Runtime object variable: `on`. Initial value comes from authored `on` if the runtime variable is absent. `use` toggles; `open` turns on; `close` turns off. Effective defaults: `defaultText` varies by on/off state; `sprite` selects `onSprite` or `offSprite`, falling back to `sprite`.
-Fields: `on`, `sprite`, `onSprite`, `offSprite`, `onToggle`, `onOn`, `onOff`.
-Text fields: `onText`, `offText`, `actionOnText`, `actionOffText`, `alreadyOnText`, `alreadyOffText`.
-
-### `readable`
-
-Linked read/look text: for `itemId`-linked world readables, `lookOverlay`, `closeupOverlay`, `readText`, `defaultText`, and `description` resolve from explicit world values first, then linked item values. This lets the linked item supply ordinary close-up/read text while the world object can override it where needed.
-
-Adds `lookAt`, `use`. Fields: `readText`, `lookOverlay`, `closeupOverlay`, `onRead`, `defaultText`. If `lookOverlay` or `closeupOverlay` exists, reading shows the overlay and returns immediately; `onRead` is only run on the text-reading path. Without an overlay, the template narrates `readText`, falling back to effective `defaultText`.
-
-### `device`
-
-Linked look text: `lookAt` uses linked item look-text resolution for `itemId`-linked world targets. Device operation fields such as `requiredItem`, `powerFlag`, and `successText` remain properties of the clicked target unless deliberately authored there or handled by a custom script.
-
-Adds `lookAt`, `use`. Runtime object variables: `used`, `fixed`. `use` refuses if `singleUse` is true and `used` is already true; then checks `powerFlag` if present, otherwise authored `powered` defaulting to true; then checks `requiredItem` when supplied; then may `consumeRequiredItem`, set `fixed`, set `used`, set `setsFlag`, narrate `successText`, and run `onUse`.
-Fields: `powered`, `powerFlag`, `requiredItem`, `consumeRequiredItem`, `setsFlag`, `fixedOnUse`, `singleUse`, `onUse`.
-Text fields: `defaultText`, `alreadyUsedText`, `noPowerText`, `wrongItemText`, `successText`.
-
-### `furniture`
-
-Linked look text: `lookAt` uses linked item look-text resolution for `itemId`-linked world targets.
-
-Adds `lookAt`. Defaults to `blocksMovement:true`, provides take/open/close refusals, and uses `callbackResults` for blocked movement. Fields: `rect`, `collisionShape`, `baseline`, `walkBehind`, `allowWalkBehindWithoutSprite`, `zIndex`, `defaultText`, `onCollide`, `onBump`, `sprite`. `walkBehind` defaults to true only when a sprite exists, unless `allowWalkBehindWithoutSprite:true` is set. `collisionShape` falls back to `rect`, then `x`/`y`/`frameW`/`frameH`. `baseline` falls back to collision bottom or `y`.
-
-### `barrier`
-
-Linked look text: `lookAt` uses linked item look-text resolution for `itemId`-linked world targets.
-
-Adds `lookAt`. Defaults to `blocksMovement:true`, provides take/open/close refusals, and uses `callbackResults` for blocked movement. Fields: `rect`, `collisionShape`, `defaultText`, `onCollide`, `onBump`. `collisionShape` falls back to `rect`. Use `barrier` for invisible or simple blocking geometry; use `furniture` for visible foreground/background objects with walk-behind behaviour.
-
-### `combine`
-
-Adds `use`. Symmetric. Fields: `combine`, `combinations`, `intransitiveUseText`, `combineRefusalText`. When no inventory item/source is selected it narrates `intransitiveUseText`. Ordinary UI input never dispatches Use X with X as a separate combination; the interaction system normalises that case to intransitive Use X before template lookup. For two different subjects, the engine checks rules on the lexically first id first, then the second, using the other id or `'*'`. Rules support the shared requirement/effect fields and text, playerText, speakerId.  
+Contributed interactions:
 EXAMPLE_START
-combine:{
-otherItemId:{removeSource:true,removeTarget:true,resultItem:'combinedItem',text:'That should do it.'},
-'*':{refusalText:'Those do not go together.'}
-}
+lookAt:'template:door.lookAt'
+open:'template:door.open'
+close:'template:door.close'
+use:'template:door.useKey'
+walkTo:'template:door.walkTo'
 EXAMPLE_END
 
-### `openableBox`
+Saved runtime variables:
+- object variable open: 1/0; initial fallback authored open.
+- object variable locked: 1/0; initial fallback authored locked.
 
-Adds `open`, `use` and sets `transitiveUse:false`. Runtime object/item variable: `opened`. Fields: `alreadyOpenText`, `openEffect`, `revealsItem`, `openSpeakerId`, `openText`. First open sets `opened=1`, applies `openEffect`, and if `openEffect` has no `addItem` and `revealsItem` is present, adds `revealsItem`. Later opens narrate `alreadyOpenText`.
+Author fields:
+- open
+- locked
+- sprite
+- closedSprite
+- openSprite
+- rect
+- hitRect
+- collisionShape
+- baseline
+- walkTo
+- walkThroughTo
+- walkThroughPoint
+- transitionAnimation
+- openAnimation
+- unlockAnimation
+- lockAnimation
+- onOpen
+- onClose
+- onUnlock
+- onLock
 
-### `exchange`
+Text fields:
+- openText
+- lockedText
+- unlockedText
+- closedText
+- alreadyOpenText
+- lockedOpenText
+- openActionText
+- alreadyClosedText
+- closeActionText
+- wrongKeyText
+- unlockText
+- lockText
+- closedWalkText
 
-Adds `give` only. Fields: `exchanges`, `exchangeNeedItemText`, `exchangeRefusalText`. Source is the selected inventory item/subject. Rule key is source id or `'*'`. Rules support shared requirement/effect fields plus `playerRefusalText`, `playerSpeakerId`, `playerText`, `npcSpeakerId`, `npcText`, `text`, `afterDialogueScript`. Successful exchange applies effects, then says optional `playerText` followed by `npcText`/`text`, then runs `afterDialogueScript`. Exchange/barter is Give-only.
+Effective properties and effects:
+- defaultText is openText when open, lockedText when locked, otherwise unlockedText/closedText/fallback.
+- sprite is openSprite when open and closedSprite when closed, falling back to sprite.
+- walkThrough is true when open.
+- blocksMovement is true when not open.
+- collisionShape falls back to rect.
+- baseline falls back to rect bottom or y.
 
-### `multiRequirement`
+Action semantics:
+- lookAt narrates linked/effective look text, then door state fallback.
+- open refuses if already open or locked; otherwise sets open true, starts optional transition/open animation, narrates openActionText, and runs onOpen.
+- close refuses if already closed; otherwise sets open false, starts optional reverse animation, narrates closeActionText, and runs onClose.
+- useKey requires a selected inventory item with template key and target list including this door id or *. It toggles locked and runs lock/unlock text, animation and optional scripts.
+- walkTo narrates closedWalkText only when closed; when open it returns silently so walkThrough and transition zones can proceed.
 
-Adds `give`, `use`. Fields: `requirements`, `requirementNeedItemText`, `requirementWrongItemText`, `completion`, `completionText`, `completionSpeakerId`. Requirement entries are item id strings or objects with `itemId`, `consume`, `text`, `speakerId`, `alreadyText`, and shared requirement fields. Runtime variables: `delivered_itemId`.
+### 12.2 key template
 
-### `gatekeeper`
+Purpose:
+- Marks an inventory item as a key and supplies target lists for locks.
 
-Adds `talkTo`, `use`, `give`. Fields: `dialogueTree`, `allowsPassage`, `allowText`, `blockText`. `talkTo` starts `dialogueTree` when present; otherwise it performs the same check as `use`/`give`. The check narrates `allowText` when effective `allowsPassage` is true, otherwise `blockText`. Gatekeeper does not itself change rooms or enable transitions; use transition zones and effective properties/flags for passage.
+Attach to:
+- Inventory items.
 
-### `costume`
+Public actions:
+- None.
 
-Adds `use` and sets `transitiveUse:false`. Runtime item variable: `worn`. Fields: `costumeSpriteId`, `playerSpriteId`, `baseClothes`, `replacesItem`, `returnItem`, `wearText`, `costumeNoSpriteText`. `use` changes the player sprite to `costumeSpriteId`/`playerSpriteId`; if `baseClothes:true`, it restores the authored `game.player.spriteId`. It sets `worn=1`, removes `replacesItem` if supplied, adds `returnItem` if supplied and absent, then narrates `wearText`. The referenced sprite id must exist in `game.sprites`.
+Contributed interactions:
+- None.
 
-### `toolTarget`
+Saved runtime variables:
+- None.
 
-Adds `use`. Fields: `toolUses`, `toolNeedItemText`, `toolRefusalText`. Source is the selected inventory item/subject. Rule key is source/tool id or `'*'`. Rules support shared requirement/effect fields plus `text` and `speakerId`. Without a source it narrates `toolNeedItemText`; with no passing rule it narrates the rule refusal or `toolRefusalText`.
+Author fields:
+- unlocks
+- unlockDoors
+- opens
+- targets
+- doorIds
+- objectIds
 
-### `clueUnlocker`
+Text fields:
+- defaultText or description for inspection.
 
-Adds `lookAt`, `use`. Fields: `unlockBlocked`, `unlockBlockedText`, `unlocksPlaces`, `mapItemId`, `unlockText`. If `unlockBlocked` is true, narrates `unlockBlockedText`. Otherwise, for each place id in `unlocksPlaces` it sets item variable `place_placeId_unlocked=1` on `mapItemId` or on the clue item/object id, then narrates `unlockText`. Pair this with a `places`/`mapPlaces` getter or other custom map visibility logic when the design needs clue-gated map places; `visibleFlag` itself checks a global flag, not the item variable set by `clueUnlocker`.
+Effective properties and effects:
+- No interactions or effective property defaults are contributed by key itself.
 
-### `distractible`
+Action semantics:
+- Target lists may be a string or array.
+- * targets all compatible locks.
+- door.useKey requires the item to have template key and include the door id or *.
+- container.useKey checks the selected item target list; author keys with template key for clarity even where the engine does not require it.
 
-Adds `use`, `give`. Runtime variable: `distracted`. Fields: `distractions`, `distractionRefusalText`. Source is the selected inventory item/subject, or absent for intransitive use. Rule key is source id or `default`, with `'*'` fallback through the shared rule lookup. On success it sets `distracted=1`, applies rule effects, then says `rule.text` using `rule.speakerId` or the target id. On failure it narrates the rule refusal or `distractionRefusalText`.
+### 12.3 map template
 
+Purpose:
+- Shows a map/travel overlay and exposes map places as overlay targets.
+
+Attach to:
+- Inventory items.
+
+Public actions:
+- template:map.show
+- template:map.lookPlace
+- template:map.travelPlace
+
+Contributed interactions:
+EXAMPLE_START
+lookAt:'template:map.show'
+EXAMPLE_END
+
+Saved runtime variables:
+- Room scoped variable visited=1 is used for place visibility after room visits.
+
+Author fields:
+- map
+- map.image
+- map.places
+- map.hotspots
+- mapImage
+- places effective property
+- mapPlaces effective property
+- travelBlocked
+- travelBlockedText
+
+Text fields:
+- place description
+- place defaultText
+- blockedText
+- travelBlockedText
+
+Effective properties and effects:
+- Map item lookAt opens map overlay.
+- Visible map places become overlay targets with lookAt template:map.lookPlace and walkTo template:map.travelPlace.
+
+Action semantics:
+- Places may define id,name,rect,roomId,targetRoomId,targetX,targetY,targetFacing,description,defaultText,alwaysVisible,visibleFlag,hiddenFlag,blockedFlag,blockedScript,blockedText,script.
+- A place is visible only if visibleFlag is absent/true, hiddenFlag is absent/false, and either alwaysVisible is true, no destination room is present, or the destination room has visited=1.
+- blockedFlag, blockedScript, or effective travelBlocked can block travel.
+- If place.script exists it runs instead of automatic room travel.
+- Otherwise targetRoomId, falling back to roomId, is used with target coordinates/facing.
+
+### 12.4 pickup template
+
+Purpose:
+- World object that can be taken into inventory.
+
+Attach to:
+- Room hotspots.
+
+Public actions:
+- template:pickup.lookAt
+- template:pickup.take
+
+Contributed interactions:
+EXAMPLE_START
+lookAt:'template:pickup.lookAt'
+take:'template:pickup.take'
+EXAMPLE_END
+
+Saved runtime variables:
+- object variable taken: 1/0.
+
+Author fields:
+- itemId
+- hideOnTake
+- hiddenFlag
+- takenFlag
+- takeText
+- onTake
+- defaultText
+- description
+
+Text fields:
+- takeText
+- defaultText
+- description
+
+Effective properties and effects:
+- hidden becomes true after taken unless hideOnTake:false or another explicit/effective hidden value overrides it.
+- zIndex defaults to 10.
+- callbackResults are supplied for pickup movement callbacks.
+
+Action semantics:
+- lookAt uses linked/effective look text.
+- take adds itemId, or the hotspot id if itemId is omitted, to inventory.
+- take sets hiddenFlag or takenFlag if present, sets taken=1, narrates takeText, and runs onTake.
+
+### 12.5 container template
+
+Purpose:
+- Openable/closable/lockable container that may give contents once.
+
+Attach to:
+- Room hotspots.
+
+Public actions:
+- template:container.lookAt
+- template:container.open
+- template:container.close
+- template:container.useKey
+
+Contributed interactions:
+EXAMPLE_START
+lookAt:'template:container.lookAt'
+open:'template:container.open'
+close:'template:container.close'
+use:'template:container.useKey'
+EXAMPLE_END
+
+Saved runtime variables:
+- object variable open: 1/0; initial fallback authored open.
+- object variable locked: 1/0; initial fallback authored locked.
+- object variable emptied: 1/0.
+
+Author fields:
+- open
+- locked
+- contents
+- contains
+- sprite
+- closedSprite
+- openSprite
+- emptySprite
+- transitionAnimation
+- openAnimation
+- unlockAnimation
+- lockAnimation
+- onOpen
+- onClose
+- onUnlock
+- onLock
+- onEmpty
+
+Text fields:
+- emptyText
+- openText
+- lockedText
+- closedText
+- alreadyOpenText
+- lockedOpenText
+- takeContentsText
+- openActionText
+- alreadyClosedText
+- closeActionText
+- wrongKeyText
+- unlockText
+- lockText
+
+Effective properties and effects:
+- defaultText varies by open/locked/emptied.
+- sprite selects emptySprite when open and emptied, otherwise openSprite when open, otherwise closedSprite or sprite.
+
+Action semantics:
+- open refuses if already open or locked; otherwise sets open=1, starts optional animation, adds contents once, sets emptied=1 if contents were present, narrates takeContentsText or openActionText, runs onOpen and onEmpty when applicable.
+- close refuses if already closed; otherwise sets open=0, starts optional reverse animation, narrates closeActionText, and runs onClose.
+- useKey toggles locked if the selected inventory item target list includes this container id or *.
+
+### 12.6 switch template
+
+Purpose:
+- On/off toggle, lever, valve, button, switch, or power control.
+
+Attach to:
+- Room hotspots or inventory items where appropriate.
+
+Public actions:
+- template:switch.lookAt
+- template:switch.toggle
+- template:switch.turnOn
+- template:switch.turnOff
+
+Contributed interactions:
+EXAMPLE_START
+lookAt:'template:switch.lookAt'
+use:'template:switch.toggle'
+open:'template:switch.turnOn'
+close:'template:switch.turnOff'
+EXAMPLE_END
+
+Saved runtime variables:
+- object/item variable on: 1/0; initial fallback authored on.
+
+Author fields:
+- on
+- sprite
+- onSprite
+- offSprite
+- onToggle
+- onOn
+- onOff
+
+Text fields:
+- onText
+- offText
+- actionOnText
+- actionOffText
+- alreadyOnText
+- alreadyOffText
+
+Effective properties and effects:
+- defaultText is onText when on and offText when off.
+- sprite is onSprite when on and offSprite when off, falling back to sprite.
+
+Action semantics:
+- lookAt narrates linked/effective look text or on/off fallback.
+- use/toggle flips on, stores the result, narrates actionOnText/actionOffText, runs onToggle, then onOn/onOff.
+- open/turnOn refuses if already on; otherwise turns on.
+- close/turnOff refuses if already off; otherwise turns off.
+
+### 12.7 readable template
+
+Purpose:
+- Sign, note, book, document, label, poster, terminal readout, form, close-up, or other readable object.
+
+Attach to:
+- Inventory items, room hotspots, or overlay targets.
+
+Public actions:
+- template:readable.read
+
+Contributed interactions:
+EXAMPLE_START
+lookAt:'template:readable.read'
+use:'template:readable.read'
+EXAMPLE_END
+
+Saved runtime variables:
+- None.
+
+Author fields:
+- readText
+- defaultText
+- description
+- lookOverlay
+- closeupOverlay
+- onRead
+
+Text fields:
+- readText
+- defaultText
+- description
+
+Effective properties and effects:
+- No saved state by default.
+- Often paired with effective defaultText/readText/description getters.
+
+Action semantics:
+- read checks lookOverlay then closeupOverlay; if one exists it shows the overlay and returns.
+- If no overlay exists, read narrates effective readText, falling back to effective defaultText/description, then fallback text.
+- onRead runs only on the text-reading path, not when an overlay is shown.
+- For itemId-linked world readables, overlay/text properties resolve from explicit world target first, then linked inventory item, then fallback.
+- Do not write template:readable.lookAt or template:readable.use; those actions do not exist.
+
+### 12.8 device template
+
+Purpose:
+- Machine, terminal, console, appliance, reader, dispenser, or powered object.
+
+Attach to:
+- Room hotspots or inventory items where appropriate.
+
+Public actions:
+- template:device.lookAt
+- template:device.use
+
+Contributed interactions:
+EXAMPLE_START
+lookAt:'template:device.lookAt'
+use:'template:device.use'
+EXAMPLE_END
+
+Saved runtime variables:
+- object/item variable used: 1/0.
+- object/item variable fixed: 1/0.
+
+Author fields:
+- powered
+- powerFlag
+- requiredItem
+- consumeRequiredItem
+- setsFlag
+- fixedOnUse
+- singleUse
+- onUse
+
+Text fields:
+- defaultText
+- alreadyUsedText
+- noPowerText
+- wrongItemText
+- successText
+
+Effective properties and effects:
+- May set used, fixed, flags, and consume a required item.
+
+Action semantics:
+- use refuses with alreadyUsedText if singleUse and already used.
+- use checks powerFlag if present, otherwise authored powered defaulting true.
+- use checks requiredItem if supplied.
+- use may remove requiredItem, set fixed, set used, set setsFlag, narrate successText, and run onUse.
+
+### 12.9 furniture template
+
+Purpose:
+- Visible physical object that usually blocks movement and may support walk-behind depth sorting.
+
+Attach to:
+- Room hotspots.
+
+Public actions:
+- template:furniture.lookAt
+
+Contributed interactions:
+EXAMPLE_START
+lookAt:'template:furniture.lookAt'
+EXAMPLE_END
+
+Saved runtime variables:
+- None by default.
+
+Author fields:
+- sprite
+- rect
+- collisionShape
+- baseline
+- walkBehind
+- allowWalkBehindWithoutSprite
+- zIndex
+- defaultText
+- onCollide
+- onBump
+
+Text fields:
+- defaultText
+- description
+- refusals for take/open/close
+
+Effective properties and effects:
+- blocksMovement defaults true.
+- walkBehind defaults true when a sprite exists unless overridden.
+- collisionShape falls back to rect then x/y/frameW/frameH.
+- baseline falls back to collision bottom or y.
+- callbackResults are supplied for blocked movement.
+
+Action semantics:
+- lookAt narrates linked/effective look text.
+- Use furniture for visible blocking/foreground objects; use barrier for invisible or simple blockers.
+
+### 12.10 barrier template
+
+Purpose:
+- Simple blocking geometry, invisible blocker, force field, rubble line, guard zone, or passability gate.
+
+Attach to:
+- Room hotspots.
+
+Public actions:
+- template:barrier.lookAt
+
+Contributed interactions:
+EXAMPLE_START
+lookAt:'template:barrier.lookAt'
+EXAMPLE_END
+
+Saved runtime variables:
+- None by default.
+
+Author fields:
+- rect
+- collisionShape
+- hidden
+- renderHidden
+- blocksWhenHidden
+- blocksMovement getter
+- defaultText
+- onCollide
+- onBump
+
+Text fields:
+- defaultText
+- description
+- refusals for take/open/close
+
+Effective properties and effects:
+- blocksMovement defaults true.
+- collisionShape falls back to rect.
+- callbackResults are supplied for blocked movement.
+
+Action semantics:
+- lookAt narrates linked/effective look text.
+- For dynamic gates, use propertyGetters:{blocksMovement:"..."}.
+- For invisible blockers, set hidden:true, renderHidden:true, and blocksWhenHidden:true.
+
+### 12.11 combine template
+
+Purpose:
+- Symmetric two-subject combination.
+
+Attach to:
+- Inventory items, room hotspots, or objects that participate in symmetric Use X with Y combinations.
+
+Public actions:
+- template:combine.use
+
+Contributed interactions:
+EXAMPLE_START
+use:'template:combine.use'
+EXAMPLE_END
+
+Saved runtime variables:
+- None by default; rule effects may set state.
+
+Author fields:
+- combine
+- combinations
+- intransitiveUseText
+- selfUseText
+- combineRefusalText
+
+Text fields:
+- rule text
+- rule playerText
+- rule refusalText
+- combineRefusalText
+
+Effective properties and effects:
+- Applies shared rule requirement/effect fields.
+
+Action semantics:
+- Without a selected source, narrates intransitiveUseText.
+- For two different ids, checks rules on the lexically first id first, then on the second id.
+- Rule key is other id or *.
+- Passing rules apply effects and narrate text/playerText.
+
+### 12.12 openableBox template
+
+Purpose:
+- Simple one-shot openable object that does not need full container open/close/lock behaviour.
+
+Attach to:
+- Inventory items or room hotspots.
+
+Public actions:
+- template:openableBox.open
+
+Contributed interactions:
+EXAMPLE_START
+open:'template:openableBox.open'
+use:'template:openableBox.open'
+EXAMPLE_END
+
+Saved runtime variables:
+- object/item variable opened: 1/0.
+
+Author fields:
+- alreadyOpenText
+- openEffect
+- revealsItem
+- openSpeakerId
+- openText
+
+Text fields:
+- alreadyOpenText
+- openText
+
+Effective properties and effects:
+- transitiveUse defaults false.
+- First open sets opened=1, applies openEffect, and may add revealsItem.
+
+Action semantics:
+- If opened, narrates alreadyOpenText.
+- If not opened, sets opened, applies effects, adds revealsItem if no openEffect.addItem is present, and narrates openText.
+
+### 12.13 exchange template
+
+Purpose:
+- Give-only trade, barter, handover, bribe, proof presentation, document check, or NPC exchange.
+
+Attach to:
+- NPCs, room hotspots, or inventory targets that receive Give interactions.
+
+Public actions:
+- template:exchange.give
+
+Contributed interactions:
+EXAMPLE_START
+give:'template:exchange.give'
+EXAMPLE_END
+
+Saved runtime variables:
+- None by default; rule effects may set state.
+
+Author fields:
+- exchanges
+- exchangeNeedItemText
+- exchangeRefusalText
+
+Text fields:
+- playerRefusalText
+- playerText
+- npcText
+- text
+- exchangeNeedItemText
+- exchangeRefusalText
+
+Effective properties and effects:
+- Applies shared rule requirement/effect fields and may run afterDialogueScript.
+
+Action semantics:
+- If no source item is selected, narrates exchangeNeedItemText.
+- Finds rule by source id or *.
+- On failure, may show playerRefusalText and NPC/target refusal.
+- On success, applies effects, says optional playerText then npcText/text, then runs afterDialogueScript.
+- Exchange is Give-only.
+
+### 12.14 multiRequirement template
+
+Purpose:
+- Target that needs multiple items delivered/installed before completion.
+
+Attach to:
+- Room hotspots, NPCs, or objects that receive several required items.
+
+Public actions:
+- template:multiRequirement.add
+
+Contributed interactions:
+EXAMPLE_START
+give:'template:multiRequirement.add'
+use:'template:multiRequirement.add'
+EXAMPLE_END
+
+Saved runtime variables:
+- delivered_itemId for each requirement item id.
+
+Author fields:
+- requirements
+- requirementNeedItemText
+- requirementWrongItemText
+- completion
+- completionText
+- completionSpeakerId
+
+Text fields:
+- requirement text
+- alreadyText
+- requirementNeedItemText
+- requirementWrongItemText
+- completionText
+
+Effective properties and effects:
+- Each requirement and completion may use shared rule requirement/effect fields.
+
+Action semantics:
+- If no source item is selected, narrates requirementNeedItemText.
+- If source is not listed, narrates requirementWrongItemText.
+- If requirement already delivered, narrates alreadyText.
+- Otherwise sets delivered_itemId=1, removes source unless consume:false, and narrates text.
+- When all requirements are delivered, applies completion and narrates completionText.
+
+### 12.15 gatekeeper template
+
+Purpose:
+- NPC/object that permits or blocks progress, often with optional dialogue.
+
+Attach to:
+- NPC characters or room hotspots.
+
+Public actions:
+- template:gatekeeper.talkTo
+- template:gatekeeper.check
+
+Contributed interactions:
+EXAMPLE_START
+talkTo:'template:gatekeeper.talkTo'
+use:'template:gatekeeper.check'
+give:'template:gatekeeper.check'
+EXAMPLE_END
+
+Saved runtime variables:
+- None by default.
+
+Author fields:
+- dialogueTree
+- allowsPassage
+- allowText
+- blockText
+
+Text fields:
+- allowText
+- blockText
+
+Effective properties and effects:
+- No movement or transition effect by itself.
+
+Action semantics:
+- talkTo starts dialogueTree if present; otherwise it performs check.
+- check narrates allowText when effective allowsPassage is true, otherwise blockText.
+- Gatekeeper does not enable transitions or remove blockers; use flags/effective properties/transitionZones for passage.
+
+### 12.16 costume template
+
+Purpose:
+- Wearable item that changes the player sprite and optionally swaps inventory items.
+
+Attach to:
+- Inventory items.
+
+Public actions:
+- template:costume.use
+
+Contributed interactions:
+EXAMPLE_START
+use:'template:costume.use'
+EXAMPLE_END
+
+Saved runtime variables:
+- item variable worn: 1.
+
+Author fields:
+- costumeSpriteId
+- playerSpriteId
+- baseClothes
+- replacesItem
+- returnItem
+- wearText
+- costumeNoSpriteText
+
+Text fields:
+- wearText
+- costumeNoSpriteText
+
+Effective properties and effects:
+- transitiveUse defaults false.
+- Changes player sprite, sets worn, removes replacesItem, and adds returnItem.
+
+Action semantics:
+- If costumeSpriteId/playerSpriteId is missing and baseClothes:true, restores authored game.player.spriteId.
+- If no sprite can be determined, narrates costumeNoSpriteText.
+- Override use only for special location/witness/story rules, and document the override.
+
+### 12.17 toolTarget template
+
+Purpose:
+- Target-specific Use tool on target behaviour.
+
+Attach to:
+- Room hotspots, NPCs, or items that receive tool uses.
+
+Public actions:
+- template:toolTarget.use
+
+Contributed interactions:
+EXAMPLE_START
+use:'template:toolTarget.use'
+EXAMPLE_END
+
+Saved runtime variables:
+- None by default; rule effects may set state.
+
+Author fields:
+- toolUses
+- toolNeedItemText
+- toolRefusalText
+
+Text fields:
+- rule text
+- toolNeedItemText
+- toolRefusalText
+- rule refusalText
+
+Effective properties and effects:
+- Applies shared rule requirement/effect fields.
+
+Action semantics:
+- If no source item is selected, narrates toolNeedItemText.
+- Finds rule by source/tool id or *.
+- On failure, narrates rule refusal or toolRefusalText.
+- On success, applies effects and narrates rule text.
+
+### 12.18 clueUnlocker template
+
+Purpose:
+- Clue object/readable that unlocks map places or clue-gated information.
+
+Attach to:
+- Inventory items, room hotspots, or overlay targets.
+
+Public actions:
+- template:clueUnlocker.unlock
+
+Contributed interactions:
+EXAMPLE_START
+lookAt:'template:clueUnlocker.unlock'
+use:'template:clueUnlocker.unlock'
+EXAMPLE_END
+
+Saved runtime variables:
+- item variable place_placeId_unlocked=1 on mapItemId or on the clue target id.
+
+Author fields:
+- unlockBlocked
+- unlockBlockedText
+- unlocksPlaces
+- mapItemId
+- unlockText
+
+Text fields:
+- unlockBlockedText
+- unlockText
+
+Effective properties and effects:
+- Sets place unlock item variables.
+
+Action semantics:
+- If unlockBlocked is true, narrates unlockBlockedText.
+- Otherwise sets item variable place_placeId_unlocked=1 for each unlocksPlaces id and narrates unlockText.
+- Map visibleFlag checks global flags, not these item variables; use a places/mapPlaces getter or mirror into flags if needed.
+
+### 12.19 distractible template
+
+Purpose:
+- NPC/object that can be distracted by an item or default action.
+
+Attach to:
+- NPC characters or room hotspots.
+
+Public actions:
+- template:distractible.distract
+
+Contributed interactions:
+EXAMPLE_START
+use:'template:distractible.distract'
+give:'template:distractible.distract'
+EXAMPLE_END
+
+Saved runtime variables:
+- object/character variable distracted: 1 after success.
+
+Author fields:
+- distractions
+- distractionRefusalText
+
+Text fields:
+- rule text
+- rule refusalText
+- distractionRefusalText
+
+Effective properties and effects:
+- Sets distracted=1 and applies shared rule effects on success.
+
+Action semantics:
+- Source is selected inventory item/subject if present.
+- Rule key is source id, default when no source exists, or * fallback.
+- On failure, narrates rule refusal or distractionRefusalText.
+- On success, sets distracted, applies effects, and says/narrates rule.text using rule.speakerId or target id.
+
+### 12.20 Template quick reference: exact contributed interactions
+
+Use this list when validating generated scripts. These are exact public action names.
+
+- door contributes lookAt -> template:door.lookAt, open -> template:door.open, close -> template:door.close, use -> template:door.useKey, walkTo -> template:door.walkTo.
+- key contributes no interactions and has no public actions.
+- map contributes lookAt -> template:map.show.
+- pickup contributes lookAt -> template:pickup.lookAt, take -> template:pickup.take.
+- container contributes lookAt -> template:container.lookAt, open -> template:container.open, close -> template:container.close, use -> template:container.useKey.
+- switch contributes lookAt -> template:switch.lookAt, use -> template:switch.toggle, open -> template:switch.turnOn, close -> template:switch.turnOff.
+- readable contributes lookAt -> template:readable.read, use -> template:readable.read.
+- device contributes lookAt -> template:device.lookAt, use -> template:device.use.
+- furniture contributes lookAt -> template:furniture.lookAt.
+- barrier contributes lookAt -> template:barrier.lookAt.
+- combine contributes use -> template:combine.use.
+- openableBox contributes open -> template:openableBox.open, use -> template:openableBox.open.
+- exchange contributes give -> template:exchange.give.
+- multiRequirement contributes give -> template:multiRequirement.add, use -> template:multiRequirement.add.
+- gatekeeper contributes talkTo -> template:gatekeeper.talkTo, use -> template:gatekeeper.check, give -> template:gatekeeper.check.
+- costume contributes use -> template:costume.use.
+- toolTarget contributes use -> template:toolTarget.use.
+- clueUnlocker contributes lookAt -> template:clueUnlocker.unlock, use -> template:clueUnlocker.unlock.
+- distractible contributes use -> template:distractible.distract, give -> template:distractible.distract.
+
+### 12.21 Template selection checklist
+
+Use this checklist before writing custom scripts:
+- Door, hatch, gate, lockable passage: door plus key if locked, and a transitionZone for travel.
+- Loose item in the world: pickup.
+- Box, drawer, safe, cupboard with contents and/or lock: container.
+- Simple one-shot openable inventory object: openableBox.
+- Lever, valve, button, switch, on/off control: switch.
+- Note, sign, poster, book, label, document, terminal readout: readable.
+- Powered/useable machine: device.
+- Large visible blocking object: furniture.
+- Invisible/simple blocker: barrier.
+- Symmetric Use X with Y: combine.
+- Use specific tool on target: toolTarget.
+- Give item for trade or handover: exchange.
+- Deliver several items to one target: multiRequirement.
+- NPC/object that permits or blocks passage: gatekeeper plus effective allowsPassage/blocker state.
+- Disguise/clothing item: costume, unless special location/witness rules require a custom script.
+- Clue that unlocks map information: clueUnlocker plus map visibility logic.
+- Distractible NPC/object: distractible.
+
+### 12.22 Template override rules and validator warning
+
+A template's contributed interactions are defaults. If the entity defines the same interaction key, the entity's value wins.
+
+Good override examples:
+- A costume item overrides use because wearing it is forbidden in a particular room.
+- A door overrides open because it has a special cutscene and animation sequence that the door template cannot express.
+- A readable overrides use because using it consumes the document or starts special dialogue.
+
+Bad override examples:
+- A readable item defines lookAt:'lookAtNote' only to narrate state-dependent note text. Use propertyGetters:{defaultText:'noteText'} instead.
+- A switch defines use:'useSwitch' only to toggle a flag and text when the switch template could do it.
+- A door defines lookAt:'lookAtDoor' only to say open/closed text that the door template already supplies.
+
+If the validator warns TEMPLATE_INTERACTION_OVERRIDDEN, either remove the explicit interaction and rely on the template, or keep it and document why the override is intentional.
 
 ## 13. Runtime Script API: Exact Method Contracts
 
@@ -1236,7 +2173,7 @@ EXAMPLE_END
 Tree fields: `speakerId`, `start`, `nodes`, `emptyText`. Node fields: `speakerId`, `text`, `choices`, `emptyText`. `emptyText` supplies a single closing choice when a node has no visible choices.
 
 Dialogue depth guidance:
-- Dialogue trees are both a technical structure and a content-delivery mechanism. For any NPC or entity whose role is substantial under the quality/depth contract, the tree should reflect that role through state-aware choices, character voice, clueing, refusal/hint integration, world or theme content, and post-event reactions where relevant.
+- Dialogue trees are both a technical structure and a content-delivery mechanism. For any NPC or entity whose role is substantial in the GDD or current human room brief, the tree should reflect that role through state-aware choices, character voice, clueing, refusal/hint integration, world or theme content, and post-event reactions where relevant.
 - Do not replace a substantial conversation with a custom talkTo script that only says one line. Use a script only to start the dialogue tree or for distinctive logic that dialogue conditions/actions cannot express.
 
 Choice fields: `id`, `text`, `playerText`, `skipPlayerLine`, `speakerId`, `response`, `next`, `end`, `repeat`, `stay`, `hideAfterUse`, `condition`, `conditions`, `showIf`, `preAction`, `preActions`, `action`, `actions`, `script`, `postResponseAction`, `postResponseActions`.
@@ -1366,332 +2303,19 @@ State storage guidance:
 - Use object state only when you intentionally want to override effective properties directly.
 - Use room/character state for broader saved state objects where scoped variables are not a natural fit.
 
-Authoring checklist before validation:
-
-- Does each standard puzzle use the appropriate template before any custom script? For ordinary world pickups, use `template:'pickup'` and rely on the default hide-after-take behaviour; add `hideOnTake:false` only when the world object should deliberately remain visible. A linked pickup may rely on the linked inventory item's `defaultText`/`description` for general Look At text, but author a world `defaultText` when the in-world description should differ from the carried item description. For ordinary terminals, switches, kiosks, levers, readers, devices, and other one-click objects, provide a plain `use` interaction and rely on inferred intransitive use; set `transitiveUse:true` only when the object is deliberately meant to be the first subject in Use X with Y.
-- Does every mutable value that matters after save/load use a public saved-state API?
-- Are dynamic text, visibility, blocking, sprites, and available interactions represented as effective properties/getters rather than custom scripts where possible?
-- Are all branching conversations dialogue trees?
-- Are all staged sequences cutscenes rather than timers?
-- Are room changes represented as transition zones unless a custom script genuinely needs to call `api.ChangeRoom()`?
-- Are all `walkTo` points, transition target points, graph nodes, NPC move targets, blockers, and trigger/transition zones consistent with the room's walkable geometry and the documented player/NPC movement differences?
-- Are all refusals data-driven unless they require distinctive game logic?
-
-- Has the authoring AI classified major content roles and matched implementation depth to those roles, rather than treating runtime validity as the quality bar?
-- Do major NPCs, gatekeepers, companions, antagonists, clue sources, and recurring characters use dialogue trees or equivalent state-aware canonical systems rather than one-line scripts?
-- Do critical-path puzzles, gates, and clues have sufficient signposting, feedback, refusal/hint escalation, and post-state reactions for their role?
-- Do important descriptions, refusals, dialogue, visual/audio assets, endings, and puzzle payoffs feel specific to this game world, tone, and character set rather than generic first-draft filler?
-- Does every transition have spatial continuity between source exit affordance, destination arrival affordance, target position, and target facing, without unintuitive fourth-wall exits unless intentionally signposted?
-- Does every required walkthrough step map to an implemented command path with verb, source item where applicable, target, preconditions, effects, and early/incorrect-attempt feedback?
-- Do functional visual assets such as maps, diagrams, terminals, signs, closeups, and puzzle panels communicate their gameplay information visually rather than relying only on invisible hotspots?
-- Does each non-trivial puzzle have a clue gradient that avoids both missing clues and over-explicit solution statements before the player has earned or requested them?
-- Does every ordinary room meet the room density budget, and are any sparse-room exceptions explicitly justified by the GDD or quality/depth report?
-- Does the game contain abundant non-critical examinable content, including red herrings, fair false leads, thematic worldbuilding, optional clues, and ambient details?
-- Do red herrings avoid contradicting critical-path information, implying that required actions are impossible, or creating unfair wild-goose chases without corrective feedback?
-- Do starting and frequently used inventory items support plausible non-progressing actions, ordinary-purpose uses where appropriate, and authored wrong-target feedback?
-- Can the player visually inspect major visible doors, hatches, cabinets, machines, terminals, signs, windows, furniture, vehicles, and unusual props, even when they are not on the critical path?
-
-Validation workflow:
-
-1. LLM structural-semantic validation: check all ids, scripts, templates, assets, hooks, dialogue forms, cutscene steps, save-state use, and template-vs-custom-script choices.
-2. Quality/depth validation: review the package against the general quality and depth contract. Confirm that each major content role has adequate authored depth, state awareness, clueing, feedback, tone, and payoff; revise low-effort but technically valid content before running the validator.
-3. Visual semantic validation: compare runtime images, asset manifest visual acceptance notes, and `style_reference_sheet.png`. Check that important visuals are specific, coherent, and readable in their engine context.
-- Audio semantic validation: check that every room, title/menu/ending screen, and music-relevant cutscene has either a mapped music cue with filename and generator prompt, a reused cue with justification, or explicitly intentional silence. Temporary silence for missing binaries must be documented as pending audio generation.
-- Player-experience semantic validation: check spatial continuity, walkthrough command coverage, functional visual legibility, clue gradients, and first-play dry-run behaviour before handoff. These checks are required because content can be structurally valid yet still be unintuitive, undiscoverable, or poorly signposted.
-  - Transition continuity: every room transition must preserve adventure-game spatial logic. Each transition should have a visible or clearly implied exit affordance in the source room, a matching visible or implied arrival affordance in the destination room, and plausible targetX, targetY, and targetFacing values. Avoid exits that require walking into the fourth wall or toward the player unless the GDD intentionally establishes and visually signposts that convention. Re-entry should not contradict exit direction or place the player as if entering through an unrelated side of the destination room.
-  - Walkthrough command coverage: every required walkthrough step must map to an implemented command path. For each step identify roomId, verbId, source item id if any, target id, implementation path such as direct interaction key or template rule, preconditions, state/inventory effects, early/incorrect-attempt feedback, and validation status. If a walkthrough says to use or give an item to a target, the implementation must include the corresponding transitive interaction path or template rule, not merely the item and target as separate objects.
-  - Functional visual legibility: any image that carries gameplay information, including maps, diagrams, terminal screens, signs, labels, closeups, puzzle panels, overlays, UI-like screens, and clue images, must visually communicate its gameplay function at runtime size. Hotspots may augment these images, but invisible hotspot discovery must not be the only way to understand the graphic unless that is an intentional, signposted puzzle.
-  - Room density: every ordinary room must meet the density budget or have a justified sparse-room exception. Check that non-critical examinable objects, ambient hotspots, visible door/object inspections, optional conversations, and plausible non-progressing actions are actually implemented, not merely listed in the plan.
-- Red-herring and false-lead fairness: every red herring or wild-goose-chase element must enrich the world or clue web without contradicting critical-path information, implying required actions are impossible, consuming irreplaceable critical resources, or leaving the player without corrective feedback.
-- Clue web: every non-trivial puzzle must distribute solution understanding across direct clues, subtle fragments, optional clues, refusals, visual signposting, dialogue, and fair false leads as appropriate. Confirm that players can learn how to solve puzzles through exploration rather than only by reading the walkthrough.
-- Clue gradient: every non-trivial puzzle must have clueing that progresses from subtle setup, to clearer optional inspection/dialogue/refusal information, to post-failure or repeated-attempt hints where appropriate. Avoid both un-signposted solutions and premature solution statements. Explicit solution-level hints should normally appear only after relevant player action, failure, optional help, or late-game blocking.
-  - First-play dry run: dry-run the shortest intended path, several optional exploration paths, and at least one plausible wrong attempt per major puzzle. Confirm that movement, transitions, visible affordances, clue discovery, refusals, state changes, and payoffs make sense to a player who has not read the implementation.
-4. Run validator when the validator and engine file are available. Ordinary authoring from the API and GDD alone must still perform API-contract self-validation, but must mark external validator execution as not run if those files are not supplied. For the canonical layout `gameId/gameId.js` with assets below `gameId/`, the validator infers `gameId/` as the asset root for existence checks:
+Validation notes:
+- Run the validator when available. For the canonical layout, use:
 
 EXAMPLE_START
 python validator.py gameId/gameId.js --engine index.html --check-assets --report validation_report.txt
 EXAMPLE_END
 
-If the game script is not in the same folder as its assets, pass the asset folder explicitly. The asset root is relative to `index.html`:
+- If the script is not in the same folder as its assets, pass the asset folder explicitly:
 
 EXAMPLE_START
 python validator.py scripts/gameId.js --engine index.html --asset-root gameId/ --check-assets --report validation_report.txt
 EXAMPLE_END
 
-If exactly one game script exists below the directory, the validator can discover it and infer that script's parent folder as the asset root:
-
-EXAMPLE_START
-python validator.py --check-assets --report validation_report.txt
-EXAMPLE_END
-
-4. Human runtime test: start game, test every room transition, dialogue branch, inventory action, template puzzle, cutscene, save/load, ending, and custom script. For failures, retrieve `PointClickEngine.GetDiagnostics()` or `PointClickEngine.CopyDiagnosticsToClipboard()`.
-
-Validator interpretation:
-
-- `[PCEVAL][ERROR]`: must fix before testing.
-- `[PCEVAL][WARN]`: normally fix unless deliberately harmless.
-- `ASSET_PATH_INVALID`, `ASSET_IMAGE_EXTENSION`, `ASSET_FILE_MISSING`: asset path/file problem.
-- `PRIVATE_ENGINE_ACCESS`: forbidden internal access.
-- `TEMPLATE_UNKNOWN`, `TEMPLATE_ACTION_INVALID`: template issue.
-- `SCRIPT_REF_MISSING`: missing script.
-- `LEGACY_HOOK_USED`: unsupported hook name.
-
-## 18. Authoring AI Output Contract
-
-When an AI is asked to create a game from this API reference and the completed Game Design Document, it must produce a predictable package. The GDD is the source of design truth; if a required value is absent, the AI should ask a clarification question before generating code, or state an explicit assumption in the implementation notes if the workflow requires a complete first draft.
-
-Required deliverables:
-
-1. Implementation notes: game id, title, intended assetPath, engine API version, assumptions, requested engine extensions, and the declared asset tier: production-quality first pass, readable prototype, or placeholder-only. Default to production-quality first pass unless the user or workflow says otherwise.
-2. Workflow status ledger: current workflow state, approved plan version, generated file versions, known assumptions, unresolved blockers, pending assets/audio, registry status, validation status, and the recommended next human command. This must be updated at every handoff or interruption.
-2. Style reference sheet first: before producing the full runtime asset set, create `style_reference_sheet.png` and the accompanying visual style brief. The sheet is the visual contract for all later runtime assets.
-3. Registry output: if existing `games.json`/`games.js` files are supplied, provide uniquely named merged registry files preserving existing entries. If they are not supplied, provide registry entry snippets and explicitly ask the human to upload the current registry files next turn for merging. Only provide standalone harness registry files under unique standalone names when requested or clearly useful for isolated testing.
-4. Game script: one `gameId/gameId.js` script that calls `PointClickEngine.RegisterGame({...})` exactly once and uses only the public authoring contract in this document.
-5. Asset manifest: every image, music, sound, and voice asset needed by the game, with canonical path, role folder, expected dimensions, spritesheet frame size where applicable, asset tier, and visual acceptance notes for important runtime images. For audio, include cue ids, filenames, use locations, generation prompts, and whether each cue is implemented, pending generation, optional, or intentionally silent.
-6. Music cue manifest: a concise list of every required music cue, filename, rooms/screens/endings using it, purpose/mood, style/instrumentation, tempo/energy, looping notes, and an AI music-generator prompt of 1000 characters or fewer. This is required even if audio binaries are not generated in the package.
-7. Generated assets: assets should be placed under the canonical role folders below `gameId/`. If binary image generation is unavailable, provide exact filenames, sizes, transparency requirements, content descriptions, and visual acceptance notes instead; do not present such a package as visually production-ready.
-8. Puzzle dependency graph or walkthrough: the shortest intended solution path, optional branches, failure/refusal paths, and all required inventory/state dependencies.
-- Walkthrough command coverage matrix: every required solution step, optional branch needed for completion, and critical failure/retry case mapped to roomId, verbId, source item id if any, target id, implementation path, preconditions, effects, refusal/early feedback, and coverage status.
-- Transition continuity matrix: every room-to-room transition with source room, visible/implied source affordance, destination room, visible/implied arrival affordance, targetX/targetY/targetFacing, direction-continuity notes, and any justified exception.
-- Room density plan and audit: every room with role, critical-path objects, non-critical examinable objects, red herrings, clue fragments, optional conversations, plausible non-progressing actions, visible door/object inspection support, and density-budget verdict.
-- Red-herring and false-lead audit: every red herring or wild-goose-chase element with its apparent implication, actual role, fairness notes, contradiction check, and feedback path.
-- Clue gradient audit: every non-trivial puzzle with required inference, clue channels, escalation triggers, post-failure hints, spoiler/overtness risk, and final verdict.
-- Clue web: every non-trivial puzzle with subtle clue fragments, optional clue sources, misleading-but-fair leads, corrective information, and plausible wrong-attempt feedback.
-- Functional visual legibility audit: every map, diagram, terminal, sign, closeup, puzzle panel, overlay, and UI-like image that carries gameplay information, with its gameplay reading, visible affordances/labels, hotspot relationship, and runtime-size readability verdict.
-9. Quality/depth validation report: a concise review of the major content roles, how each is supported by authored depth, and any deliberately terse/minimal elements with justification. This report must be completed before structural validator handoff.
-10. Validation report: API-contract self-validation results, and, when validator/engine files are available, the validator command used, including `--asset-root` if needed, and the resulting errors/warnings. If the external validator was not run because it was not supplied, say so explicitly and provide the command to run. Errors must be fixed before handoff. Warnings must be fixed or explicitly justified.
-- Runtime test plan: every room transition, dialogue branch, inventory action, walkthrough command, template puzzle, cutscene, save/load case, ending, custom script, visual readability check, functional map/overlay check, room-density check, red-herring fairness check, clue-web check, clue-gradient check, non-critical interaction check, and plausible wrong-attempt feedback path that a human tester should exercise.
-
-Output rules for game scripts:
-
-- Use declarative data and templates first. Use custom scripts only for distinctive logic that the documented systems cannot express.
-- Do not rely on `index.html`, private engine objects, DOM APIs, browser timers, custom save/load systems, custom renderers, or custom inventory/dialogue/movement loops.
-- Keep all mutable story state in public saved-state APIs or template-owned runtime variables.
-- Ensure all dynamically selected images are also referenced by documented preloadable image fields.
-- Prefer validator-checkable ids, templates, dialogue actions, cutscene steps, transitions, and asset paths over clever script code.
-- If the GDD asks for behaviour outside this contract, list it under requested engine extensions instead of inventing an API.
-- Do not output replacement `games.json` or `games.js` files unless the current files were supplied and merged. Otherwise output entry snippets and ask the human to supply the current registry files for the next-turn merge.
-
-## 19. Using the Game Design Document
-
-The completed Game Design Document is the design source of truth. The authoring AI must convert it into a complete, original, validator-checkable PointClickEngine package while obeying this API reference.
-
-### 20. Required AI process for a completed GDD
-
-1. Parse the GDD into a normalized plan: core premise, setting, style, plot control level, rooms, characters, puzzles, items, dialogue needs, cutscenes, endings, themes, assets, and constraints.
-2. Identify missing or ambiguous information. Ask clarification questions only when reasonably necessary to avoid a materially wrong game, a contradiction, or an impossible implementation. Do not ask questions merely because optional detail is blank; apply the template defaults and state assumptions.
-3. Research the requested genre, subgenre, period, and any reference games or works in detail. Find real walkthroughs for games of that type, especially 1990s point-and-click adventures where relevant. Analyse puzzle flow, room access control, inventory dependencies, dialogue loops, hinting, pacing, tone, UI conventions, and ending structure.
-4. Do not copy any puzzle, room layout, joke, character, dialogue, image, music, or prose exactly from the research. Use research to synthesize original patterns and genre flavour.
-5. For each named character, build a voice brief from the GDD and, where helpful, research the character's role, profession, period, region, genre archetype, motives, and comparable public examples. Capture personality, diction, idiom, rhythm, humour style, and motives without copying protected dialogue or imitating a real person so closely that the output becomes non-original.
-- Map the design to content roles and required depth: identify critical-path gates, puzzle/clue carriers, major characters, minor characters, ambience, rewards/payoffs, endings, and deliberately incidental elements. State which elements require substantial authored depth and which may remain concise.
-6. Map the design to engine systems: rooms to `game.rooms`, room travel to `transitionZones`, standard object behaviour to templates, branching conversation to `dialogueTrees`, staged presentation to cutscenes, persistent state to public flags/variables/scoped variables/object variables, and endings to `game.endings`.
-- Build a transition continuity matrix before implementation: every planned room transition must identify the source affordance, destination affordance, target coordinates, facing, and any exception to ordinary adventure-game spatial logic.
-- Build a walkthrough command coverage matrix before implementation: every required solution step must be expressible as a concrete implemented command path, including verb, source item if any, target, preconditions, effects, and feedback for incorrect or early attempts.
-- Build a room density plan before implementation: each room must identify critical-path objects, non-critical examinable objects, red herrings, clue fragments, optional conversations, plausible non-progressing actions, and visible door/object inspection support.
-- Build a clue web and clue gradient audit before finalising puzzles: each non-trivial puzzle must have clue channels and escalation that are neither absent nor prematurely solution-giving, plus subtle clue fragments, optional clues, false-but-fair leads, and corrective information where needed.
-- Build a functional visual legibility audit for maps, diagrams, terminals, signs, closeups, puzzle panels, overlays, and UI-like images that carry gameplay information.
-7. Establish the visual contract before generating the full asset set: derive a concise art direction from the GDD and research, create `style_reference_sheet.png`, then use it to guide all runtime room, character, object, inventory, overlay, and UI assets.
-- Establish the audio plan before final script handoff: derive the music cue manifest from the GDD and room/cutscene/ending moods, map every room/screen/ending to a cue or intentional silence, and document any temporary silence caused only by missing binary audio files.
-8. Prefer the smallest implementation that satisfies the GDD. Use declarative data and templates before custom scripts. If the GDD asks for behaviour outside this contract, list a requested engine extension instead of inventing a private API.
-- Produce the required deliverables from the Authoring AI Output Contract, including implementation notes, workflow status ledger, registry output/snippets, game script, asset manifest, music cue manifest, style reference sheet, walkthrough/dependency graph, quality/depth validation report, validation report, and runtime test plan.
-
-
-### 20A. Execution environments and authoring workflow
-  
-PointClickEngine authoring supports two execution environments:
-
-1. Automated coding-harness workflow.
-2. Manual staged chat workflow.
-
-The authoring requirements, deliverables, validation checks, and quality standards are the same in both environments. The difference is who controls progression from one stage to the next.
-
-In an automated coding-harness workflow, a repository-aware coding agent or task runner controls progression by invoking the AI on stage-specific tasks, checking generated files, running validator.py, running repository tests where available, and rejecting or revising outputs that fail checks.
-
-In a manual staged chat workflow, the human controls progression by prompting one stage at a time using README.md. The AI must obey the stage named in the current prompt and must not generate artefacts from later stages.
-
-Do not rely on the AI to track its own authoring stage across a long chat. In chat environments, use the staged prompts in README.md. In coding-harness environments, use AGENTS.md or equivalent repository instructions plus validator.py.
-
-### 20B. Shared authoring stages
-
-The stages are:
-
-1. Intake and assumptions.
-2. Pre-implementation plan.
-3. Plan review and revision.
-4. Asset, visual, and audio planning.
-5. Implementation generation.
-6. Self-validation and quality/depth review.
-7. Handoff and next-file requests.
-8. Optional registry merge.
-9. Optional debug/fix loop.
-
-Stage 1 - Intake and assumptions:
-- Parse the GDD and identify missing or ambiguous information under the clarification rules.
-- State any assumptions needed to proceed.
-- Do not generate the game script, runtime assets, registry files, or package archives.
-
-Stage 2 - Pre-implementation plan:
-- Produce the normalized design plan, content-role/depth plan, room density plan, red-herring and false-lead plan, clue web, room graph, puzzle dependency graph, dialogue plan, transition continuity matrix, walkthrough command coverage matrix, clue gradient audit, functional visual legibility plan, verb affordance plan, state model, registry strategy, and initial asset/audio requirements.
-- The plan must identify major content roles and required depth before implementation.
-- Do not generate the game script, runtime assets, registry files, or package archives.
-
-Stage 3 - Plan review and revision:
-- Apply human or reviewer notes to the plan.
-- Check the revised plan against the general quality/depth contract, clueing expectations, registry workflow, and audio cue requirements.
-- Do not generate implementation until the plan has been approved in the manual workflow or the coding-harness task has produced the required plan artefact.
-
-Stage 4 - Asset, visual, and audio planning:
-- Produce or specify style_reference_sheet.png first when image generation is available, plus the visual style brief and visual acceptance notes.
-- Produce the music cue manifest and sound-effect manifest if relevant.
-- Map every room, title/menu/ending screen, and music-relevant cutscene to a cue, reused cue, intentional silence, or temporary pending-audio fallback.
-- For functional visual assets, specify visible labels, icons, routes, diagrams, states, or other affordances that make hotspots and puzzle information discoverable at runtime size.
-- Do not generate the game script yet unless the workflow is explicitly in Stage 5.
-
-Stage 5 - Implementation generation:
-- Generate the game script and package artefacts from the approved plan and asset/audio plan.
-- Do not output replacement games.json or games.js unless the current registry files were supplied and merged. Otherwise output registry snippets and request the current registry files for a later merge stage.
-- Use unique filenames for generated files and reports.
-
-Stage 6 - Self-validation and quality/depth review:
-- Perform API-contract validation using this reference even when no engine or validator is supplied.
-- If a validator or validation report is supplied, also use it. If not supplied, provide the validator command that should be run by a human or coding harness, and mark validator execution as not run rather than pretending it passed.
-- Perform structural-semantic validation, quality/depth validation, visual semantic validation, audio semantic validation, and player-experience semantic validation before handoff.
-- Any low-effort but technically valid content found in this stage must be revised before final handoff unless the human explicitly accepts it.
-
-Stage 7 - Handoff and next-file requests:
-- Provide implementation notes, generated files, manifests, walkthrough, walkthrough command coverage matrix, transition continuity matrix, clue gradient audit, functional visual legibility audit, validation reports, runtime test plan, registry snippets, and a concise list of pending human actions.
-- If existing registry files are needed but were not supplied, ask the human to upload current games.json and games.js next. Do not ask for index.html unless engine validation/debugging is specifically required.
-
-Stage 8 - Optional registry merge:
-- When games.json and/or games.js are supplied, merge the new game entry into them while preserving existing entries and avoiding duplicates.
-- Output uniquely named merged registry files for review.
-
-Stage 9 - Optional debug/fix loop:
-- When fixing a failure, use the exact uploaded files or logs from the current turn.
-- Make minimal changes unless a broader change is explicitly approved.
-- After the fix, update the workflow status and return to the interrupted authoring stage or next blocked stage.
-
-Context-rot prevention:
-- Maintain a concise project ledger in implementation notes and workflow status: approved plan version, generated file versions, known assumptions, unresolved blockers, pending assets/audio, registry status, and validation status.
-- If conversation context appears inconsistent with the uploaded files, trust the uploaded files and explicitly restate the current ledger before proceeding.
-
-### 20C. Automated coding-harness workflow
-  
-This mode is intended for repository-aware coding agents that can read and edit files, run commands, run tests, and iterate on failures. The detailed coding-agent operating instructions belong in AGENTS.md or an equivalent repository instruction file, not in this API reference.  
-This API reference defines the public game-authoring contract, required deliverables, validation expectations, and shared authoring stages. AGENTS.md should define repository-local operating details such as where to place intermediate authoring files, which commands to run, and which project-specific checks to perform.  
-In this mode:
-- the coding agent must still obey the public authoring API, validation workflow, output contract, and shared authoring stages in this document;
-- the coding agent should follow AGENTS.md for repository-specific file locations, command lines, and handoff conventions;
-- the coding agent must not treat a single broad user request as permission to skip the required intermediate authoring artefacts;
-- claims that validation or tests passed must be supported by actual validator, test, or terminal output;
-- registry files must not be modified unless the current registry files were supplied and the task explicitly asks for a merge.  
-A suitable AGENTS.md should be concise and should point back to this API reference rather than duplicating it.
-
-
-### 20D. Manual staged chat workflow
-
-This mode is intended for chat environments where the AI cannot be trusted to maintain its own authoring stage across a complex project.
-
-In this mode:
-- the human prompts one stage at a time using README.md;
-- the AI must perform only the stage named in the current prompt;
-- the AI must not generate game scripts, runtime assets, registry files, or package archives during intake, planning, or asset/audio planning stages;
-- the AI must not claim that later stages are complete unless the human has explicitly requested them;
-- if the conversation context conflicts with uploaded files, the uploaded files control.
-
-The staged prompts in README.md are part of the authoring process. A user following those prompts is not expected to remember the detailed API contract.
-
-
-### 21. Clarification rules
-
-Ask the human before coding only if:
-- the title, setting, premise/objective, or player character is absent and cannot be sensibly inferred;
-- two GDD instructions conflict in a way that changes plot, tone, endings, or required puzzles;
-- a required puzzle or ending cannot be implemented with the documented engine contract;
-- the requested genre, tone, or character portrayal is too ambiguous to research or synthesize responsibly;
-- the GDD explicitly asks the AI to ask before inventing missing content.
-
-Do not ask if:
-- an optional field is blank and has a default;
-- the GDD gives a room count range rather than an exact count;
-- the AI can make a clearly stated assumption without changing the user's intent;
-- the ambiguity affects only minor object names, incidental jokes, background hotspots, refusal text, or connective dialogue.
-
-When asking, group questions into the fewest possible numbered questions. If proceeding with assumptions, list them in the implementation notes.
-
-### 22. Research-to-design rules
-
-The AI's research should extract reusable design patterns, not content. Useful patterns include:
-- verb/object and inventory interactions;
-- dialogue trees that reveal clues, motives, jokes, trade conditions, or gates;
-- door/key/signpost puzzle structures and puzzle dependency graphs;
-- hub rooms with gated exits and revisitable hotspots;
-- multi-use inventory items that become meaningful later;
-- clear refusal lines that hint without solving;
-- escalating absurdity in comic games or escalating atmosphere in serious games;
-- endings that pay off player choices, theme, and puzzle state.
-
-For serious games, keep jokes sparse or absent and use atmosphere, mystery, music, pacing, and environmental detail to carry tone. For comic games, use consistent character-driven humour rather than random gags.
-
-### 23. GDD-to-engine mapping checklist
-
-- Title and game id -> manifest entry and top-level `id`/`title`.
-- Setting, style, motifs -> room descriptions, asset prompts, music/sound notes, text tone, and title/end screens.
-- Plot shape -> room order, puzzle dependency graph, cutscenes, dialogue reveals, and endings.
-- Room graph and navigation logic -> transition continuity matrix, visible exit/arrival affordances, target positions, and facing values that match adventure-game spatial expectations.
-- Walkthrough solution steps -> concrete command coverage matrix mapping each step to implemented verb/source/target paths, state effects, and failure feedback.
-- Clue design -> clue web and clue gradient audit balancing subtle setup, optional hints, red herrings, fair false leads, post-failure feedback, and avoiding premature solution statements.
-- Room/world density -> room density plan, red-herring audit, non-critical interaction plan, optional examinable objects, visible door/object inspection support, and plausible non-progressing verb responses.
-- Functional visual assets -> visible information design for maps, diagrams, terminals, signs, overlays, and closeups, with hotspots matching visible affordances.
-- Room count/range -> number of `rooms`, room graph, transition zones, and map design if needed.
-- Main characters -> `game.characters`, room placements, sprites, dialogue trees, dialogue colours, interaction/refusal text, and state variables.
-- Specific puzzles -> templates first, then effective properties/getters, dialogue actions, cutscenes, and only then custom scripts.
-- Required events/jokes/incidents -> dialogue lines, hotspots, cutscenes, triggers, or puzzle payoffs.
-- Endings -> `game.endings`, ending conditions, ending backgrounds/music/animation.
-- Art style -> actual assets and the additional `style_reference_sheet.png`.
-- Themes/motifs -> recurring object descriptions, room details, dialogue subtext, puzzle metaphors, and ending language.
-
-### 24. Art asset workflow from the GDD
-
-The AI must create the visual style reference before the full runtime asset set unless the human explicitly disables image generation. Create one style reference sheet named `style_reference_sheet.png`. This file is not referenced by the game script; it is the visual contract for this package and a reusable brief for future asset-generation sessions.
-
-The sheet must contain:
-- one or two representative room backgrounds or background crops;
-- two or three characters, including the player character where possible;
-- two or three important objects or inventory items;
-- examples of the intended final style, palette, lighting, proportions, shape language, material treatment, and line/pixel treatment.
-
-Runtime asset generation must then follow the style reference sheet. For each important runtime image, the asset manifest must include a visual acceptance note describing what the asset must read as, the interaction or story purpose it serves, the features that distinguish it from similar assets, and the engine context in which it must remain readable. Do not rely on validation success alone as evidence of asset quality.
-
-For a production-quality first pass, all gameplay-relevant assets must be intentionally designed and mutually coherent. They may be simple, but they must be specific to the game world and readable in use. Placeholder-quality assets are acceptable only when explicitly requested or when binary image generation is unavailable; in that case the asset manifest and implementation notes must label the visual tier clearly and provide replacement specifications.
-
-Recommended asset order:
-1. visual style brief and `style_reference_sheet.png`;
-2. representative room and player-character assets;
-3. key gameplay objects and inventory icons;
-4. remaining rooms, characters, overlays, UI, title, and ending assets;
-5. visual QA pass against the asset manifest and runtime test plan.
-
-The asset manifest must say that future sessions creating graphical assets should be given the GDD, asset manifest, visual style brief, and `style_reference_sheet.png` so that new assets remain stylistically coherent.
-
-#### 25. GDD defaults and invariant workflow rules
-
-The GDD template intentionally contains only game-specific design choices. Apply these defaults unless the GDD overrides them:
-- Engine style: early-1990s verb/inventory point-and-click adventure.
-- Room count: 6-10 rooms.
-- World structure: mixed linear and hub-and-spoke with gentle progression locks.
-- Puzzle difficulty: medium.
-- Moon logic: low; strange solutions must be signposted.
-- Failure model: no player death and no unwinnable dead ends.
-- Endings: one good ending.
-- AI invention: allowed for connective plot, minor characters, rooms, puzzles, dialogue, jokes, and cutscenes if consistent with the GDD.
-- Art default: 1990s painted pixel-art backgrounds, readable silhouettes, slightly exaggerated character sprites, side-on 320x136 room scenes.
-- Audio default: light MIDI-like room music rendered as MP3 or OGG. Music should normally be present for rooms/screens unless the GDD requests sparse or silent music. The AI must derive a music cue manifest with filenames, room/screen/ending usage, and AI music-generator prompts even if it cannot generate the binary audio itself. Sound effects are optional and default to silence where unspecified; the authoring AI should derive any optional sound-effect suggestions rather than requiring the human to specify each effect.
-- Where the AI authoring the game cannot produce music itself, inform the human of this and give the human style prompts in 1,000 characters or less for an AI music generator for each piece of music required, specifying the file name that the resulting music from each style prompt should have.
-- Cutscene default: extra AI-added cutscenes should be limited to intro, major reveal, puzzle completion, and ending moments unless the GDD allows for more.
-- Technical default: standard engine save/load only; custom scripts only when templates, dialogue trees, cutscenes, and effective properties cannot express the behaviour.
-- Quality/depth default: production-quality first pass for content as well as assets. Major content roles require state-aware, game-specific authored depth; concise treatment is acceptable only for incidental elements or when the GDD intentionally asks for minimalism. Ordinary rooms must still meet the density budget by default; production-intent games require abundant optional examinable content, red herrings, fair false leads, thematic worldbuilding, and plausible non-progressing interactions.
-- Asset default: create all needed runtime assets as a production-quality first pass. If binary image generation is unavailable, provide exact replacement specifications and label the package as not visually production-ready.
-- Style-reference default: create `style_reference_sheet.png` first, before the full runtime asset set, unless the GDD explicitly disables image generation or the human explicitly disables the style-reference workflow.
-
-The AI must still produce all deliverables listed in the Authoring AI Output Contract and must still follow the validation workflow and runtime test expectations in this API reference.
+- Fix every [[PCEVAL][ERROR] before runtime testing. Treat [[PCEVAL][WARN] as an issue unless deliberately harmless and documented.
+- JS_SYNTAX_ERROR means the game script cannot boot. TEMPLATE_ACTION_INVALID includes invented or unknown template actions, such as template:readable.lookAt.
+- Human runtime testing is still required for room transitions, dialogue branches, inventory actions, cutscenes, save/load, and endings.

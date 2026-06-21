@@ -62,3 +62,95 @@ The final response must summarise:
 - registry status;
 - recommended human runtime tests.  
 Do not claim that validation, tests, or browser runtime testing passed unless they were actually run.
+
+
+#### Architecture and design-depth requirements
+
+Repository-aware agents must preserve the separation of concerns:
+- API-ref.md is the public game-script API and data contract.
+- README.md is the human-facing staged workflow guide.
+- AGENTS.md is the automatic coding-agent workflow guide.
+
+Before implementation, create or update the planning documents so they cover:
+- content-role and required-depth plan;
+- room density plan, including non-critical examinable content;
+- red-herring and false-lead plan with fairness notes;
+- clue web and clue gradient audit for every non-trivial puzzle;
+- verb affordance plan for important objects and inventory items;
+- state model, including the canonical owner of every persistent state value;
+- template/effective-property decision log;
+- custom-script justification list;
+- transition continuity matrix;
+- walkthrough command coverage matrix;
+- functional visual legibility plan for maps, signs, terminals, diagrams, closeups, puzzle panels, overlays, and UI-like images;
+- asset and audio plan, including visual acceptance notes, music cue manifest, and sound-effect manifest where relevant.
+
+Architectural rules for implementation:
+- For each behaviour, choose the highest-priority suitable mechanism: declarative data, templates, effective properties/getters, dialogue/cutscene data, then custom scripts only where necessary.
+- Do not write custom scripts merely to vary text, visibility, blocking, sprites, available interactions, or refusal text; use effective properties/getters where the API supports them.
+- Do not duplicate template-owned runtime variables with separate flags unless the separate flag has an independent story-level purpose.
+- Every custom script must be justified in the planning or validation notes.
+- Keep each implementation increment in a runnable, validator-checkable state.
+
+#### Required authoring stage document contents
+
+`docs/authoring/01_intake.md` must include:
+- GDD summary;
+- missing or ambiguous information;
+- assumptions;
+- engine-extension needs;
+- files needed for later stages.
+
+`docs/authoring/02_plan.md` must include:
+- normalised design plan;
+- content-role and required-depth plan;
+- room graph;
+- puzzle dependency graph;
+- dialogue plan;
+- architecture plan and canonical system mapping;
+- state model;
+- template/effective-property decision log;
+- custom-script justification list;
+- room density plan;
+- red-herring and false-lead plan;
+- clue web and clue gradient audit;
+- verb affordance plan;
+- transition continuity matrix;
+- walkthrough command coverage matrix;
+- functional visual legibility plan;
+- registry strategy;
+- initial asset and audio requirements.
+
+`docs/authoring/03_asset_audio_plan.md` must include:
+- visual style brief;
+- style_reference_sheet specification or generated style reference if available;
+- asset manifest with visual acceptance notes;
+- music cue manifest with filenames, usage, purpose/mood, style/instrumentation, tempo/energy, looping notes, and generation prompts;
+- sound-effect manifest where relevant;
+- explicit notes on placeholder/prototype assets or pending audio;
+- exact replacement instructions for temporary silence or placeholders.
+
+`docs/authoring/04_validation.md` must include:
+- validator command and output summary;
+- JavaScript syntax check status if available;
+- architectural validation: canonical path use, state ownership, effective-property use, template overrides, custom-script justifications, and scope control;
+- walkthrough command coverage check;
+- transition continuity check;
+- dialogue escape check;
+- linked item look/read check;
+- clue web and clue gradient check;
+- room density and red-herring fairness check;
+- functional visual legibility check;
+- quality/depth review;
+- runtime test plan.
+
+`docs/authoring/05_handoff.md` must include:
+- files created or changed;
+- implementation notes;
+- asset/audio manifest summary;
+- walkthrough;
+- validation results;
+- registry status;
+- known limitations;
+- recommended human runtime tests;
+- next actions.
