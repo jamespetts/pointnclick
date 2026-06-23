@@ -1602,6 +1602,12 @@
 
     };
     Engine.Overlays = {
+        CloseBoxRect:function () { return {x:306,y:4,w:10,h:10};
+        },
+        IsCloseBoxHit:function (x,y) { return PointInRect(x,y,this.CloseBoxRect());
+        },
+        HasInteractiveTargetAt:function (x,y) { return !!this.HitTest(x,y);
+        },
         Show:function (overlaySpec) { if (typeof overlaySpec==='string') { overlaySpec={image:overlaySpec};
             } Engine.State.activeOverlay=overlaySpec||null;
             if (Engine.State.activeOverlay) { Engine.State.activeOverlay.openedAt=Engine.Renderer ? Engine.Renderer.frameTime : 0;
@@ -1665,7 +1671,29 @@
             } var img=image ? Engine.Assets.GetImage(image,ov.type==='map'?'map':'overlay') : null;
             if (img) { Engine.Renderer.DrawImage(img,0,0,LOGICAL_WIDTH,SCENE_HEIGHT);
             } else { Engine.Renderer.Rect(0,0,LOGICAL_WIDTH,SCENE_HEIGHT,'#101018');
-            } }
+            }
+            var r=this.CloseBoxRect();
+            var ctx=Engine.Ctx;
+            ctx.save();
+            ctx.globalCompositeOperation='source-over';
+            ctx.globalAlpha=0.5;
+            ctx.fillStyle='#000000';
+            ctx.fillRect(r.x,r.y,r.w,r.h);
+            ctx.globalAlpha=0.25;
+            ctx.fillStyle='#ffffff';
+            ctx.fillRect(r.x+1,r.y+1,r.w-2,r.h-2);
+            ctx.globalAlpha=0.78;
+            ctx.strokeStyle='#ffffff';
+            ctx.lineWidth=1;
+            ctx.beginPath();
+            ctx.moveTo(r.x+3,r.y+3);
+            ctx.lineTo(r.x+r.w-4,r.y+r.h-4);
+            ctx.moveTo(r.x+r.w-4,r.y+3);
+            ctx.lineTo(r.x+3,r.y+r.h-4);
+            ctx.stroke();
+            ctx.restore();
+        }
+
     };
     Engine.Validator = {
         errors: [],
@@ -4656,6 +4684,19 @@ Engine.Input = {
                 Engine.Dialogue.Advance();
             } return;
         }
+        if (Engine.Overlays.IsActive() && p.y < UI_TOP) { var overlayTarget=Engine.Overlays.HitTest(p.x,p.y);
+            if (Engine.Overlays.IsCloseBoxHit(p.x,p.y) || event.button === 2 || event.altKey || (event.button === 0 && !overlayTarget)) { Engine.Overlays.Close();
+                return;
+            }
+            if (!Engine.State.dialogue.active && overlayTarget) { var overlayVerb=event.button === 1 ? 'lookAt' : Engine.State.selectedVerbId;
+                var overlayCommand=Engine.Interactions.BuildCommand(overlayVerb,overlayTarget.id,p.x,p.y);
+                overlayCommand.targetType='overlay';
+                Engine.Interactions.RunTargetInteraction(overlayCommand,overlayTarget);
+                return;
+            }
+            if (Engine.State.dialogue.active) { return;
+            }
+        }
         if (Engine.State.dialogue.active) { if (Engine.State.dialogue.options && Engine.State.dialogue.options.length) { var dialogueArrow=Engine.Renderer.GetDialogueChoiceArrowAtPoint(p.x,p.y);
                 if (dialogueArrow === 'up' && Engine.Renderer.CanScrollDialogueChoicesUp()) { Engine.Renderer.ScrollDialogueChoices(-1);
                     return;
@@ -4673,13 +4714,6 @@ Engine.Input = {
                     return;
                 }
                 Engine.Dialogue.Advance();
-            } return;
-        }
-        if (Engine.Overlays.IsActive() && p.y < UI_TOP) { var overlayTarget=Engine.Overlays.HitTest(p.x,p.y);
-            if (overlayTarget) { var overlayVerb=event.button === 1 ? 'lookAt' : ((event.button === 2 || event.altKey) ? 'walkTo' : Engine.State.selectedVerbId);
-                var overlayCommand=Engine.Interactions.BuildCommand(overlayVerb,overlayTarget.id,p.x,p.y);
-                overlayCommand.targetType='overlay';
-                Engine.Interactions.RunTargetInteraction(overlayCommand,overlayTarget);
             } return;
         }
         if (p.y >= UI_TOP) { var arrow=Engine.Inventory.GetScrollArrowAtPoint(p.x,p.y);
