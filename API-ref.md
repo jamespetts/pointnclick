@@ -323,11 +323,10 @@ Do not author runtime-added fields such as `assetPath` or `initialRooms` in the 
 
 
 ## 8. Rooms, Geometry, Transitions, and Triggers
-
+  
 Rooms are stored in `game.rooms` as an object keyed by room id. The key is the canonical id. If a room object contains `id`, it should match the key.
 
-Room syntax:
-
+Room syntax with explicit/bespoke geometry:
 EXAMPLE_START
 rooms:{
   startRoom:{
@@ -351,51 +350,91 @@ rooms:{
 }
 EXAMPLE_END
 
-Room fields:
+Room syntax using a walkability template plus additive detail:
+EXAMPLE_START
+rooms:{
+  serviceCorridor:{
+    name:'Service Corridor',
+    template:'corridor',
+    background:'service_corridor.png',
+    floorBand:{x:0,y:116,w:320,h:18},
+    exits:[{id:'leftExit',side:'left',targetRoomId:'leftCorridor',targetX:300,targetY:124,targetFacing:'left'}],
+    blockers:[{id:'fallenPanel',rect:{x:150,y:116,w:18,h:18}}],
+    hotspots:[]
+  }
+}
+EXAMPLE_END
 
+### 8.1 Mandatory authoring rule: use room walkability templates first
+
+Walkability templates are the preferred starting point for ordinary room movement. They are defaults, not a replacement for bespoke geometry: authored blockers, transitionZones, triggerZones, door portals, object footprints, walkBoxes, and walkGraph may still add detail. Use `replaceTemplateWalkBoxes:true`, `replaceGeneratedWalkBoxes:true`, or `manualWalkability:true` only when generated walk boxes must be replaced.
+
+Use `corridor`, `room`, `path`, `bridge`, `junction`, or `stair` for ordinary rooms. Only hand-author all `walkBoxes`/`walkGraph` when a template plus blockers/exits cannot express the background image. If runtime testing shows that the deployed engine is not applying room-template geometry, keep the template metadata for forward compatibility but also author explicit `walkableArea`, `walkBoxes`, `walkGraph`, and `transitionZones`.
+
+Room fields:
 - `id:string`: optional, should match room key.
 - `name:string`, `displayName:string`.
+- `template`, `templateId`, `kind`, `templates`: may include `corridor`, `room`, `path`, `bridge`, `junction`, or `stair`.
 - `background:string`: PNG in `rooms/`; warned if missing.
 - `music:array`: room music source list; use an array, normally with one filename.
 - `start:{x:number,y:number,facing:string}`: content-defined default start point for authoring/scripts; the engine does not automatically apply it on room entry.
-- `playerStart:{x:number,y:number,facing:string}`: content pattern for scripts; room entry uses the current player coordinates unless `api.ChangeRoom()` or a transition zone passes target coordinates. Initial new-game position comes from `game.player.x/y/facing`.
-- `walkableArea:{x:number,y:number,w:number,h:number}`: fallback walk rectangle and validation area. If no `walkBoxes`/`walkAreas` are supplied, the engine creates one walk box from `walkableArea`; if `walkableArea` is also absent, the fallback is `{x:0,y:80,w:320,h:56}`.
-- `walkBoxes:array`: preferred walkable shapes. Entries may be bare rectangles, `{rect:{x,y,w,h}}`, or `{shape:shape}`. Entries may have `id` and may use `links` or `connects` arrays to build graph edges when explicit `walkGraph.edges` are absent. If `walkBoxes` is present, omitted `links`/`connects` mean no authored inter-node edges from that box; supply explicit `walkGraph.edges` or `links`/`connects` for routed navigation around blockers.
+- `playerStart:{x:number,y:number,facing:string}`: content pattern for scripts; room entry uses current player coordinates unless `api.ChangeRoom()` or a transition zone passes target coordinates. Initial new-game position comes from `game.player.x/y/facing`.
+- `walkability` or `layout`: optional room-template configuration object.
+- `floor`, `floorBand`, `walkFloor`, `walkableArea`: common main floor rectangle fields used by room templates. `walkableArea` is also the legacy fallback walk rectangle and validation area.
+- `exits` or `portals`: room-template exit list. Each exit may define `id`, `side`/`edge`, `rect`, `targetRoomId`/`roomId`, `targetX`, `targetY`, `targetFacing`/`facing`, `script`, `enabledFlag`, `disabledFlag`, `enabledObjectId`, `enabledProperty`, `beforeTransition`, `afterTransition`.
+- `pathPoints` or `path` plus `pathWidth` or `width`: centre-line geometry for `path`, `bridge`, and `stair` templates.
+- `central` and `branches`: junction-template central floor and branch rectangles.
+- `walkableArea:{x:number,y:number,w:number,h:number}`: fallback walk rectangle and validation area. If no `walkBoxes`/`walkAreas` are supplied and no active template supplies walk boxes, the engine creates one walk box from `walkableArea`; if `walkableArea` is also absent, the fallback is `{x:0,y:80,w:320,h:56}`.
+- `walkBoxes:array`: preferred explicit walkable shapes. Entries may be bare rectangles, `{rect:{x,y,w,h}}`, or `{shape:shape}`. Entries may have `id` and may use `links` or `connects` arrays to build graph edges when explicit `walkGraph.edges` are absent. If `walkBoxes` is present, omitted `links`/`connects` mean no authored inter-node edges from that box; supply explicit `walkGraph.edges` or `links`/`connects` for routed navigation around blockers.
 - `walkAreas:array`: supported alias for `walkBoxes` for walkability and derived graph-node positions. Prefer `walkBoxes` for new content. In this engine version, link/connect edge derivation reads `room.walkBoxes`, not `walkAreas`; if using `walkAreas` and routed edges matter, supply explicit `walkGraph.edges`.
-- `blockers:array`: room-level movement blockers; each may have `id`, `shape` or `rect`, `onCollide`, `onBump`. `onCollide` is preferred when both collision script names are present.
+- `blockers:array`: room-level movement blockers; each may have `id`, `shape` or `rect`, `onCollide`, `onBump`. With room templates, use blockers for partial obstructions, holes, machinery footprints, fallen panels, furniture footprints, or local corrections. `onCollide` is preferred when both collision script names are present.
 - `walkGraph.nodes:array`: `{id:string,x:number,y:number}`. If omitted or empty, the engine derives one node at the centre of each walk box.
 - `walkGraph.edges:array`: `[fromId,toId]` or `{from:string,to:string}`. Edges are treated as bidirectional path links. If omitted and `room.walkBoxes` is present, only walk box `links`/`connects` create authored inter-node edges. If omitted and `room.walkBoxes` is absent, all graph nodes are connected to all other graph nodes.
 - `hotspots:array`: room objects; see next section.
 - `characters:array`: room-local characters; see actors section.
-- `transitionZones:array`: exits/room transitions.
-- `triggerZones:array`: movement triggers.
+- `transitionZones:array`: authored exits/room transitions. These are added to template-generated transition zones and door portal transition zones unless replacement flags suppress generated zones.
+- `triggerZones:array`: movement triggers. These are added to template-generated trigger zones unless replacement flags suppress generated zones.
 - `characterScale:object`: perspective scaling; aliases include `perspectiveScale`, `backY/frontY`, `backScale/frontScale`.
+- `replaceTemplateWalkBoxes`, `replaceGeneratedWalkBoxes`, `manualWalkability`: suppress generated/template walk boxes.
+- `replaceTemplateTransitionZones`, `replaceGeneratedTransitionZones`, `manualTransitions`: suppress room-template transition zones.
+- `replaceDoorPortalTransitionZones`: suppress transition zones generated from door portals.
+- `replaceTemplateBlockers`, `replaceGeneratedBlockers`, `manualBlockers`: suppress template blockers.
+- `replaceTemplateTriggerZones`, `replaceGeneratedTriggerZones`, `manualTriggerZones`: suppress template trigger zones.
 - Room hook fields: `beforeEnter`, `afterEnter`, `beforeExit`, `afterExit`.
 - Effective property support: `properties`, `propertyGetters`, `getters`, `nonConstPropertyGetters`, `mutablePropertyGetters`.
 
-Geometry shapes accepted where shape is used:
+Room walkability templates:
+- `corridor`: one simple floor band for corridors, hallways, platforms, and service passages. Use `floorBand` and `exits`.
+- `room`: one main floor rectangle for offices, store rooms, cabins, cells, chambers, and ordinary single-floor rooms. Use `floor`/`floorBand` and `exits`.
+- `path`: irregular traversable route described by `pathPoints`/`path` and `pathWidth`/`width`.
+- `bridge`: narrow path variant for bridges, catwalks, gantries, beams, and narrow platforms.
+- `junction`: hub with `central` and `branches` for corridor intersections, lobbies, crossroads, and multi-mouth rooms.
+- `stair`: sloped/stepped route described by `pathPoints`/`path` and `pathWidth`/`width`.
 
+Geometry shapes accepted where shape is used:
 - `{x:number,y:number,w:number,h:number}`.
 - `{rect:{x:number,y:number,w:number,h:number}}`.
 - `{circle:{x:number,y:number,radius:number}}`.
 
 Geometry and pathfinding semantics:
-
 - The only public geometry controls are declarative room/object/character/transition/trigger fields, effective properties/getters that compute those fields, and public movement APIs such as `api.ChangeRoom()` and `api.MoveCharacter()`. There is no public script API for querying paths, graph nodes, collision tests, or reachable points.
 - Player movement pipeline: requested x/y is first clamped to the current room's reachable walkable geometry, then a path is built through walk graph nodes, then each frame advances toward the next path point, checks blockers/collisions, checks trigger zones, and checks transition zones.
-- Walkable geometry: a point is walkable if it is inside any `walkBoxes`/`walkAreas` shape. If no `walkBoxes`/`walkAreas` exist, `walkableArea` supplies a single rectangular walk box. If neither exists, the fallback rectangle is `{x:0,y:80,w:320,h:56}`.
+- Walkable geometry: a point is walkable if it is inside any generated or authored `walkBoxes`/`walkAreas` shape. If no `walkBoxes`/`walkAreas` exist and no active template supplies walk boxes, `walkableArea` supplies a single rectangular walk box. If neither exists, the fallback rectangle is `{x:0,y:80,w:320,h:56}`.
+- Template geometry is default geometry. Authored `walkBoxes`/`walkAreas` replace only when replacement flags are set; authored blockers, triggerZones, and transitionZones are additive.
 - Destination clamping: when a requested point is outside all walk boxes, the engine chooses the nearest point in the rectangular bounds of the nearest walk box. For circle shapes, hit-testing is circular, but clamping and some path/blocker tests use the circle's bounding rectangle; do not rely on true circular navigation for precise path constraints.
-- Graph nodes: explicit `walkGraph.nodes` are used when present. Otherwise, one node is derived at the centre of each walk box. If a node id is absent, its array index string is used.
-- Graph edges: explicit `walkGraph.edges` are used when present. Otherwise, if `room.walkBoxes` is present, each walk box's `links` or `connects` array creates edges from that box id to listed ids; boxes without `links`/`connects` create no inter-node edges. If `room.walkBoxes` is absent, the engine connects every graph node to every other graph node.
+- Graph nodes: explicit or template `walkGraph.nodes` are used when present. Otherwise, one node is derived at the centre of each walk box. If a node id is absent, its array index string is used.
+- Graph edges: explicit or template `walkGraph.edges` are used when present. Otherwise, if `room.walkBoxes` is present, each walk box's `links` or `connects` array creates edges from that box id to listed ids; boxes without `links`/`connects` create no inter-node edges. If `room.walkBoxes` is absent, the engine connects every graph node to every other graph node.
 - Edge blocking: graph edges, and temporary start-to-node and node-to-target links, are ignored if the straight line segment intersects any current blocker rectangle. Rect blockers are exact rectangles; circle blockers are reduced to their bounding rectangle for segment-blocking.
 - Fallback path: if no graph route can be found, the engine falls back to a direct path to the clamped target. Author walk boxes/graphs/blockers so this fallback is harmless, or provide enough graph connectivity that routes are found.
 - Player collision: if the player steps into a blocker, the walk is blocked, the blocker `onCollide`/`onBump` script is run, and the walk callback/action result reports status `blocked` with reason `collision` and `blockerId`.
-- Room blockers: `room.blockers` are always blockers while their room is active. Object blockers are generated from room hotspots whose effective `blocksMovement` is true.
-- Object collision shape fallback: for blocking hotspots, `collisionShape` is used if present; otherwise `rect` is used; otherwise `x`/`y`/`frameW`/`frameH` form a rectangle. Hidden objects do not block unless effective `blocksWhenHidden` is true.
-- Walk-to interaction positioning: when an interaction target has effective `walkTo:{x,y}`, the player walks there before running the interaction. If absent, the interaction runs immediately after the click command is accepted. The validator warns if authored `walkTo` is outside `walkableArea`, but runtime uses the reachable-point system.
-- Walk-through behaviour: if the command verb is `walkTo` and the target's effective `walkThrough` is true, the engine walks to effective `walkThroughTo`, falling back to `target.walkThroughPoint`, then to the clicked command point. Use this for open doors/passages where clicking the object should walk through rather than merely walk to it.
-- Transitions: transition zones are checked against the player's foot point after movement updates. In this engine version transition zones use `rect` only; `shape` is not checked for transitions. A transition zone may either run a script or call the normal room-change path.
-- Trigger zones: trigger zones may be room-level or hotspot-level. They use `rect` or `shape`, test an actor's x/y foot point, and keep saved active membership so `onEnter` fires once on entry, `onExit` fires once on exit, and `onStay` fires while inside.
+- Room blockers: `room.blockers` and template-generated blockers are active while their room is active. Object blockers are generated from room hotspots whose effective `blocksMovement` is true.
+- Object collision shape fallback: for blocking hotspots, `collisionShape`/`footprint` is used if present; otherwise `rect` is used; otherwise `x`/`y`/`frameW`/`frameH` form a rectangle. Hidden objects do not block unless effective `blocksWhenHidden` is true.
+- Walk-to interaction positioning: when a non-`walkTo` interaction target has effective `walkTo:{x,y}`, the player walks there before running the interaction. If absent, the interaction runs immediately after the click command is accepted. The validator warns if authored `walkTo` is outside `walkableArea`, but runtime uses the reachable-point system.
+- Walk command targeting: if the command verb is `walkTo` and the clicked scene point is currently walkable and not blocked, the engine walks to the clicked point even if the click also hit a floor/stain/scuff hotspot with an authored `walkTo`. This preserves free walking over large floor hotspots. If the clicked point is not walkable or is blocked, the engine falls back to the target's effective `walkTo` when present, so wall objects, closed doors and background fixtures can still supply approach points. A `walkTo` command with no implemented target interaction then completes silently rather than showing a refusal.
+- Walk-through behaviour: if the command verb is `walkTo` and the target's effective `walkThrough` is true, the engine walks to effective `walkThroughTo`, falling back to `target.walkThroughPoint`, then to the clicked command point. Use this for open doors/passages where clicking the object should walk through rather than merely walk to it. Walk-through takes precedence over clicked-point walking.
+- Transitions: transition zones are checked against the player's foot point after movement updates. Transition zones may be authored directly, generated by room walkability templates, or generated from door portals. In this engine version transition zones use `rect` only; `shape` is not checked for transition hit-testing. A transition zone may either run a script or call the normal room-change path.
+- Door portals should be used for ordinary door travel instead of separately hand-authoring transitionZones when the deployed engine reliably generates door-portal transition zones. If runtime testing shows portal generation is not active, add an explicit transitionZone as a fallback.
+- Trigger zones: trigger zones may be room-level, hotspot-level, or template-generated. They use `rect` or `shape`, test an actor's x/y foot point, and keep saved active membership so `onEnter` fires once on entry, `onExit` fires once on exit, and `onStay` fires while inside.
 - NPC movement: `api.MoveCharacter()` and cutscene `moveCharacter` steps move room characters directly toward x/y; they do not build a `walkGraph` path and do not use player destination clamping. Author NPC move targets inside sensible walkable space yourself.
 - Followers: room characters with `followPlayer:true` are placed and updated from the player's recent trail rather than via `walkGraph` pathfinding. `followDistance` controls trail distance; if absent, followers use 18 plus 10 times their index among followers. `followTarget` is runtime state, not an authored destination.
 - Actor avoidance: visible player and non-hidden room characters participate unless `avoidanceDisabled` is true. Non-player characters are pushed unless `avoidanceLocked` is true. Radius uses `avoidanceRadius`, then `personalSpace`, then `hitW`/`rectW`, then sprite `frameW`, then a default. Avoidance is local separation only, not path planning.
@@ -404,9 +443,7 @@ Geometry and pathfinding semantics:
 - Reserved/no-op geometry properties in this engine version: `blocksActors`, `occluderShape`, and `walkBehinds` are accepted/validated as effective properties but are not used by the current movement or renderer. Do not rely on them for gameplay or rendering effects unless the engine is extended.
 - This engine does not support polygon navmeshes, weighted/one-way graph edges, public path queries, true circular segment navigation, graph-routed NPC movement, or per-pixel collision. Express such requirements as engine-extension needs.
 
-
 Transition zone syntax:
-
 EXAMPLE_START
 transitionZones:[
   {id:'toHall',rect:{x:300,y:88,w:20,h:44},targetRoomId:'hall',targetX:20,targetY:112,targetFacing:'right'},
@@ -416,7 +453,6 @@ transitionZones:[
 EXAMPLE_END
 
 Transition zone fields:
-
 - `id:string` optional.
 - `rect:{x:number,y:number,w:number,h:number}`: required geometry for runtime transition checks. In this engine version, transition zones are rect-only; a `shape` field is not used for transition hit-testing.
 - `targetRoomId:string`: destination room for normal room changes.
@@ -424,13 +460,12 @@ Transition zone fields:
 - `script:string`: if supplied, runs instead of normal room change. It receives hook-style context through the script runner: `{transition,fromRoomId,toRoomId,player}`. It may call `api.ChangeRoom()` or `api.ShowEnding()`, and may return an action result.
 - `enabledFlag:string`: zone enabled only when this global flag is true.
 - `disabledFlag:string`: zone disabled when this global flag is true.
-- `enabledObjectId:string`, `enabledProperty:string`: zone enabled only when the object's effective property is truthy; `enabledProperty` defaults to `open`.
+- `enabledObjectId:string`, `enabledProperty:string`: zone enabled only when the object's effective property is truthy. For authored zones, `enabledProperty` defaults to `open` when an `enabledObjectId` is supplied. For generated door portal zones, `enabledProperty` defaults to `walkThrough` unless the portal explicitly overrides it.
 - Transition hooks: `beforeTransition`, `afterTransition`.
 
 A transition zone must have a valid `targetRoomId` or a `script`. If both `script` and `targetRoomId` are supplied, `script` takes precedence.
 
 Trigger zone fields:
-
 - `id:string` optional. Runtime trigger membership key is actor id + current room id + zone id. Hotspot trigger zones are automatically id-prefixed with object id when no explicit unique id is supplied.
 - `rect` or `shape`: trigger geometry tested against actor x/y foot point.
 - `enabledFlag:string`: trigger is active only while this global flag is true.
@@ -441,7 +476,6 @@ Trigger zone fields:
 - `onExit:string`: runs when actor exits.
 - `onStay:string`: runs on movement/update ticks while actor remains inside.
 Trigger scripts receive `(api, context)` with context `{actor,zone,room,roomId,object}`. `object` is the source hotspot for hotspot trigger zones, otherwise null.
-
 
 ## 9. Room Hotspots/Objects and Object Animation
 
@@ -892,6 +926,7 @@ Before writing a custom interaction script, ask:
 A template is a declarative behaviour package. It can contribute default interactions, effective properties, refusals, callback results, actions, and saved runtime-variable conventions. Templates are the main mechanism for avoiding custom scripts for standard point-and-click adventure objects.
 
 Template authoring rules:
+- Start with a room walkability template for every ordinary room. Use bespoke walkBoxes/walkGraph only when a room template plus blockers/exits cannot express the layout.
 - Start with a template for every standard object pattern.
 - Omit interactions that the template already contributes unless you intentionally override them.
 - Use template runtime variables for the template's own state.
@@ -907,7 +942,7 @@ Template attachment fields:
 - String lists in template/templateId/kind may be space-separated or comma-separated.
 
 Known templates:
-- door, key, map, pickup, container, switch, readable, device, furniture, barrier, combine, openableBox, exchange, multiRequirement, gatekeeper, costume, toolTarget, clueUnlocker, distractible.
+- door, key, map, pickup, container, switch, readable, device, furniture, barrier, corridor, room, path, bridge, junction, stair, combine, openableBox, exchange, multiRequirement, gatekeeper, costume, toolTarget, clueUnlocker, distractible.
 
 Template action naming is exact:
 - The template may contribute a verb such as lookAt, but the public action name may be different.
@@ -942,11 +977,11 @@ Shared rule fields used by several templates:
 - text/playerText/npcText/speaker fields as documented per template.
 
 ### 12.1 door template
-
+  
 Purpose:
 - Standard openable/closable door-like world object.
-- Manages open/closed/locked state, sprite selection, blocking, walk-through, and state text.
-- Does not change rooms by itself; use transitionZones for travel.
+- Manages open/closed/locked state, sprite selection, blocking, walk-through, state text, and optional portal geometry.
+- Door portals are the preferred way to author door travel. Do not hand-author a separate doorway transition zone when the door template portal can express it.
 
 Attach to:
 - Room hotspots.
@@ -980,10 +1015,13 @@ Author fields:
 - rect
 - hitRect
 - collisionShape
+- footprint
 - baseline
 - walkTo
 - walkThroughTo
 - walkThroughPoint
+- portal
+- doorPortal
 - transitionAnimation
 - openAnimation
 - unlockAnimation
@@ -1008,20 +1046,39 @@ Text fields:
 - lockText
 - closedWalkText
 
+Door portal fields:
+- portal.id:string optional transition-zone id.
+- portal.rect or portal.transitionRect:{x,y,w,h}: generated transition-zone rectangle in the source room.
+- portal.approach or portal.walkTo or portal.standPoint:{x,y}: actor standing point; used as template walkTo when no explicit walkTo is authored.
+- portal.through or portal.walkThroughTo or portal.walkThroughPoint or portal.exitPoint:{x,y}: point to walk through when open; used as template walkThroughTo and as a fallback for generated portal rect.
+- portal.targetRoomId or portal.roomId or portal.target.roomId:string.
+- portal.targetX/targetY/targetFacing, portal.target:{x,y,facing}, or portal.entry:{x,y,facing}: destination in the target room.
+- portal.script:string optional scripted transition instead of automatic room change.
+- portal.enabledFlag, portal.disabledFlag, portal.enabledObjectId, portal.enabledProperty, portal.beforeTransition, portal.afterTransition.
+- portal.enabled:false suppresses generation for that portal.
+
 Effective properties and effects:
 - defaultText is openText when open, lockedText when locked, otherwise unlockedText/closedText/fallback.
 - sprite is openSprite when open and closedSprite when closed, falling back to sprite.
 - walkThrough is true when open.
+- walkTo defaults from portal.approach/walkTo/standPoint when no explicit walkTo is authored.
+- walkThroughTo defaults from portal.through/walkThroughTo/walkThroughPoint/exitPoint when no explicit walkThroughTo is authored.
 - blocksMovement is true when not open.
 - collisionShape falls back to rect.
 - baseline falls back to rect bottom or y.
+- A door portal generates a transition zone enabled by the door's effective walkThrough property unless portal.enabledProperty overrides it.
 
 Action semantics:
 - lookAt narrates linked/effective look text, then door state fallback.
 - open refuses if already open or locked; otherwise sets open true, starts optional transition/open animation, narrates openActionText, and runs onOpen.
 - close refuses if already closed; otherwise sets open false, starts optional reverse animation, narrates closeActionText, and runs onClose.
 - useKey requires a selected inventory item with template key and target list including this door id or *. It toggles locked and runs lock/unlock text, animation and optional scripts.
-- walkTo narrates closedWalkText only when closed; when open it returns silently so walkThrough and transition zones can proceed.
+- walkTo narrates closedWalkText only when closed; when open it returns silently so walkThrough and the generated portal transition zone can proceed.
+
+Preferred door travel pattern:
+EXAMPLE_START
+{id:'storeDoor',name:'store-room door',template:'door',open:false,locked:false,rect:{x:220,y:82,w:42,h:48},portal:{approach:{x:238,y:116},through:{x:252,y:116},targetRoomId:'storeRoom',targetX:244,targetY:126,targetFacing:'left'}}
+EXAMPLE_END
 
 ### 12.2 key template
 
@@ -1147,6 +1204,8 @@ Text fields:
 
 Effective properties and effects:
 - hidden becomes true after taken unless hideOnTake:false or another explicit/effective hidden value overrides it.
+- blocksMovement defaults false.
+- walkTo defaults to approach/approachPoint, then to the bottom-centre of rect plus a small offset.
 - zIndex defaults to 10.
 - callbackResults are supplied for pickup movement callbacks.
 
@@ -1154,6 +1213,9 @@ Action semantics:
 - lookAt uses linked/effective look text.
 - take adds itemId, or the hotspot id if itemId is omitted, to inventory.
 - take sets hiddenFlag or takenFlag if present, sets taken=1, narrates takeText, and runs onTake.
+
+AI authoring note:
+- Pickups are non-blocking by default. Do not add blockers/collisionShape to pickups unless a pickup is intentionally a physical obstacle before it is taken. Use approach/approachPoint only to control where the actor stands before taking the pickup.
 
 ### 12.5 container template
 
@@ -1373,7 +1435,7 @@ Action semantics:
 ### 12.9 furniture template
 
 Purpose:
-- Visible physical object that usually blocks movement and may support walk-behind depth sorting.
+- Visible physical scene object that may block movement, support walk-behind depth sorting, or act as non-blocking background scenery. Use one furniture template with subtype/placement rather than separate furniture types.
 
 Attach to:
 - Room hotspots.
@@ -1393,6 +1455,8 @@ Author fields:
 - sprite
 - rect
 - collisionShape
+- footprint
+- subtype, furnitureSubtype, or placement
 - baseline
 - walkBehind
 - allowWalkBehindWithoutSprite
@@ -1407,9 +1471,10 @@ Text fields:
 - refusals for take/open/close
 
 Effective properties and effects:
-- blocksMovement defaults true.
+- blocksMovement defaults true except for background/decorative/nonblocking placements.
+- Recommended subtype/placement values include floorObstacle, foreground, backgroundShelf, cabinetAgainstWall, againstWall, background, backgroundProp, wall, wallFixture, ceiling, decorative, decoration, and nonblocking.
 - walkBehind defaults true when a sprite exists unless overridden.
-- collisionShape falls back to rect then x/y/frameW/frameH.
+- collisionShape uses explicit collisionShape or footprint first. Non-blocking subtypes return no collision shape. backgroundShelf/cabinetAgainstWall/againstWall use a shallow bottom footprint if no footprint is supplied. Other blocking furniture falls back to rect then x/y/frameW/frameH.
 - baseline falls back to collision bottom or y.
 - callbackResults are supplied for blocked movement.
 
@@ -1826,7 +1891,20 @@ Action semantics:
 - On failure, narrates rule refusal or distractionRefusalText.
 - On success, sets distracted, applies effects, and says/narrates rule.text using rule.speakerId or target id.
 
-### 12.20 Template quick reference: exact contributed interactions
+### 12.20 room walkability templates
+  
+Room walkability templates attach to rooms, not hotspots, and contribute no interactions.
+
+- corridor: side-on corridors, hallways, platforms, and service passages. Author floorBand and exits; add blockers for partial obstructions.
+- room: ordinary rooms with one main floor rectangle. Author floor or floorBand and exits.
+- path: irregular traversable route. Author pathPoints/path and pathWidth/width.
+- bridge: narrow path variant for bridges, catwalks, gantries, beams, and narrow platforms.
+- junction: hub rooms with central and branches.
+- stair: stairs, ramps, and sloped routes using pathPoints/path and pathWidth/width.
+
+Use generated template geometry as the default, then add blockers, transitionZones, triggerZones, door portals, and object footprints for exceptions. Replace generated walk boxes only when unavoidable.
+
+### 12.21 Template quick reference: exact contributed interactions
 
 Use this list when validating generated scripts. These are exact public action names.
 
@@ -1840,6 +1918,7 @@ Use this list when validating generated scripts. These are exact public action n
 - device contributes lookAt -> template:device.lookAt, use -> template:device.use.
 - furniture contributes lookAt -> template:furniture.lookAt.
 - barrier contributes lookAt -> template:barrier.lookAt.
+- corridor, room, path, bridge, junction, and stair are room walkability templates and contribute no interactions.
 - combine contributes use -> template:combine.use.
 - openableBox contributes open -> template:openableBox.open, use -> template:openableBox.open.
 - exchange contributes give -> template:exchange.give.
@@ -1850,17 +1929,17 @@ Use this list when validating generated scripts. These are exact public action n
 - clueUnlocker contributes lookAt -> template:clueUnlocker.unlock, use -> template:clueUnlocker.unlock.
 - distractible contributes use -> template:distractible.distract, give -> template:distractible.distract.
 
-### 12.21 Template selection checklist
+### 12.22 Template selection checklist
 
 Use this checklist before writing custom scripts:
-- Door, hatch, gate, lockable passage: door plus key if locked, and a transitionZone for travel.
+- Door, hatch, gate, lockable passage: door plus key if locked, and a door portal for travel.
 - Loose item in the world: pickup.
 - Box, drawer, safe, cupboard with contents and/or lock: container.
 - Simple one-shot openable inventory object: openableBox.
 - Lever, valve, button, switch, on/off control: switch.
 - Note, sign, poster, book, label, document, terminal readout: readable.
 - Powered/useable machine: device.
-- Large visible blocking object: furniture.
+- Visible physical scene object: furniture with subtype/placement and explicit footprint where blocking matters.
 - Invisible/simple blocker: barrier.
 - Symmetric Use X with Y: combine.
 - Use specific tool on target: toolTarget.
@@ -1871,7 +1950,7 @@ Use this checklist before writing custom scripts:
 - Clue that unlocks map information: clueUnlocker plus map visibility logic.
 - Distractible NPC/object: distractible.
 
-### 12.22 Template override rules and validator warning
+### 12.23 Template override rules and validator warning
 
 A template's contributed interactions are defaults. If the entity defines the same interaction key, the entity's value wins.
 

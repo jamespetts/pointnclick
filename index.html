@@ -1207,6 +1207,27 @@
             if (rule.sound) { api.PlaySound(Array.isArray(rule.sound) ? rule.sound : [rule.sound]); }
             Engine.Templates.RunOptionalScript(rule.script||rule.onComplete,Engine.Entities.CreateFacade(target,Engine.Entities.DetectType(target),{context:context}),context);
         },
+        roomWalkability:{
+            Rect:function (value, fallback) { return (value && typeof value.x==='number' && typeof value.y==='number' && typeof value.w==='number' && typeof value.h==='number') ? value : fallback; },
+            Config:function (room) { return room.walkability || room.layout || {}; },
+            Floor:function (room, fallback) { var cfg=this.Config(room); return this.Rect(room.floor || room.floorBand || room.walkFloor || cfg.floor || cfg.floorBand || cfg.walkFloor || cfg.walkableArea, fallback); },
+            Box:function (id, rect) { return {id:id,rect:rect,links:[]}; },
+            SingleGraph:function (id, rect) { return {nodes:[{id:id,x:Math.round(rect.x+rect.w/2),y:Math.round(rect.y+rect.h/2)}],edges:[]}; },
+            ExitList:function (room) { var cfg=this.Config(room); var exits=room.exits || room.portals || cfg.exits || cfg.portals || []; return Array.isArray(exits) ? exits : []; },
+            ExitRect:function (exit, floor) { if (exit.rect) { return exit.rect; } var side=String(exit.side||exit.edge||'').toLowerCase(); var size=typeof exit.size==='number'?exit.size:10; if (side==='left') { return {x:floor.x,y:floor.y,w:size,h:floor.h}; } if (side==='right') { return {x:floor.x+floor.w-size,y:floor.y,w:size,h:floor.h}; } if (side==='top'||side==='up') { return {x:floor.x,y:floor.y,w:floor.w,h:size}; } if (side==='bottom'||side==='down') { return {x:floor.x,y:floor.y+floor.h-size,w:floor.w,h:size}; } return null; },
+            TransitionZones:function (room, floor) { var exits=this.ExitList(room); var result=[]; for (var i=0;i<exits.length;i++) { var exit=exits[i]; if (exit.enabled===false) { continue; } var rect=this.ExitRect(exit,floor); if (!rect) { continue; } result.push({id:exit.id||('exit'+i),rect:rect,targetRoomId:exit.targetRoomId||exit.roomId,targetX:exit.targetX,targetY:exit.targetY,targetFacing:exit.targetFacing||exit.facing,script:exit.script,enabledFlag:exit.enabledFlag,disabledFlag:exit.disabledFlag,enabledObjectId:exit.enabledObjectId,enabledProperty:exit.enabledProperty,beforeTransition:exit.beforeTransition,afterTransition:exit.afterTransition,source:'roomTemplate'}); } return result; },
+            PathPoints:function (room) { var cfg=this.Config(room); var points=room.pathPoints || room.path || cfg.pathPoints || cfg.path || []; return Array.isArray(points) ? points : []; },
+            PathWidth:function (room, fallback) { var cfg=this.Config(room); return Number(room.pathWidth || cfg.pathWidth || room.width || cfg.width || fallback || 16); },
+            PathBoxes:function (room, prefix, fallbackWidth) { var pts=this.PathPoints(room); var width=this.PathWidth(room,fallbackWidth); var half=Math.round(width/2); var result=[]; for (var i=0;i<pts.length-1;i++) { var a=pts[i]; var b=pts[i+1]; if (!a || !b || typeof a.x!=='number' || typeof a.y!=='number' || typeof b.x!=='number' || typeof b.y!=='number') { continue; } result.push({id:prefix+i,rect:{x:Math.min(a.x,b.x)-half,y:Math.min(a.y,b.y)-half,w:Math.abs(a.x-b.x)+width,h:Math.abs(a.y-b.y)+width},links:[prefix+'node'+i,prefix+'node'+(i+1)]}); } return result; },
+            PathGraph:function (room, prefix) { var pts=this.PathPoints(room); var nodes=[]; var edges=[]; for (var i=0;i<pts.length;i++) { if (pts[i] && typeof pts[i].x==='number' && typeof pts[i].y==='number') { nodes.push({id:prefix+'node'+i,x:pts[i].x,y:pts[i].y}); if (i>0) { edges.push([prefix+'node'+(i-1),prefix+'node'+i]); } } } return {nodes:nodes,edges:edges}; },
+            JunctionBoxes:function (room) { var cfg=this.Config(room); var central=this.Rect(room.central || cfg.central || room.floor || cfg.floor, {x:120,y:100,w:80,h:28}); var result=[this.Box('junctionCore',central)]; var branches=room.branches || cfg.branches || []; for (var i=0;i<branches.length;i++) { var r=this.Rect(branches[i].rect||branches[i],null); if (r) { result.push({id:branches[i].id||('junctionBranch'+i),rect:r,links:['junctionCore']}); } } return result; }
+        },
+        corridor:{ properties:{ walkableArea:function (room) { return Engine.Templates.roomWalkability.Floor(room,{x:0,y:104,w:320,h:24}); }, walkBoxes:function (room) { return [Engine.Templates.roomWalkability.Box('corridorFloor',Engine.Templates.roomWalkability.Floor(room,{x:0,y:104,w:320,h:24}))]; }, walkGraph:function (room) { var floor=Engine.Templates.roomWalkability.Floor(room,{x:0,y:104,w:320,h:24}); return Engine.Templates.roomWalkability.SingleGraph('corridorFloor',floor); }, transitionZones:function (room) { var floor=Engine.Templates.roomWalkability.Floor(room,{x:0,y:104,w:320,h:24}); return Engine.Templates.roomWalkability.TransitionZones(room,floor); } } },
+        room:{ properties:{ walkableArea:function (room) { return Engine.Templates.roomWalkability.Floor(room,{x:24,y:96,w:272,h:36}); }, walkBoxes:function (room) { return [Engine.Templates.roomWalkability.Box('roomFloor',Engine.Templates.roomWalkability.Floor(room,{x:24,y:96,w:272,h:36}))]; }, walkGraph:function (room) { var floor=Engine.Templates.roomWalkability.Floor(room,{x:24,y:96,w:272,h:36}); return Engine.Templates.roomWalkability.SingleGraph('roomFloor',floor); }, transitionZones:function (room) { var floor=Engine.Templates.roomWalkability.Floor(room,{x:24,y:96,w:272,h:36}); return Engine.Templates.roomWalkability.TransitionZones(room,floor); } } },
+        path:{ properties:{ walkableArea:function (room) { var boxes=Engine.Templates.roomWalkability.PathBoxes(room,'path',18); return boxes.length ? Engine.Geometry.RectFromShape(boxes[0].rect) : {x:0,y:104,w:320,h:24}; }, walkBoxes:function (room) { return Engine.Templates.roomWalkability.PathBoxes(room,'path',18); }, walkGraph:function (room) { return Engine.Templates.roomWalkability.PathGraph(room,'path'); }, transitionZones:function (room) { var boxes=Engine.Templates.roomWalkability.PathBoxes(room,'path',18); var floor=boxes.length ? boxes[0].rect : {x:0,y:104,w:320,h:24}; return Engine.Templates.roomWalkability.TransitionZones(room,floor); } } },
+        bridge:{ properties:{ walkableArea:function (room) { var boxes=Engine.Templates.roomWalkability.PathBoxes(room,'bridge',12); return boxes.length ? Engine.Geometry.RectFromShape(boxes[0].rect) : {x:0,y:110,w:320,h:14}; }, walkBoxes:function (room) { return Engine.Templates.roomWalkability.PathBoxes(room,'bridge',12); }, walkGraph:function (room) { return Engine.Templates.roomWalkability.PathGraph(room,'bridge'); }, transitionZones:function (room) { var boxes=Engine.Templates.roomWalkability.PathBoxes(room,'bridge',12); var floor=boxes.length ? boxes[0].rect : {x:0,y:110,w:320,h:14}; return Engine.Templates.roomWalkability.TransitionZones(room,floor); } } },
+        junction:{ properties:{ walkableArea:function (room) { return Engine.Templates.roomWalkability.Rect((room.walkability||{}).bounds||room.walkableArea,{x:0,y:80,w:320,h:56}); }, walkBoxes:function (room) { return Engine.Templates.roomWalkability.JunctionBoxes(room); }, transitionZones:function (room) { return Engine.Templates.roomWalkability.TransitionZones(room,Engine.Templates.roomWalkability.Rect((room.walkability||{}).bounds||room.walkableArea,{x:0,y:80,w:320,h:56})); } } },
+        stair:{ properties:{ walkableArea:function (room) { var boxes=Engine.Templates.roomWalkability.PathBoxes(room,'stair',14); return boxes.length ? Engine.Geometry.RectFromShape(boxes[0].rect) : {x:80,y:86,w:160,h:44}; }, walkBoxes:function (room) { return Engine.Templates.roomWalkability.PathBoxes(room,'stair',14); }, walkGraph:function (room) { return Engine.Templates.roomWalkability.PathGraph(room,'stair'); }, transitionZones:function (room) { var boxes=Engine.Templates.roomWalkability.PathBoxes(room,'stair',14); var floor=boxes.length ? boxes[0].rect : {x:80,y:86,w:160,h:44}; return Engine.Templates.roomWalkability.TransitionZones(room,floor); } } },
         combine:{ properties:{ interactions:function () { return { use:'template:combine.use' }; } }, actions:{ use:function (api,self,context) { var target=context.target; var source=Engine.Templates.GetSubject((context.command||{}).inventoryItemId);
             if (!source) { Engine.Templates.SayIfText(api,'player',Engine.Properties.Get(target,'intransitiveUseText',context,'I need to use it with something.')); return; }
             if (source.id===target.id) { Engine.Templates.SayIfText(api,'player',Engine.Properties.Get(target,'selfUseText',context,'That would be pointlessly self-referential.')); return; }
@@ -1260,6 +1281,12 @@
                 },
                 walkThrough:function (entity) { var self=Engine.Entities.CreateFacade(entity,'object');
                     return self.GetBool('open',!!Engine.Properties.GetRaw(entity,'open',false));
+                },
+                walkTo:function (entity) { var portal=Engine.Properties.GetRaw(entity,'portal',Engine.Properties.GetRaw(entity,'doorPortal',null));
+                    return portal ? (portal.approach||portal.walkTo||portal.standPoint||null) : null;
+                },
+                walkThroughTo:function (entity) { var portal=Engine.Properties.GetRaw(entity,'portal',Engine.Properties.GetRaw(entity,'doorPortal',null));
+                    return portal ? (portal.through||portal.walkThroughTo||portal.walkThroughPoint||portal.exitPoint||portal.approach||portal.walkTo||null) : null;
                 },
                 sprite:function (entity) { var self=Engine.Entities.CreateFacade(entity,'object');
                     return self.GetBool('open',!!Engine.Properties.GetRaw(entity,'open',false)) ? Engine.Properties.GetRaw(entity,'openSprite',Engine.Properties.GetRaw(entity,'sprite',null)) : Engine.Properties.GetRaw(entity,'closedSprite',Engine.Properties.GetRaw(entity,'sprite',null));
@@ -1359,6 +1386,11 @@
         pickup:{
             properties:{ interactions:function () { return { lookAt:'template:pickup.lookAt', take:'template:pickup.take' };
                 }, callbackResults:function () { return { blocked:{status:'blocked',reason:'pickupBlocked',continueCutscene:false}, completed:{status:'completed',reason:'pickupReached'} };
+                }, blocksMovement:function () { return false;
+                }, walkTo:function (entity) { var point=Engine.Properties.GetRaw(entity,'approach',Engine.Properties.GetRaw(entity,'approachPoint',null));
+                    if (point) { return point; }
+                    var r=Engine.Properties.GetRaw(entity,'rect',null);
+                    return r ? {x:Math.round(r.x+r.w/2),y:Math.round(r.y+r.h+8)} : null;
                 }, hidden:function (entity) { if (Engine.Properties.GetRaw(entity,'hideOnTake',true) === false) { return false;
                     } return Engine.Entities.CreateFacade(entity,'object').GetBool('taken',false);
                 }, zIndex:function (entity) { return Engine.Properties.GetRaw(entity,'zIndex',10);
@@ -1514,7 +1546,8 @@
                 },
                 callbackResults:function () { return { blocked:{status:'blocked',reason:'furnitureCollision',continueCutscene:false}, 'walkTo:blocked':{status:'blocked',reason:'furnitureCollision',continueCutscene:false} };
                 },
-                blocksMovement:function () { return true;
+                blocksMovement:function (entity) { var subtype=String(Engine.Properties.GetRaw(entity,'subtype',Engine.Properties.GetRaw(entity,'placement',Engine.Properties.GetRaw(entity,'furnitureSubtype','floorObstacle')))).toLowerCase();
+                    return !(subtype==='background' || subtype==='backgroundprop' || subtype==='wall' || subtype==='wallfixture' || subtype==='ceiling' || subtype==='decorative' || subtype==='decoration' || subtype==='nonblocking');
                 },
                 walkBehind:function (entity) { var raw=Engine.Properties.GetRaw(entity,'walkBehind',undefined);
                     if (typeof raw === 'boolean') { return raw;
@@ -1525,12 +1558,13 @@
                 zIndex:function (entity) { return Engine.Properties.GetRaw(entity,'zIndex',0);
                 },
                 collisionShape:function (entity) { var rect=Engine.Properties.GetRaw(entity,'rect',null);
-                    var hasSprite=!!Engine.Properties.GetRaw(entity,'sprite',null);
-                    if (!hasSprite && !Engine.Properties.GetRaw(entity,'allowWalkBehindWithoutSprite',false) && rect) { return {rect:rect};
-                    } var shape=Engine.Properties.GetRaw(entity,'collisionShape',null);
-                    if (shape) { return shape;
-                    } if (rect) { return {rect:rect};
-                    } var x=Engine.Properties.GetRaw(entity,'x',0);
+                    var shape=Engine.Properties.GetRaw(entity,'collisionShape',Engine.Properties.GetRaw(entity,'footprint',null));
+                    if (shape) { return shape; }
+                    if (!Engine.Templates.furniture.properties.blocksMovement(entity)) { return null; }
+                    var subtype=String(Engine.Properties.GetRaw(entity,'subtype',Engine.Properties.GetRaw(entity,'placement',Engine.Properties.GetRaw(entity,'furnitureSubtype','floorObstacle')))).toLowerCase();
+                    if (rect && (subtype==='backgroundshelf' || subtype==='cabinetagainstwall' || subtype==='againstwall')) { return {rect:{x:rect.x,y:rect.y+Math.max(0,rect.h-12),w:rect.w,h:Math.min(12,rect.h)}}; }
+                    if (rect) { return {rect:rect}; }
+                    var x=Engine.Properties.GetRaw(entity,'x',0);
                     var y=Engine.Properties.GetRaw(entity,'y',0);
                     var w=Engine.Properties.GetRaw(entity,'frameW',0);
                     var h=Engine.Properties.GetRaw(entity,'frameH',0);
@@ -1827,9 +1861,9 @@
                 }
                 self.ValidateLegacyHookAbsence(room,where);
                 self.ValidateHookFields(game,room,Engine.Hooks.RoomHookTypes,where);
-                (room.walkBoxes||[]).forEach(function (box,index) { self.ValidateGeometryShape(box.shape||box.rect||box,where+'.walkBoxes['+index+']');
+                Engine.Geometry.GetWalkBoxes(room).forEach(function (box,index) { self.ValidateGeometryShape(box.shape||box.rect||box,where+'.walkBoxes['+index+']');
                 });
-                (room.blockers||[]).forEach(function (blocker,index) { self.ValidateGeometryShape(blocker.shape||blocker.rect,where+'.blockers['+index+']');
+                Engine.Geometry.GetBlockers(room).forEach(function (blocker,index) { self.ValidateGeometryShape(blocker.shape||blocker.rect,where+'.blockers['+index+']');
                     self.ValidateScriptName(game,blocker.onCollide||blocker.onBump,where+'.blockers['+index+'].onCollide');
                 });
                 self.ValidateTriggerZones(game,room.triggerZones,where);
@@ -1860,7 +1894,7 @@
                     self.ValidatePointInArea(c.walkTo,room.walkableArea,cwhere+'.walkTo');
                     self.ValidateInteractions(game,c.interactions,cwhere);
                 });
-                (room.transitionZones||[]).forEach(function (z,index) {
+                Engine.Geometry.GetTransitionZones(room).forEach(function (z,index) {
                     var zwhere=where+'.transitionZones['+index+']';
                     if (!z.script && (!z.targetRoomId || !game.rooms[z.targetRoomId])) { self.Error(zwhere+' has no script and references missing targetRoomId "'+z.targetRoomId+'".');
                     }
@@ -1868,7 +1902,7 @@
                     self.ValidateLegacyHookAbsence(z,zwhere);
                     self.ValidateHookFields(game,z,Engine.Hooks.TransitionHookTypes,zwhere);
                 });
-                var graph=room.walkGraph||{};
+                var graph=Engine.Properties.Get(room,'walkGraph',{purpose:'geometry'},room.walkGraph||{});
                 var nodeIds={};
                 (graph.nodes||[]).forEach(function (n,index) { self.AddId(nodeIds,'walkGraph node',n.id,where+'.walkGraph.nodes['+index+']');
                     self.ValidatePointInArea(n,room.walkableArea,where+'.walkGraph.nodes['+index+']');
@@ -1912,7 +1946,7 @@
                 metadata:['GetEngineApiVersion','GetSaveDataVersion','GetPublicCapabilities','GetDiagnostics','CopyDiagnosticsToClipboard'],
                 scriptApi:['Say','Narrate','StartDialogue','ShowDialogue','AskText','AskNumber','AddItem','RemoveItem','HasItem','SetFlag','GetFlag','SetVariable','GetVariable','SetRoomState','GetRoomState','SetCharacterState','GetCharacterState','RunScript','SetScopedVariable','GetScopedVariable','HasScopedVariable','ClearScopedVariable','AddScopedVariable','SubtractScopedVariable','MultiplyScopedVariable','DivideScopedVariable','CompareScopedVariable','SetRoomVariable','GetRoomVariable','AddRoomVariable','SubtractRoomVariable','MultiplyRoomVariable','DivideRoomVariable','CompareRoomVariable','SetCharacterVariable','GetCharacterVariable','AddCharacterVariable','SubtractCharacterVariable','MultiplyCharacterVariable','DivideCharacterVariable','CompareCharacterVariable','SetItemVariable','GetItemVariable','AddItemVariable','SubtractItemVariable','MultiplyItemVariable','DivideItemVariable','CompareItemVariable','ChangeRoom','MoveCharacter','SetAnimation','ClearAnimation','SetObjectAnimation','ClearObjectAnimation','SetObjectState','GetObjectState','SetObjectVariable','GetObjectVariable','AddObjectVariable','ShowOverlay','CloseOverlay','PlaySound','StartCutscene','QueueCutscene','MakeActionResult','EndGame','ShowEnding','Save','Load'],
                 getterApi:['HasItem','GetFlag','GetVariable','GetRoomVariable','GetCharacterVariable','GetItemVariable','GetObjectVariable','GetProperty'],
-                templates:['door','key','map','pickup','container','switch','readable','device','furniture','barrier','combine','openableBox','exchange','multiRequirement','gatekeeper','costume','toolTarget','clueUnlocker','distractible']
+                templates:['door','key','map','pickup','container','switch','readable','device','furniture','barrier','corridor','room','path','bridge','junction','stair','combine','openableBox','exchange','multiRequirement','gatekeeper','costume','toolTarget','clueUnlocker','distractible']
             });
         }
     });
@@ -2535,17 +2569,62 @@
         },
         GetRoom:function () { return Engine.Rooms.GetCurrentRoom();
         },
+        GetTemplateArrayProperty:function (entity, propertyName, context) {
+            var result=[];
+            var templates=Engine.Properties.GetTemplates(entity);
+            for (var i=0;i<templates.length;i++) { var template=templates[i].template;
+                if (template && template.properties && template.properties[propertyName]) { var value=template.properties[propertyName](entity,context||{},undefined);
+                    if (Array.isArray(value)) { result=result.concat(value); }
+                }
+            }
+            return result;
+        },
+        GetAuthoredArrayProperty:function (entity, propertyName) { var value=Engine.Properties.GetRaw(entity,propertyName,undefined);
+            return Array.isArray(value) ? value : [];
+        },
         GetWalkBoxes:function (room) {
             room=room||this.GetRoom();
             if (!room) { return [];
             }
-            var boxes=Engine.Properties.Get(room,'walkBoxes',{purpose:'geometry'},undefined);
-            if (boxes===undefined) { boxes=Engine.Properties.Get(room,'walkAreas',{purpose:'geometry'},undefined);
-            }
-            if (Array.isArray(boxes) && boxes.length) { return boxes;
-            }
-            var area=room.walkableArea || {x:0,y:80,w:320,h:56};
+            var authored=this.GetAuthoredArrayProperty(room,'walkBoxes');
+            if (!authored.length) { authored=this.GetAuthoredArrayProperty(room,'walkAreas'); }
+            var templateBoxes=(room.replaceTemplateWalkBoxes || room.replaceGeneratedWalkBoxes || room.manualWalkability) ? [] : this.GetTemplateArrayProperty(room,'walkBoxes',{purpose:'geometry'});
+            var boxes=templateBoxes.concat(authored);
+            if (boxes.length) { return boxes; }
+            var area=Engine.Properties.Get(room,'walkableArea',{purpose:'geometry'},room.walkableArea||{x:0,y:80,w:320,h:56});
             return [{id:'__walkableArea',rect:area}];
+        },
+        GetTransitionZones:function (room) {
+            room=room||this.GetRoom();
+            if (!room) { return [];
+            }
+            var templateZones=(room.replaceTemplateTransitionZones || room.replaceGeneratedTransitionZones || room.manualTransitions) ? [] : this.GetTemplateArrayProperty(room,'transitionZones',{purpose:'transition'});
+            var authored=this.GetAuthoredArrayProperty(room,'transitionZones');
+            var doorZones=room.replaceDoorPortalTransitionZones ? [] : this.GetDoorPortalTransitionZones(room);
+            return templateZones.concat(authored).concat(doorZones);
+        },
+        GetDoorPortalTransitionZones:function (room) {
+            var result=[];
+            (room.hotspots||[]).forEach(function (h) {
+                var portal=Engine.Properties.GetRaw(h,'portal',Engine.Properties.GetRaw(h,'doorPortal',null));
+                if (!portal || portal.enabled===false) { return; }
+                var templateNames=Engine.Properties.GetTemplateNames(h);
+                if (templateNames.indexOf('door')<0 && portal.requiresDoorTemplate!==false) { return; }
+                var rect=Engine.Geometry.GetPortalRect(h,portal);
+                if (!rect) { return; }
+                var target=portal.target||{};
+                var entry=portal.entry||portal.targetPoint||{};
+                result.push({id:portal.id||('portal_'+h.id),rect:rect,targetRoomId:portal.targetRoomId||portal.roomId||target.roomId||target.targetRoomId,targetX:portal.targetX!==undefined?portal.targetX:(target.x!==undefined?target.x:entry.x),targetY:portal.targetY!==undefined?portal.targetY:(target.y!==undefined?target.y:entry.y),targetFacing:portal.targetFacing||target.facing||entry.facing,script:portal.script||null,enabledFlag:portal.enabledFlag||null,disabledFlag:portal.disabledFlag||null,enabledObjectId:portal.enabledObjectId||h.id,enabledProperty:portal.enabledProperty||'walkThrough',beforeTransition:portal.beforeTransition,afterTransition:portal.afterTransition,source:'doorPortal',sourceObjectId:h.id});
+            });
+            return result;
+        },
+        GetPortalRect:function (object, portal) {
+            var rect=portal.rect||portal.transitionRect||portal.zoneRect||null;
+            if (rect) { return rect; }
+            var point=portal.through||portal.walkThroughTo||portal.walkThroughPoint||portal.exitPoint||null;
+            if (point && typeof point.x==='number' && typeof point.y==='number') { return {x:Math.round(point.x-4),y:Math.round(point.y-4),w:8,h:8}; }
+            var objectRect=Engine.Properties.GetRaw(object,'rect',null);
+            return objectRect||null;
         },
         GetPrimaryWalkArea:function (room) { var boxes=this.GetWalkBoxes(room);
             return boxes.length ? (this.RectFromShape(boxes[0].shape||boxes[0].rect||boxes[0])||{x:0,y:80,w:320,h:56}) : {x:0,y:80,w:320,h:56};
@@ -2594,9 +2673,10 @@
             if (!room) { return [];
             }
             var result=[];
-            var explicit=Engine.Properties.Get(room,'blockers',{purpose:'geometry'},[])||[];
+            var templateBlockers=(room.replaceTemplateBlockers || room.replaceGeneratedBlockers || room.manualBlockers) ? [] : this.GetTemplateArrayProperty(room,'blockers',{purpose:'geometry'});
+            var explicit=templateBlockers.concat(this.GetAuthoredArrayProperty(room,'blockers'));
             for (var i=0;i<explicit.length;i++) { var e=explicit[i];
-                result.push(Object.assign({source:'room',id:e.id||('blocker'+i)},e));
+                result.push(Object.assign({source:e.source||'room',id:e.id||('blocker'+i)},e));
             }
             (room.hotspots||[]).forEach(function (h) { if (Engine.Properties.Get(h,'blocksMovement',{purpose:'geometry'},false)) { var shape=Engine.Geometry.GetObjectCollisionShape(h);
                     if (shape) { result.push({source:'object',id:h.id,object:h,shape:shape,onCollide:Engine.Properties.Get(h,'onCollide',{purpose:'geometry'},h.onCollide||null),onBump:Engine.Properties.Get(h,'onBump',{purpose:'geometry'},h.onBump||null)});
@@ -2639,7 +2719,8 @@
             room=room||this.GetRoom();
             if (!room) { return [];
             }
-            var zones=(Engine.Properties.Get(room,'triggerZones',{purpose:'geometry'},[])||[]).map(function (z,i) { return Object.assign({source:'room',id:z.id||('trigger'+i)},z);
+            var roomTemplateZones=(room.replaceTemplateTriggerZones || room.replaceGeneratedTriggerZones || room.manualTriggerZones) ? [] : this.GetTemplateArrayProperty(room,'triggerZones',{purpose:'geometry'});
+            var zones=roomTemplateZones.concat(Engine.Properties.Get(room,'triggerZones',{purpose:'geometry'},[])||[]).map(function (z,i) { return Object.assign({source:z.source||'room',id:z.id||('trigger'+i)},z);
             });
             (room.hotspots||[]).forEach(function (h) { var list=Engine.Properties.Get(h,'triggerZones',{purpose:'geometry'},[])||[];
                 list.forEach(function (z,i) { zones.push(Object.assign({source:'object',object:h,id:h.id+'.'+(z.id||i)},z));
@@ -3124,7 +3205,7 @@
             return { state:state, zone:zone||null, context:context||null, result:result||null };
         },
         CheckTransitions: function () { var room=this.GetCurrentRoom();
-            var zones=room.transitionZones||[];
+            var zones=Engine.Geometry.GetTransitionZones(room);
             var p=Engine.State.player;
             this.UpdateTransitionDebounce(room,zones,p);
             for (var i=0;i<zones.length;i++) { var z=zones[i];
@@ -3402,6 +3483,14 @@
                 Engine.Movement.RequestWalk(through.x,through.y,run,{command:command,targetId:target.id});
                 return;
             }
+            if (command.verbId === 'walkTo' && Engine.Geometry) { var room=Engine.Rooms.GetCurrentRoom();
+                var clickedPointIsWalkable=Engine.Geometry.PointInWalkBoxes(command.x,command.y,room);
+                var clickedPointBlocker=clickedPointIsWalkable ? Engine.Geometry.IsPointBlocked(command.x,command.y,room,Engine.State.player) : null;
+                if (clickedPointIsWalkable && !clickedPointBlocker) {
+                    Engine.Movement.RequestWalk(command.x,command.y,run,{command:command,targetId:target.id});
+                    return;
+                }
+            }
             var walkTo=Engine.Properties.Get(target,'walkTo',{command:command,target:target},target.walkTo||null);
             if (walkTo) { Engine.Movement.RequestWalk(walkTo.x,walkTo.y,run,{command:command,targetId:target.id});
             } else { run(Engine.ActionResults.Completed({action:'interaction',targetId:target.id,roomId:Engine.State.currentRoomId}));
@@ -3496,6 +3585,9 @@
             if (scriptName) { var self=Engine.Entities.CreateFacade(target,Engine.Entities.DetectType(target),{context:context});
                 Engine.Scripts.RunWithArgs(scriptName,[Engine.API,command,target,self],'interaction script '+scriptName);
                 Engine.Verbs.FinishCommand(command);
+                return;
+            }
+            if (command.verbId === 'walkTo') { Engine.Verbs.FinishCommand(command);
                 return;
             }
             if (target.isInventoryItem && command.verbId === 'take') { Engine.Dialogue.ShowLine(null, 'You already have the '+(Engine.Properties.Get(target,'name',context,target.name || target.id || 'item'))+'.', {});

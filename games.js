@@ -5,6 +5,7 @@
 PointClickEngine.RegisterManifest({
     comment: 'Script manifest fallback for direct file opening.',
     games: [
-        { id: 'testgame', title: 'Test Game: The Locked Door', script: 'testgame/testgame.js', assetPath: 'testgame/', engineApi: 1 }
+        { id: 'testgame', title: 'Test Game: The Locked Door', script: 'testgame/testgame.js', assetPath: 'testgame/', engineApi: 1 },
+        { id: 'moonlogic', title: 'Moon Logic', script: 'moonlogic/moonlogic.js', assetPath: 'moonlogic/', engineApi: 1 }
     ]
 });

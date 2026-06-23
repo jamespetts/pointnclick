@@ -265,23 +265,12 @@ PointClickEngine.RegisterGame({
             id:'testRoom',
             name:'Starting Room',
             background:'testroom_start_room_object_door_v1.png',
-            walkableArea:{
-                x:8,
-                y:86,
-                w:304,
-                h:48
-            },
-            walkBoxes:[
-                {
-                    id:'mainFloor',
-                    rect:{
-                        x:8,
-                        y:86,
-                        w:304,
-                        h:48
-                    }
-                }
+            template:'room',
+            floor:{x:8,y:86,w:304,h:48},
+            exits:[
+                {id:'toStoreRoom',rect:{x:0,y:86,w:14,h:48},targetRoomId:'storeRoom',targetX:300,targetY:112,targetFacing:'left'}
             ],
+            manualWalkability:true,
             characterScale:{
                 farY:86,
                 nearY:134,
@@ -347,33 +336,6 @@ PointClickEngine.RegisterGame({
                     ]
                 ]
             },
-            transitionZones:[
-                {
-                    id:'toStoreRoom',
-                    rect:{
-                        x:0,
-                        y:86,
-                        w:14,
-                        h:48
-                    },
-                    targetRoomId:'storeRoom',
-                    targetX:300,
-                    targetY:112,
-                    targetFacing:'left'
-                },
-                {
-                    id:'throughDoor',
-                    rect:{
-                        x:258,
-                        y:86,
-                        w:28,
-                        h:24
-                    },
-                    enabledObjectId:'door',
-                    enabledProperty:'open',
-                    script:'endThroughDoor'
-                }
-            ],
             hotspots:[
                 {
                     id:'door',
@@ -412,9 +374,11 @@ PointClickEngine.RegisterGame({
                         x:270,
                         y:114
                     },
-                    walkThroughTo:{
-                        x:270,
-                        y:86
+                    portal:{
+                        approach:{x:270,y:114},
+                        through:{x:270,y:86},
+                        rect:{x:258,y:86,w:28,h:24},
+                        script:'endThroughDoor'
                     },
                     lockedText:'The door is locked. A small keyhole glints in the dim light.',
                     unlockedText:'The door is unlocked. It now awaits the rare and specialised operation known as opening.',
@@ -467,6 +431,7 @@ PointClickEngine.RegisterGame({
                     id:'chair',
                     name:'chair',
                     template:'furniture',
+                    subtype:'floorObstacle',
                     sprite:'chair_furniture_sprite_20260618_2230.png',
                     rect:{
                         x:106,
@@ -482,7 +447,7 @@ PointClickEngine.RegisterGame({
                         x:118,
                         y:118
                     },
-                    collisionShape:{
+                    footprint:{
                         rect:{
                             x:109,
                             y:106,
@@ -588,12 +553,12 @@ PointClickEngine.RegisterGame({
             id:'storeRoom',
             name:'Store Room',
             background:'testroom_left_v1.png',
-            walkableArea:{
-                x:8,
-                y:86,
-                w:304,
-                h:48
-            },
+            template:'room',
+            floor:{x:8,y:86,w:304,h:48},
+            exits:[
+                {id:'toStartingRoom',rect:{x:306,y:86,w:14,h:48},targetRoomId:'testRoom',targetX:18,targetY:112,targetFacing:'right'}
+            ],
+            manualWalkability:true,
             walkBoxes:[
                 {
                     id:'backFloor',
@@ -713,21 +678,6 @@ PointClickEngine.RegisterGame({
                     ]
                 ]
             },
-            transitionZones:[
-                {
-                    id:'toStartingRoom',
-                    rect:{
-                        x:306,
-                        y:86,
-                        w:14,
-                        h:48
-                    },
-                    targetRoomId:'testRoom',
-                    targetX:18,
-                    targetY:112,
-                    targetFacing:'right'
-                }
-            ],
             hotspots:[
                 {
                     id:'coinHotspot',
@@ -743,6 +693,7 @@ PointClickEngine.RegisterGame({
                     },
                     x:74,
                     y:78,
+                    approach:{x:76,y:124},
                     walkTo:{
                         x:76,
                         y:124
@@ -768,6 +719,7 @@ PointClickEngine.RegisterGame({
                     },
                     x:86,
                     y:78,
+                    approach:{x:76,y:124},
                     walkTo:{
                         x:76,
                         y:124
@@ -780,6 +732,7 @@ PointClickEngine.RegisterGame({
                     id:'table',
                     name:'table',
                     template:'furniture',
+                    subtype:'floorObstacle',
                     propertyGetters:{
                         callbackResult:'tableCallbackResult'
                     },

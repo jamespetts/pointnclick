@@ -7,6 +7,13 @@
             "script": "testgame/testgame.js",
             "assetPath": "testgame/",
             "engineApi": 1
+        },
+        {
+            "id": "moonlogic",
+            "title": "Moon Logic",
+            "script": "moonlogic/moonlogic.js",
+            "assetPath": "moonlogic/",
+            "engineApi": 1
         }
     ]
 }
