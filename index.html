@@ -3485,7 +3485,10 @@
             var subjectLinked=this.GetLinkedInventoryTarget(subject);
             var subjectLinkedInteractions=subjectLinked ? (Engine.Properties.Get(subjectLinked,'interactions',context,undefined) || subjectLinked.interactions || {}) : {};
             var reverseKey=subject ? command.verbId+':'+target.id : null;
-            var scriptName=interactions[key] || linkedInteractions[key] || (reverseKey ? subjectInteractions[reverseKey] : null) || (reverseKey ? subjectLinkedInteractions[reverseKey] : null) || interactions[command.verbId] || linkedInteractions[command.verbId];
+            var sourceTransitiveTargetIntransitive=subject && command.verbId === 'use' && command.inventoryItemId && this.IsTransitiveUseTarget(subject) && !this.IsTransitiveUseTarget(target);
+            var sourceFallback=sourceTransitiveTargetIntransitive ? (subjectInteractions[command.verbId] || subjectLinkedInteractions[command.verbId]) : null;
+            var targetFallback=sourceTransitiveTargetIntransitive ? null : (interactions[command.verbId] || linkedInteractions[command.verbId]);
+            var scriptName=interactions[key] || linkedInteractions[key] || (reverseKey ? subjectInteractions[reverseKey] : null) || (reverseKey ? subjectLinkedInteractions[reverseKey] : null) || sourceFallback || targetFallback;
             if (scriptName && typeof scriptName === 'string' && scriptName.indexOf('template:')===0) { Engine.Templates.RunAction(scriptName.slice(9),command,target);
                 Engine.Verbs.FinishCommand(command);
                 return;
@@ -3510,7 +3513,8 @@
                 Engine.Verbs.FinishCommand(command);
                 return;
             }
-            Engine.Dialogue.ShowLine(null, this.GetRefusalText(command, target, key), {});
+            var refusalText=sourceTransitiveTargetIntransitive ? this.GetTransitiveSourceFallbackRefusalText(command,target,key,subject,reverseKey) : this.GetRefusalText(command, target, key);
+            Engine.Dialogue.ShowLine(null, refusalText, {});
             Engine.Verbs.FinishCommand(command);
         },
         GetRefusalText: function (command, target, key) {
@@ -3520,6 +3524,18 @@
             var linkedRefusals=linked ? (Engine.Properties.Get(linked,'refusals',context,undefined) || linked.refusals || {}) : {};
             var gameRefusals=(Engine.CurrentGame && Engine.CurrentGame.defaultRefusals) ? Engine.CurrentGame.defaultRefusals : {};
             return objectRefusals[key] || objectRefusals[command.verbId] || linkedRefusals[key] || linkedRefusals[command.verbId] || gameRefusals[key] || gameRefusals[command.verbId] || this.defaultRefusals[key] || this.defaultRefusals[command.verbId] || 'Nothing happens.';
+        },
+        GetTransitiveSourceFallbackRefusalText: function (command, target, key, subject, reverseKey) {
+            var targetContext={ command:command, target:target };
+            var targetRefusals=Engine.Properties.Get(target,'refusals',targetContext,undefined) || target.refusals || {};
+            var targetLinked=this.GetLinkedInventoryTarget(target);
+            var targetLinkedRefusals=targetLinked ? (Engine.Properties.Get(targetLinked,'refusals',targetContext,undefined) || targetLinked.refusals || {}) : {};
+            var sourceContext={ command:command, target:subject, otherTarget:target };
+            var sourceRefusals=subject ? (Engine.Properties.Get(subject,'refusals',sourceContext,undefined) || subject.refusals || {}) : {};
+            var sourceLinked=this.GetLinkedInventoryTarget(subject);
+            var sourceLinkedRefusals=sourceLinked ? (Engine.Properties.Get(sourceLinked,'refusals',sourceContext,undefined) || sourceLinked.refusals || {}) : {};
+            var gameRefusals=(Engine.CurrentGame && Engine.CurrentGame.defaultRefusals) ? Engine.CurrentGame.defaultRefusals : {};
+            return targetRefusals[key] || targetLinkedRefusals[key] || sourceRefusals[reverseKey] || sourceLinkedRefusals[reverseKey] || sourceRefusals[command.verbId] || sourceLinkedRefusals[command.verbId] || gameRefusals[key] || gameRefusals[reverseKey] || gameRefusals[command.verbId] || this.defaultRefusals[key] || this.defaultRefusals[reverseKey] || this.defaultRefusals[command.verbId] || 'Nothing happens.';
         },
         GetHitPriority: function (target) { if (!target) { return 0;
             } var value=Engine.Properties.Get(target,'hitPriority',{purpose:'hitTest'},undefined);

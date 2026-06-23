@@ -619,7 +619,9 @@ EXAMPLE_END
 Interaction keys:
 - Ordinary verb keys are walkTo, lookAt, take, give, talkTo, open, close, and use.
 - Transitive inventory-on-target keys use verbId:itemId, for example use:spanner or give:coin.
-- For inventory-on-target use/give, the engine checks the target verbId:inventoryItemId key, then the target's linked item, then the reverse key verbId:targetId on the selected inventory item, then that selected item's linked item, then the plain verb key on the target or linked item.
+- For inventory-on-target use/give, the engine first checks the target verbId:inventoryItemId key, then the target's linked item, then the reverse key verbId:targetId on the selected inventory item, then that selected item's linked item.
+- For Use X with Y where X is a transitive-use subject and Y is an intransitive-use target, the engine then runs X's plain use interaction as X's transitive fallback. It does not fall through to Y's plain use interaction.
+- For other inventory-on-target commands, the engine may then use the plain verb key on the target or linked item as the target fallback.
 - Use specific transitive keys for one-off pairings. Use combine or toolTarget for reusable patterns.
 
 Interaction values:
@@ -677,14 +679,10 @@ EXAMPLE_END
 A refusal is data-driven text used when a command has no implemented interaction. Use refusals instead of custom scripts that only say no.
 
 Refusal lookup order:
-- Target refusals[verbId:inventoryItemId] when applicable.
-- Target refusals[verbId].
-- Linked inventory item refusals[verbId:inventoryItemId] when applicable.
-- Linked inventory item refusals[verbId].
-- game.defaultRefusals[verbId:inventoryItemId] when applicable.
-- game.defaultRefusals[verbId].
-- Engine default keyed refusal, then engine default verb refusal.
-
+- Ordinary single-target commands use target refusals[verbId], linked item refusals[verbId], game.defaultRefusals[verbId], then the engine default for the verb.
+- Inventory-on-target commands first allow target-specific refusals[verbId:inventoryItemId] and linked target refusals[verbId:inventoryItemId].
+- For Use X with Y where X is a transitive-use subject and Y is an intransitive-use target, if no interaction is implemented, the fallback then comes from X: selected item refusals[use:targetId], linked selected item refusals[use:targetId], selected item refusals[use], linked selected item refusals[use], game/default keyed refusals, and finally the generic use refusal.
+- For other inventory-on-target commands, the fallback continues through the target's verb refusal, linked target verb refusal, game/default keyed refusals, and game/default verb refusals.  
 EXAMPLE_START
 refusals:{
     take:'I cannot take the whole cabinet.',
@@ -707,6 +705,7 @@ Use:
 - A target or item with effective transitiveUse:false runs its own plain use interaction immediately.
 - A target or item with effective transitiveUse:true is selectable as the first subject for Use X with Y.
 - If transitiveUse is omitted, the engine infers safer behaviour. A plain custom use interaction is treated as intransitive unless it is a known transitive template interaction.
+- When Use X with Y is formed and X is a transitive-use subject while Y is an intransitive-use target, the command belongs to X. After specific target and reverse-pair interactions are checked, the engine runs X's transitive fallback, and if nothing is implemented the refusal fallback is also X's fallback. Y's plain intransitive use must not run merely because Y was clicked as the second target.
 - Use X with X is normalized to intransitive Use X; do not author use:self keys expecting ordinary UI input to reach them.
 
 ### 11.4 Effective property model
@@ -1321,6 +1320,7 @@ Action semantics:
 - onRead runs only on the text-reading path, not when an overlay is shown.
 - For itemId-linked world readables, overlay/text properties resolve from explicit world target first, then linked inventory item, then fallback.
 - Do not write template:readable.lookAt or template:readable.use; those actions do not exist.
+- readable's plain use contribution is an intransitive read action. It must not be used as the fallback action for Use X with readable where X is the selected transitive-use subject.
 
 ### 12.8 device template
 
